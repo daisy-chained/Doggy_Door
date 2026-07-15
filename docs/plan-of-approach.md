@@ -15,7 +15,7 @@ Doggy Door: Perception for Robot-Door Interaction
 ---
 
 ## Introduction
-This document covers the plan of approach for the project. due to circumstances im now doing this project by myself instead of with the original client. This document just scopes the project and lays order for what comes next. This will not be checked or aproved by the client.
+This document covers the plan of approach for the project. Due to circumstances I'm now doing this project by myself instead of with the original client. This document just scopes the project and lays order for what comes next. This will not be checked or approved by the client.
 
 
 ---
@@ -70,19 +70,41 @@ Draft scaffold based on the assignment's four challenge areas; refine wording an
 - Experimental code repository (this repo)
 
 **Out of scope:**
-- using an actual robotics platform, due to lack of funding and space.(If offered defenitely doing it) currently focusing on simulation.
+- using an actual robotics platform, due to lack of funding and space. (If offered, definitely doing it.) Currently focusing on simulation.
 
 ---
 
 ## Approach / Methodology
 
-TBD
+The pipeline runs on RGB(-D) frames streamed live from a simulated agent (simulator TBD per Sub question 1) as it navigates an indoor scene, optionally paired with LiDAR point cloud data as an additional sensing modality (particularly useful for 3D localization). Each frame passes through the door/window detector (Sub question 2); on a positive detection, the cropped door region feeds two parallel branches: the handle cascade (Sub question 3) and the property classifier (Sub question 4). All three models attach their own confidence score to their output (Sub question 5).
+
+**Data:** simulator-generated synthetic frames as the primary training/eval set, supplemented by public door-detection datasets identified during Sub question 2's desk research (e.g. DeepDoors2) if useful for pretraining or comparison.
+
+**Frameworks/tools:** Python, PyTorch, ROS2 (for agent control and sensor streaming, if the chosen simulator supports it).
+
+**Evaluation metrics:** mAP/IoU for door-window 2D localization and a 3D localization error metric; localization and classification accuracy for handles (lever vs. knob); per-attribute accuracy for door properties; calibration quality (e.g. expected calibration error) for confidence scores, tested specifically under degraded conditions (low light, occlusion, sensor noise).
+
+---
+
+## Planning
+
+| Phase | Description | Timeframe |
+|---|---|---|
+| 1. Research | Desk research across all 5 sub-questions (simulator options, detection/handle/classification approaches, confidence techniques) plus light feasibility spikes; produces the report's Approach/Methodology | 2026-07-15 to 2026-09-02 (7 wks) |
+| 2a. Build: detection | Implement, train, evaluate door/window detector | 2026-09-02 to 2026-09-30 (4 wks) |
+| 2b. Build: handle cascade | Implement, train, evaluate handle localization and classification | 2026-09-30 to 2026-10-21 (3 wks) |
+| 2c. Build: property classification | Implement, train, evaluate door property classifier | 2026-10-21 to 2026-11-11 (3 wks) |
+| 2d. Build: confidence estimation | Attach and calibrate confidence output across all three models | 2026-11-11 to 2026-11-25 (2 wks) |
+| 2e. Integration and evaluation | Integrate into one pipeline; run the agent through the full simulated building under varied environmental conditions | 2026-11-25 to 2026-12-30 (5 wks) |
+| 2f. Reporting and demo | Write final report, record video demonstration | 2026-12-30 to 2027-01-31 (~4.5 wks) |
+
+Deadline: 2027-01-31, a simulated agent navigating a full building under varied environmental factors, demonstrating the full pipeline reliably.
 
 ---
 
 ## Stakeholder Analysis
 
-TBD
+Single-stakeholder project. There's no external party to analyze.
 
 | Stakeholder | Interest | Power | Notes |
 |---|---|---|---|
@@ -92,19 +114,27 @@ TBD
 
 ## Risk Analysis
 
-| Risk | Probability | Impact | Mitigation |
-|---|---|---|---|
-| TBD | TBD | TBD | TBD |
+| Risk | Category | Probability | Impact | Mitigation |
+|---|---|---|---|---|
+| Sim-to-real gap: models trained only on simulated data may not generalize to real photos (lighting, textures, sensor noise differ) | Research | Medium-High | High: undermines validity of results if never checked against reality | Use domain randomization in the simulator (varied lighting, textures, materials); if any real images are obtainable, spot-check against them and document the gap as an explicit limitation if not closed |
+| Chosen simulator turns out to lack a needed capability (e.g. ROS2 integration, sensor fidelity) discovered after committing engineering time | Research | Low-Medium | Medium: could force a late simulator switch | Front-load Sub question 1's desk research fully before starting any model work |
+| Limited variety in simulator-generated data leads to overfitting | Research | Medium | Medium | Procedurally vary scenes, door types, materials, and lighting during data generation |
+| Solo project with no external deadline or accountability, risk of stalling or drifting scope | Project | Medium-High | Medium: project quietly stops making progress | Self-imposed milestones/timeframes (tie to Planning section); keep dev-log entries per session |
+| Compute/hardware constraints training multiple models (detector, handle cascade, classifier) plus running a simulator | Project | Medium | Medium: slows iteration | Use lightweight/pretrained backbones; scale down resolution/dataset size if needed |
+| Scope creep across four semi-independent modules plus the open-ended simulator choice | Project | Medium | Medium: never reaches "done" | Define a "good enough" threshold per evaluation metric upfront (from Approach/Methodology), timebox each phase |
 
 ---
 
 ## Deliverables
 
-Per the assignment brief:
+The assignment brief dictates the first 3 deliverables, the others are added to mitigate some of the risks mentioned above.
 
 1. A report detailing the approach and results.
 2. A code repository with the experimental code (this repo).
 3. A video demonstration of the results.
+4. A Definition of done.
+5. A dev log summary.
+6. An evaluation on the project.
 
 ---
 
