@@ -1,0 +1,68 @@
+<?xml version="1.0" ?>
+<!-- Smoke test: one RGB-D camera looking at a labelled box ("door" stand-in). -->
+<sdf version="1.9">
+  <world name="rgbd_smoke">
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground">
+      <static>true</static>
+      <link name="link">
+        <collision name="c"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry></collision>
+        <visual name="v"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry></visual>
+      </link>
+    </model>
+
+    <model name="door_standin">
+      <static>true</static>
+      <pose>2 0 1 0 0 0</pose>
+      <link name="link">
+        <visual name="v">
+          <geometry><box><size>0.05 0.9 2.0</size></box></geometry>
+          <material><diffuse>0.6 0.4 0.2 1</diffuse></material>
+          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label">
+            <label>1</label>
+          </plugin>
+        </visual>
+      </link>
+    </model>
+
+    <model name="camera">
+      <static>true</static>
+      <pose>0 0 1 0 0 0</pose>
+      <link name="link">
+        <sensor name="rgbd" type="rgbd_camera">
+          <topic>rgbd</topic>
+          <update_rate>10</update_rate>
+          <always_on>true</always_on>
+          <camera>
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.1</near><far>10</far></clip>
+          </camera>
+        </sensor>
+        <sensor name="boxes" type="boundingbox_camera">
+          <topic>boxes</topic>
+          <update_rate>10</update_rate>
+          <always_on>true</always_on>
+          <camera>
+            <box_type>2d</box_type>
+            <horizontal_fov>1.2</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.1</near><far>10</far></clip>
+          </camera>
+        </sensor>
+      </link>
+    </model>
+  </world>
+</sdf>
