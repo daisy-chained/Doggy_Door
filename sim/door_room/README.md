@@ -5,13 +5,15 @@ First test room: one wall with two hinged doors, seen by a fixed sensor rig (RGB
 | | Door A (right in the image) | Door B (left in the image) |
 |---|---|---|
 | Handle | lever | round knob |
-| Hinge | left side | right side |
+| Hinge (seen from the camera) | right side | left side |
 | Opens | away from the camera (push) | toward the camera (pull) |
 
-Labels (proposal, not decided): `1` door panel · `2` lever handle · `3` knob handle. Walls and floor are background.
+Labels: `1` door · `2` handle. Walls and floor are background.
+
+Everything else is an **attribute**, not a class: handle type, push/pull, hinge side, door type, glass. They live in [`attributes.json`](attributes.json) (one entry per object, handles point to their door). `run_room.sh` saves a `.json` next to each frame with those attributes plus each door's angle and open/closed state. That way each property can get its own classifier and its own confidence, and new properties don't multiply the number of classes.
 
 ```bash
-bash sim/door_room/run_room.sh          # boxes + a frame with doors closed, then opened; output in sim/door_room/out/
+bash sim/door_room/run_room.sh          # boxes + frame + metadata with doors closed, then opened; output in sim/door_room/out/
 ```
 
 Open or close a door while the sim runs (angle in radians, -1.6 = wide open, 0 = closed):
@@ -29,6 +31,7 @@ Example frames: [closed](example/closed.png) · [open](example/open.png)
 - `grab.py` saves a frame as PNG with PIL (no NumPy), see the NumPy note below.
 
 ## Known limits / open points
+- Boxes from the bounding-box camera only carry the class, not which object they belong to. Linking a box to its entry in the metadata (e.g. via the instance segmentation camera) is still open.
 - Handle boxes are small (about 8–20 px at 3 m in 640×480). Something to look at for handle detection (closer views, higher resolution, or a crop step).
 - One fixed camera, one lighting setup, no glass or sliding doors, no smoke yet.
 - NumPy: a pip-installed NumPy 2.x in `/usr/local/lib/python3.12/dist-packages` hides the system NumPy 1.x that ROS 2 Jazzy's OpenCV/cv_bridge were built for, so `import cv2` fails in ROS terminals. Not fixed here (system change).
