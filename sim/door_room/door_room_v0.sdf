@@ -208,6 +208,17 @@
             <clip><near>0.1</near><far>12</far></clip>
           </camera>
         </sensor>
+        <sensor name="boxes3d" type="boundingbox_camera">
+          <topic>boxes3d</topic>
+          <update_rate>10</update_rate>
+          <always_on>true</always_on>
+          <camera>
+            <box_type>3d</box_type>
+            <horizontal_fov>1.3</horizontal_fov>
+            <image><width>640</width><height>480</height></image>
+            <clip><near>0.1</near><far>12</far></clip>
+          </camera>
+        </sensor>
         <sensor name="seg" type="segmentation_camera">
           <topic>seg</topic>
           <update_rate>10</update_rate>

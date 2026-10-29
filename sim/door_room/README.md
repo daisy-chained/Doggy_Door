@@ -1,6 +1,6 @@
 # Door room v0 (draft for review)
 
-First test room: one wall with two hinged doors, seen by a fixed sensor rig (RGB-D, 2D bounding-box camera, instance segmentation camera) at 1.2 m height, 3 m from the wall.
+First test room: one wall with two hinged doors, seen by a fixed sensor rig (RGB-D, 2D + 3D bounding-box cameras, instance segmentation camera) at 1.2 m height, 3 m from the wall.
 
 | | Door A (right in the image) | Door B (left in the image) |
 |---|---|---|
@@ -12,7 +12,14 @@ Classes: `1` door · `2` handle. Walls and floor are background.
 
 In Gazebo, each object gets its **own id** as its label (`11` door A, `12` handle A, `21` door B, `22` handle B; `0` = background, Gazebo allows at most 255). That way every box says which object it belongs to. `attributes.json` maps each id to its object and class, so exporting for training turns the ids back into door / handle.
 
-Everything else is an **attribute**, not a class: handle type, push/pull, hinge side, door type, glass. They live in [`attributes.json`](attributes.json) (one entry per object, handles point to their door). `run_room.sh` saves a `.json` next to each frame with those attributes, each door's angle and open/closed state, and each object's 2D box (`null` when it is out of view). The raw box output is kept as `*_boxes.txt`. That way each property can get its own classifier and its own confidence, and new properties don't multiply the number of classes.
+Everything else is an **attribute**, not a class: handle type, push/pull, hinge side, door type, glass. They live in [`attributes.json`](attributes.json) (one entry per object, handles point to their door). `run_room.sh` saves a `.json` next to each frame with those attributes, each door's angle and open/closed state, and each object's 2D box (`null` when it is out of view). The raw box output is kept as `*_boxes.txt` and `*_boxes3d.txt`.
+
+**3D ground truth** (per object, in the frame `.json`):
+- `box_3d`: centre, orientation (quaternion x y z w) and size in metres, from a 3D bounding-box camera on the rig (same ids as the 2D boxes).
+- `hinge_cam` (doors): a point on the hinge axis and its direction. The hinge is fixed in the world (`hinge_world` in `attributes.json`, taken from the hinge joints), and `meta.py` puts it in the camera frame.
+- Everything 3D is saved in the **ROS optical camera frame**: x right, y down, z forward, so it matches depth images and point clouds. Gazebo's own 3D boxes use a graphics frame (x right, y up, looking along -z); `meta.py` converts.
+- The camera pose in the world is in `attributes.json` (`camera`). The rig doesn't move yet; a moving robot will need the camera pose per frame.
+- Checked: each 3D centre projected into the image lands within about 2 px of its 2D box centre; open doors stay 0.44 m from their hinge. That way each property can get its own classifier and its own confidence, and new properties don't multiply the number of classes.
 
 ```bash
 bash sim/door_room/run_room.sh          # boxes + frame + metadata with doors closed, then opened; output in sim/door_room/out/
