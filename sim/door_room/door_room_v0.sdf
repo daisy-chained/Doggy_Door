@@ -3,7 +3,8 @@
   Door room v0 (draft for review): one wall with two hinged doors, seen by a fixed RGB-D rig.
     Door A (y = -1): lever handle, hinge on the right (seen from the camera), opens AWAY from the camera (push).
     Door B (y = +1): round knob,   hinge on the left (seen from the camera),  opens TOWARD the camera (pull).
-  Labels: 1 = door, 2 = handle. Walls/floor = background. Handle type, push/pull, hinge side: attributes.json.
+  Labels = one id per object (11 door_a, 12 handle_a, 21 door_b, 22 handle_b; 0 = background, max 255).
+  attributes.json maps each id to its object, class (1 door, 2 handle) and attributes.
   Hinge axis sits on the panel face on the opening side, so the panel corner doesn't hit the jamb.
   Open a door: gz topic -t /door_a/cmd_pos -m gz.msgs.Double -p 'data: -1.0'   (radians, -1.6 .. 0)
 -->
@@ -74,7 +75,7 @@
         <visual name="v">
           <geometry><box><size>0.04 0.88 2.08</size></box></geometry>
           <material><diffuse>0.55 0.36 0.2 1</diffuse></material>
-          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>1</label></plugin>
+          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>11</label></plugin>
         </visual>
       </link>
       <joint name="hinge" type="revolute">
@@ -116,7 +117,7 @@
           <material><diffuse>0.75 0.75 0.78 1</diffuse><specular>0.6 0.6 0.6 1</specular></material>
         </visual>
       </link>
-      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>2</label></plugin>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>12</label></plugin>
     </model>
 
     <!-- Door B: knob, hinge left seen from the camera (y = +1.44), pull (negative angle swings the free edge toward the camera) -->
@@ -136,7 +137,7 @@
         <visual name="v">
           <geometry><box><size>0.04 0.88 2.08</size></box></geometry>
           <material><diffuse>0.92 0.92 0.9 1</diffuse></material>
-          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>1</label></plugin>
+          <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>21</label></plugin>
         </visual>
       </link>
       <joint name="hinge" type="revolute">
@@ -178,7 +179,7 @@
           <material><diffuse>0.8 0.68 0.3 1</diffuse><specular>0.7 0.6 0.3 1</specular></material>
         </visual>
       </link>
-      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>2</label></plugin>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>22</label></plugin>
     </model>
 
     <!-- Fixed sensor rig at the origin, 1.2 m high, looking at the wall (+x) -->

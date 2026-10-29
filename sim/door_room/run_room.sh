@@ -5,13 +5,13 @@ OUT=${1:-out}; mkdir -p "$OUT"
 setsid gz sim -s -r --headless-rendering door_room_v0.sdf > "$OUT/gz.log" 2>&1 & GZ=$!
 setsid ros2 run ros_gz_bridge parameter_bridge /rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image > "$OUT/bridge.log" 2>&1 & BR=$!
 sleep 10
-boxes() { timeout 10 gz topic -e -t /boxes -n 1 | tr -d ' ' | grep -E "^(x|y|label):" | paste -sd' ' | sed 's/x:/\n x:/g' | paste - - | sed 's/^/ /'; }
-echo "== closed: boxes (min x y, max x y, label)"; boxes
-python3 grab.py "$OUT/closed.png"; python3 meta.py "$OUT/closed.json" door_a=0 door_b=0
+boxes() { timeout 10 gz topic -e -t /boxes -n 1 > "$1"; tr -d ' ' < "$1" | grep -E "^(x|y|label):" | paste -sd' ' | sed 's/x:/\n x:/g' | paste - - | sed 's/^/ /'; }
+echo "== closed: boxes (min x y, max x y, object id)"; boxes "$OUT/closed_boxes.txt"
+python3 grab.py "$OUT/closed.png"; python3 meta.py "$OUT/closed.json" "$OUT/closed_boxes.txt" door_a=0 door_b=0
 gz topic -t /door_a/cmd_pos -m gz.msgs.Double -p 'data: -1.2'
 gz topic -t /door_b/cmd_pos -m gz.msgs.Double -p 'data: -1.2'
 sleep 6
-echo "== open: boxes"; boxes
-python3 grab.py "$OUT/open.png"; python3 meta.py "$OUT/open.json" door_a=-1.2 door_b=-1.2
+echo "== open: boxes"; boxes "$OUT/open_boxes.txt"
+python3 grab.py "$OUT/open.png"; python3 meta.py "$OUT/open.json" "$OUT/open_boxes.txt" door_a=-1.2 door_b=-1.2
 kill -- -$BR -$GZ 2>/dev/null; wait 2>/dev/null
 echo "== gz errors"; grep -i -E "error|warn" "$OUT/gz.log" | grep -v -i egl | head -10
