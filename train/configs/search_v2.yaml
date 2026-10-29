@@ -1,15 +1,16 @@
-# Auto trainer (approach A): per hardware budget, an Optuna search for the best val score among models fast enough.
+# Auto trainer (approach A): per hardware budget (GFLOPs per image), an Optuna search for the best val score among models that fit.
 #   train/.venv/bin/python train/speed_table.py train/configs/search_v2.yaml       # step 1: speed per model x resolution
-#   train/.venv/bin/python train/search.py train/configs/search_v2.yaml --budget mid_10ms
+#   train/.venv/bin/python train/search.py train/configs/search_v2.yaml --budget small_30g
 name: v2_first
 base: train/configs/dfine_s_640.yaml            # training config every trial starts from
 overrides: {export: exports/door_room_v2_2k}    # applied on top of base, before the search's own choices
 objective: map              # val metric to maximise: map (overall, default) or ap_door / ap_handle / map_small / ...
 speed_table: runs/speed/v2_first.json
-budgets:                    # ms per image on the laptop 4060 (batch 1, same precision as training); null = no limit
-  fast_5ms: 5
-  mid_10ms: 10
-  slow_20ms: 20
+budget_metric: gflops      # budgets limit compute per image (Madelief 2026-10-29: ms at batch 1 on the 4060 was mostly overhead + noise); ms still logged
+budgets:                    # max GFLOPs per image; null = no limit
+  tiny_10g: 10
+  small_30g: 30
+  mid_80g: 80
   any: null
 space:
   models:

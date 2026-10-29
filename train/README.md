@@ -43,16 +43,16 @@ Register a class in `FAMILIES` (`adapters/__init__.py`); `Adapter(cfg, id2label)
 - `example_inputs(imgsz, device)` -> kwargs dict for `model(**kw)` at batch 1 (speed table, `doordet/speed.py`)
 
 ## Auto trainer (`train/configs/search_v2.yaml`)
-Per hardware budget (ms per image), an Optuna search for the best val score among the models and resolutions fast enough.
+Per hardware budget (GFLOPs per image by default, `budget_metric: ms` for 4060 time), an Optuna search for the best val score among the models and resolutions that fit.
 ```
 train/.venv/bin/python train/speed_table.py train/configs/search_v2.yaml                  # 1. ms + GFLOPs per model x imgsz (GPU, once)
-train/.venv/bin/python train/search.py train/configs/search_v2.yaml --budget mid_10ms     # 2. one search per budget (or --all)
-train/.venv/bin/python train/plot_search.py train/configs/search_v2.yaml                  # 3. runs/search/<name>/accuracy_vs_speed.png
+train/.venv/bin/python train/search.py train/configs/search_v2.yaml --budget small_30g     # 2. one search per budget (or --all)
+train/.venv/bin/python train/plot_search.py train/configs/search_v2.yaml                  # 3. runs/search/<name>/accuracy_vs_cost.png
 ```
 - Search keys (`doordet/search.py`, unknown keys are an error): `name`, `base` (training config each trial starts from), `overrides` (applied on top of base),
-  `speed_table`, `budgets` (name -> ms, null = no limit), `space` (models, imgsz low/high/step, lr, weight_decay, warmup_steps, batch), `objective`, `pruner`, `stop`,
+  `speed_table`, `budget_metric` (gflops / ms), `budgets` (name -> max per image, null = no limit), `space` (models, imgsz low/high/step, lr, weight_decay, warmup_steps, batch), `objective`, `pruner`, `stop`,
   `keep_checkpoints`, `seed`, `storage` (Optuna SQLite, default `optuna.db`). `key=value` overrides work like in the training configs.
-- A trial only picks model x imgsz combinations measured in the speed table at or under the budget (ms at batch 1, same precision as training; OOM entries are skipped).
+- A trial only picks model x imgsz combinations measured in the speed table at or under the budget (GFLOPs per image, or ms at batch 1 in training precision; OOM entries are skipped). Why GFLOPs: on the 4060 at batch 1 the ms barely changed with resolution (overhead + noise), GFLOPs grow steadily and hold on any machine.
 - `objective`: val metric to maximise, `map` by default, or `ap_door`, `ap_handle`, `map_small`, ... Trials never touch the test split.
 - `pruner`: `median` (default) or `hyperband`; `grace_epochs` (default 5) = no trial is stopped before that many epochs.
 - `stop`: stops after `patience` finished trials without a gain > `min_delta` (not before `min_trials`), or after `max_hours`.

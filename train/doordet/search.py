@@ -1,4 +1,4 @@
-"""Auto trainer: per hardware budget (ms per image), an Optuna search over models x resolution x hyperparameters."""
+"""Auto trainer: per hardware budget (GFLOPs or ms per image), an Optuna search over models x resolution x hyperparameters."""
 import copy, json, pathlib
 import optuna
 import torch
@@ -8,7 +8,7 @@ from . import config, loop
 
 DEFAULTS = {
     "name": None, "base": None, "speed_table": None, "budgets": None, "space": None,  # required
-    "objective": "map", "overrides": {},
+    "objective": "map", "overrides": {}, "budget_metric": "gflops",  # what budgets limit: gflops or ms (per image)
     "pruner": {"type": "median", "grace_epochs": 5},
     "stop": {"patience": 10, "min_trials": 15, "min_delta": 0.005, "max_hours": 24},
     "keep_checkpoints": 3, "seed": 0, "storage": "sqlite:///optuna.db",
@@ -47,6 +47,8 @@ def load(path, overrides=None):
             s[k] = v
     if s["objective"] not in config.METRICS:
         raise ValueError(f"unknown objective {s['objective']!r}; available: {', '.join(config.METRICS)}")
+    if s["budget_metric"] not in ("gflops", "ms"):
+        raise ValueError(f"unknown budget_metric {s['budget_metric']!r}; available: gflops, ms")
     if s["pruner"]["type"] not in ("median", "hyperband"):
         raise ValueError(f"unknown pruner type {s['pruner']['type']!r}; available: median, hyperband")
     if s["keep_checkpoints"] < 1:
@@ -62,13 +64,13 @@ def imgsizes(space):
     return range(i["low"], i["high"] + 1, i["step"])
 
 
-def feasible(table, space, budget_ms):
-    """{checkpoint: sorted allowed imgsz}: measured, and (if the budget is set) fast enough."""
-    ms = {(e["family"], e["checkpoint"], e["imgsz"]): e["ms"] for e in table["entries"] if e.get("ms") is not None}
+def feasible(table, space, budget, metric="gflops"):
+    """{checkpoint: sorted allowed imgsz}: measured, and (if the budget is set) metric (gflops or ms) <= budget."""
+    cost = {(e["family"], e["checkpoint"], e["imgsz"]): e[metric] for e in table["entries"] if e.get("ms") is not None}
     out = {}
     for m in space["models"]:
-        ok = [z for z in imgsizes(space) if (m["family"], m["checkpoint"], z) in ms
-              and (budget_ms is None or ms[(m["family"], m["checkpoint"], z)] <= budget_ms)]
+        ok = [z for z in imgsizes(space) if (m["family"], m["checkpoint"], z) in cost
+              and (budget is None or cost[(m["family"], m["checkpoint"], z)] <= budget)]
         if ok:
             out[m["checkpoint"]] = sorted(ok)
     return out
@@ -134,9 +136,9 @@ def run(s, budget_name, train_fn=None):
     if pruner is None:
         pruner = optuna.pruners.HyperbandPruner(min_resource=max(p["grace_epochs"], 1), max_resource=max(base["epochs"], 1))
     table = json.loads(pathlib.Path(s["speed_table"]).read_text())
-    allowed = feasible(table, s["space"], s["budgets"][budget_name])
+    allowed = feasible(table, s["space"], s["budgets"][budget_name], s["budget_metric"])
     if not allowed:
-        raise ValueError(f"no model fits budget {budget_name!r} ({s['budgets'][budget_name]} ms) in {s['speed_table']}")
+        raise ValueError(f"no model fits budget {budget_name!r} ({s['budgets'][budget_name]} {s['budget_metric']}) in {s['speed_table']}")
     for k, v in s["overrides"].items():
         _set(base, k, v)
     base = config.resolve(base)

@@ -94,7 +94,7 @@ def table(entries):
 
 def write_search(tmp_path, base, **kw):
     d = {"name": "unit", "base": str(base), "speed_table": str(tmp_path / "speed.json"),
-         "budgets": {"fast": 5, "any": None}, "space": SPACE, "storage": f"sqlite:///{tmp_path / 'optuna.db'}"}
+         "budgets": {"fast": 10, "any": None}, "space": SPACE, "storage": f"sqlite:///{tmp_path / 'optuna.db'}"}
     d.update(kw)
     p = tmp_path / "search.yaml"
     p.write_text(yaml.safe_dump(d))
@@ -105,6 +105,10 @@ def test_search_config_defaults_and_checks(tmp_path):
     base = tmp_path / "base.yaml"; base.write_text("export: x\n")
     s = search.load(write_search(tmp_path, base))
     assert s["objective"] == "map"  # Madelief: overall mAP by default ...
+    assert s["budget_metric"] == "gflops"  # Madelief 2026-10-29: budgets in GFLOPs (4060 ms too noisy at batch 1), ms still logged
+    assert search.load(write_search(tmp_path, base, budget_metric="ms"))["budget_metric"] == "ms"
+    with pytest.raises(ValueError, match="budget_metric"):
+        search.load(write_search(tmp_path, base, budget_metric="fps"))
     assert s["pruner"] == {"type": "median", "grace_epochs": 5}  # grace epochs always on, as a default
     assert s["stop"]["patience"] > 0 and s["stop"]["max_hours"] > 0
     assert s["keep_checkpoints"] == 3
@@ -119,10 +123,11 @@ def test_search_config_defaults_and_checks(tmp_path):
 def test_feasible_filters_by_measured_speed():
     sizes = [320, 352, 384, 416, 448]
     t = table([("fake-a", s, 2 + i) for i, s in enumerate(sizes)] + [("fake-b", s, 6 + i) for i, s in enumerate(sizes)])
-    assert search.feasible(t, SPACE, 5) == {"fake-a": [320, 352, 384, 416]}  # fake-b too slow at every size: left out
-    assert search.feasible(t, SPACE, None) == {"fake-a": sizes, "fake-b": sizes}
+    assert search.feasible(t, SPACE, 5, "ms") == {"fake-a": [320, 352, 384, 416]}  # fake-b too slow at every size: left out
+    assert search.feasible(t, SPACE, 10, "gflops") == {"fake-a": [320, 352, 384, 416]}  # table(): gflops = 2 x ms
+    assert search.feasible(t, SPACE, None, "gflops") == {"fake-a": sizes, "fake-b": sizes}
     t2 = table([("fake-a", 320, 1)])  # not measured = not allowed
-    assert search.feasible(t2, SPACE, None) == {"fake-a": [320]}
+    assert search.feasible(t2, SPACE, None, "gflops") == {"fake-a": [320]}
 
 
 def test_suggest_stays_in_space_and_budget():
@@ -188,6 +193,6 @@ def test_run_search_end_to_end(tmp_path, export_dir, monkeypatch):
     trial_runs = [x for x in runs if x.data.tags.get("study") == "unit_fast" and "trial" in x.data.tags]
     assert len(trial_runs) == 3
     for x in trial_runs:
-        assert x.data.params["model.checkpoint"] == "fake-a"  # fake-b is over the 5 ms budget
+        assert x.data.params["model.checkpoint"] == "fake-a"  # fake-b (18 GFLOPs) is over the 10 GFLOPs budget
         assert x.data.tags["budget"] == "fast" and float(x.data.tags["speed_ms"]) == 3 and "gflops" in x.data.tags
     assert len(list((tmp_path / "runs").rglob("best"))) == 1  # keep_checkpoints=1
