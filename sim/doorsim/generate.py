@@ -10,7 +10,8 @@ Output (one folder per dataset):
   frames/000000/depth.png      sensor-like depth, uint16 mm, 0 = no value (glass handled per glass_depth)
   frames/000000/depth_gt.png   rendered depth (glass solid), same format
   frames/000000/seg.png        object id per pixel (uint8, 0 = background; ids in dataset.json attributes)
-  frames/000000/meta.json      frame metadata (sim/doorsim/frames.py) + camera pose, scene, glass depth mode
+  frames/000000/meta.json      frame metadata (sim/doorsim/frames.py) + camera pose, scene, glass depth mode;
+                               with clutter: visible_fraction per door / handle and the placed clutter items
 """
 import argparse, datetime, json, pathlib, subprocess, sys, time
 import numpy as np
@@ -19,7 +20,7 @@ from PIL import Image
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import frames, glass, gzsim, sampling
+from doorsim import clutter, frames, glass, gzsim, sampling
 
 
 def git_state():
@@ -57,6 +58,8 @@ def main():
     rng = np.random.default_rng(cfg["seed"])
     rej, gcfg = cfg["reject"], cfg["glass_depth"]
     glass_ids = {o["id"]: n for n, o in attrs["objects"].items() if o.get("part") == "glass_pane"}
+    ccfg = cfg.get("clutter")
+    clutter_ids = {p["name"]: p["id"] for p in clutter.POOL}
     keys = ["rgb", "depth", "seg", "boxes", "boxes3d"]
     info = {"world": world, "config": cfg, "seed": cfg["seed"], "git": git_state(),
             "created": datetime.datetime.now().isoformat(timespec="seconds"), "attributes": attrs}
@@ -69,10 +72,17 @@ def main():
             light = sampling.lights(rng, cfg["lights"])
             for name, l in light.items():
                 sim.set_light(name, cfg["lights"][name], l["diffuse"])
+            placed = None
+            if ccfg:
+                placed = clutter.place(rng, clutter.POOL, ccfg)
+                sim.place_clutter(placed)
             joints = sim.set_doors(targets, max_steps=cfg.get("settle_steps", 6000))
             for v in range(cfg["views_per_scene"]):
                 for _ in range(rej["max_tries"]):
                     cam = sampling.view(rng, attrs, cfg["view"])
+                    if placed and clutter.camera_blocked(cam["world_position"], placed, clutter.POOL, ccfg["camera_margin"]):
+                        rejected += 1
+                        continue
                     sim.set_pose("rig", cam["world_position"], cam["world_rpy"])
                     m = sim.render(keys)
                     depth_gt = gzsim.image_array(m["depth"], "depth")
@@ -94,11 +104,21 @@ def main():
                     if mode != "holes":
                         behind = sim.depth_without_panes(in_view)
                 depth = glass.apply(depth_gt, mask, mode or "holes", rng, behind, gcfg.get("partial"))
+                extra = {"scene": scene, "view": v, "target_door": cam["target_door"],
+                         "sim_time_ns": gzsim.ns(m["rgb"].header.stamp), "lights": light, "glass_depth_mode": mode}
+                vis = None
+                if placed:
+                    in_scene = {n: p for n, p in placed.items() if p["in_scene"]}
+                    seg_clear = seg
+                    if np.isin(seg, [clutter_ids[n] for n in in_scene]).any():
+                        seg_clear = sim.seg_without_clutter(placed)
+                    vis = clutter.visible_fraction(seg, seg_clear, attrs)
+                    extra["clutter"] = in_scene
                 meta = frames.build_frame(attrs, b2, frames.boxes_from_msg(m["boxes3d"], "3d"), joints,
                                           {"world_position": cam["world_position"], "world_rpy": cam["world_rpy"]},
-                                          {"scene": scene, "view": v, "target_door": cam["target_door"],
-                                           "sim_time_ns": gzsim.ns(m["rgb"].header.stamp), "lights": light,
-                                           "glass_depth_mode": mode})
+                                          extra)
+                for n, f in (vis or {}).items():
+                    meta["objects"][n]["visible_fraction"] = f
                 save_frame(out / "frames" / f"{count:06d}", gzsim.image_array(m["rgb"], "rgb"), depth, depth_gt, seg, meta)
                 count += 1
             print(f"scene {scene + 1}/{cfg['scenes']}: {count} frames, {rejected} viewpoints rejected, {time.time() - t_start:.0f} s", flush=True)

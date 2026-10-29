@@ -195,11 +195,11 @@ def test_visible_fraction():
     seg_clear = np.zeros((10, 10), np.uint8)
     seg_clear[0:10, 0:4] = 11      # door A frame
     seg_clear[2:8, 1:3] = 13       # door A glass pane: counts as door A
-    seg_clear[5, 3] = 12           # handle A
+    seg_clear[5, 4] = 12           # handle A (next to the door, not on it)
     seg_clear[0:10, 6:10] = 21     # door B
     seg = seg_clear.copy()
     seg[0:5, 0:4] = 150            # clutter hides the top half of door A (frame + glass)
-    seg[5, 3] = 150                # and the whole handle
+    seg[5, 4] = 150                # and the whole handle
     f = clutter.visible_fraction(seg, seg_clear, ATTRS_V2)
     assert f["door_a"] == pytest.approx(0.5)
     assert f["handle_a"] == 0.0

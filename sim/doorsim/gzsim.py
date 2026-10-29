@@ -12,14 +12,17 @@ from gz.msgs10.boolean_pb2 import Boolean
 from gz.msgs10.camera_info_pb2 import CameraInfo
 from gz.msgs10.clock_pb2 import Clock
 from gz.msgs10.double_pb2 import Double
+from gz.msgs10.entity_pb2 import Entity
 from gz.msgs10.empty_pb2 import Empty
 from gz.msgs10.image_pb2 import Image
 from gz.msgs10.light_pb2 import Light
+from gz.msgs10.material_color_pb2 import MaterialColor
 from gz.msgs10.model_pb2 import Model
 from gz.msgs10.pose_pb2 import Pose
 from gz.msgs10.pose_v_pb2 import Pose_V
 from gz.msgs10.world_control_pb2 import WorldControl
 
+from doorsim.clutter import PARK
 SENSORS = {"rgb": ("/rgbd/image", Image), "depth": ("/rgbd/depth_image", Image), "seg": ("/seg/labels_map", Image),
            "boxes": ("/boxes", AnnotatedAxisAligned2DBox_V), "boxes3d": ("/boxes3d", AnnotatedOriented3DBox_V)}
 
@@ -59,6 +62,7 @@ class Sim:
         self.pane_pub = {n: (self.node.advertise(o["detach_topic"], Empty), self.node.advertise(o["attach_topic"], Empty))
                          for n, o in self.panes.items()}
         self.light_pub = self.node.advertise(f"/world/{world_name}/light_config", Light)
+        self.colour_pub = self.node.advertise(f"/world/{world_name}/material_color", MaterialColor)
         for _ in range(120):  # server start + rendering init
             if self._control():
                 break
@@ -156,6 +160,31 @@ class Sim:
         if "direction" in cfg:
             msg.direction.x, msg.direction.y, msg.direction.z = cfg["direction"]
         self.light_pub.publish(msg)
+
+    def set_colour(self, visual, rgb):
+        """Diffuse + ambient colour of a visual, named model::link::visual (e.g. "box_1::link::v")."""
+        c = {"r": rgb[0], "g": rgb[1], "b": rgb[2], "a": 1}
+        self.colour_pub.publish(MaterialColor(entity=Entity(name=visual, type=Entity.VISUAL), diffuse=c, ambient=c))
+
+    def place_clutter(self, placements):
+        """Move every clutter item to its placement (parked ones to the park spot) and recolour the shapes in the scene."""
+        for n, p in placements.items():
+            self.set_pose(n, p["position"], (0, 0, p["yaw"]))
+            if p["in_scene"] and p["colour"] is not None:
+                self.set_colour(f"{n}::link::v", p["colour"])
+
+    def seg_without_clutter(self, placements):
+        """Segmentation image of the current view with the in-scene clutter parked (for visible_fraction),
+        then the clutter is put back at its placements."""
+        used = {n: p for n, p in placements.items() if p["in_scene"]}
+        for n in used:
+            self.set_pose(n, PARK)
+        self.step(2)
+        seg = image_array(self.render(["seg"])["seg"], "seg")
+        for n, p in used.items():
+            self.set_pose(n, p["position"], (0, 0, p["yaw"]))
+        self.step(2)
+        return seg
 
     def depth_without_panes(self, panes):
         """Depth image with the given glass panes moved out of the way (see-through ground truth).
