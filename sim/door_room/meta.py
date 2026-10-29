@@ -1,9 +1,9 @@
 # Write the metadata for one frame: attributes.json, the door angles, and each object's 2D + 3D box.
-# usage: meta.py out.json boxes.txt boxes3d.txt door_a=<rad> door_b=<rad>
+# usage: meta.py <world>.attributes.json out.json boxes.txt boxes3d.txt door_a=<joint pos> door_b=<joint pos>
 #   boxes*.txt = raw output of `gz topic -e -t /boxes -n 1` (and /boxes3d); the box label is the object id.
-# 3D boxes and hinge axes are saved in the ROS optical camera frame: x right, y down, z forward (metres).
+# 3D boxes and hinge/slide axes are saved in the ROS optical camera frame: x right, y down, z forward (metres).
 import json, math, re, sys, pathlib
-attrs = json.loads((pathlib.Path(__file__).parent / "attributes.json").read_text())
+attrs = json.loads(pathlib.Path(sys.argv[1]).read_text())
 frame = {"classes": attrs["classes"], "camera": attrs["camera"], "objects": attrs["objects"]}
 by_id = {o["id"]: o for o in frame["objects"].values()}
 for o in by_id.values():
@@ -22,13 +22,13 @@ def blocks(path):
             sys.exit(f"box label {label} is not an id in attributes.json")
         yield by_id[label], b
 
-for o, b in blocks(sys.argv[2]):
+for o, b in blocks(sys.argv[3]):
     x0, y0 = field(b, "min_corner", "xy"); x1, y1 = field(b, "max_corner", "xy")
     o["box"] = {"x_min": int(x0), "y_min": int(y0), "x_max": int(x1), "y_max": int(y1)}
 
 # Gazebo's 3D boxes use a graphics camera frame (x right, y up, looking along -z).
 # To ROS optical = turn 180 deg about x: position (x, -y, -z), quaternion q_x180 * q.
-for o, b in blocks(sys.argv[3]):
+for o, b in blocks(sys.argv[4]):
     cx, cy, cz = field(b, "center", "xyz")
     qx, qy, qz, qw = field(b, "orientation", "xyzw")
     if qx == qy == qz == qw == 0:
@@ -36,7 +36,7 @@ for o, b in blocks(sys.argv[3]):
     o["box_3d"] = {"center": [cx, -cy, -cz], "orientation_xyzw": [qw, -qz, qy, -qx],
                    "size": field(b, "boxSize", "xyz")}
 
-# Hinge axes are fixed in the world; put them in the camera frame too.
+# Hinge and slide axes are fixed in the world; put them in the camera frame too (hinge_world -> hinge_cam).
 def rot(roll, pitch, yaw):
     cr, sr, cp, sp, cy, sy = math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)
     return [[cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr],
@@ -49,14 +49,14 @@ def to_cam(v, is_point):
     body = [sum(R[i][j] * v[i] for i in range(3)) for j in range(3)]  # R^T v
     return [-body[1], -body[2], body[0]]  # body -> optical
 for o in by_id.values():
-    if "hinge_world" in o:
-        h = o["hinge_world"]
-        o["hinge_cam"] = {"point": to_cam(h["point"], True), "direction": to_cam(h["direction"], False)}
+    for key in [k for k in o if k.endswith("_world")]:
+        h = o[key]
+        o[key[:-6] + "_cam"] = {"point": to_cam(h["point"], True), "direction": to_cam(h["direction"], False)}
 
-for arg in sys.argv[4:]:
-    name, angle = arg.split("=")
-    frame["objects"][name]["angle_rad"] = float(angle)
-    frame["objects"][name]["state"] = "closed" if float(angle) == 0 else "open"
-pathlib.Path(sys.argv[1]).write_text(json.dumps(frame, indent=2) + "\n")
+for arg in sys.argv[5:]:
+    name, pos = arg.split("=")
+    frame["objects"][name]["joint_pos"] = float(pos)  # unit in the object's "joint"
+    frame["objects"][name]["state"] = "closed" if float(pos) == 0 else "open"
+pathlib.Path(sys.argv[2]).write_text(json.dumps(frame, indent=2) + "\n")
 n2 = sum(o["box"] is not None for o in by_id.values()); n3 = sum(o["box_3d"] is not None for o in by_id.values())
-print(f"saved {sys.argv[1]} ({n2}/{len(by_id)} objects with a 2D box, {n3}/{len(by_id)} with a 3D box)")
+print(f"saved {sys.argv[2]} ({n2}/{len(by_id)} objects with a 2D box, {n3}/{len(by_id)} with a 3D box)")

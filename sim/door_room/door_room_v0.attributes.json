@@ -1,12 +1,14 @@
 {
-  "_note": "Ground truth per object for door_room_v0. 'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. Hinge side and push/pull are seen from the camera side of the wall. World frame: x toward the wall, y left, z up (metres). hinge_world = a point on the hinge axis + its direction, from the hinge joints in door_room_v0.sdf.",
+  "_note": "Ground truth per object for door_room_v0. 'joint' = how run_room.sh opens the door (open = command it sends). 'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. Hinge side and push/pull are seen from the camera side of the wall. World frame: x toward the wall, y left, z up (metres). hinge_world = a point on the hinge axis + its direction, from the hinge joints in door_room_v0.sdf.",
   "classes": {"1": "door", "2": "handle"},
   "camera": {"world_position": [0, 0, 1.2], "world_rpy": [0, 0, 0], "frame": "ROS optical: x right, y down, z forward"},
   "objects": {
     "door_a":   {"id": 11, "class": 1, "opening": "push", "hinge_side": "right", "door_type": "hinged", "glass": false,
+                 "joint": {"type": "revolute", "unit": "rad", "open": -1.2},
                  "hinge_world": {"point": [3.02, -1.44, 1.05], "direction": [0, 0, 1]}},
     "handle_a": {"id": 12, "class": 2, "handle_type": "lever", "door": "door_a"},
     "door_b":   {"id": 21, "class": 1, "opening": "pull", "hinge_side": "left",  "door_type": "hinged", "glass": false,
+                 "joint": {"type": "revolute", "unit": "rad", "open": -1.2},
                  "hinge_world": {"point": [2.98, 1.44, 1.05], "direction": [0, 0, 1]}},
     "handle_b": {"id": 22, "class": 2, "handle_type": "knob",  "door": "door_b"}
   }
