@@ -31,8 +31,8 @@ def make_dataset(root, n_scenes=10, views=3):
             d = root / "frames" / f"{i:06d}"
             d.mkdir(parents=True)
             (d / "rgb.png").write_bytes(b"png")
-            boxes = {"door_a": (100, 50, 300, 450), "handle_a": (280, 240, 296, 252),
-                     "door_b": (500, 60, 640, 470)}  # door_b touches the right edge
+            boxes = {"door_a": (100, 50, 299, 449), "handle_a": (280, 240, 295, 251),  # inclusive pixel indices
+                     "door_b": (500, 60, 639, 470)}  # door_b touches the right edge (last pixel 639)
             (d / "meta.json").write_text(json.dumps(frame_meta(s, v, boxes)))
             i += 1
     (root / "dataset.json").write_text(json.dumps({

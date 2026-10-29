@@ -38,8 +38,15 @@ Gazebo's depth camera sees glass as solid (it ignores transparency and visibilit
 
 Glass pixels come from the segmentation image: each pane is its own object with its own id.
 
+## Training export
+```bash
+python3 sim/doorsim/export.py datasets/door_room_v1_small          # → exports/door_room_v1_small/
+```
+YOLO (`images/`, `labels/`, `data.yaml`) + COCO (`coco/<split>.json`) from one dataset, split **by scene** 70/15/15 (seeded, `--seed`, `--ratios`), so views of one scene never sit in two splits. Images are symlinks to the dataset's `rgb.png`. All boxes kept; each COCO box carries `size_px`, `truncated` (touches the image edge) and the object's `attributes`. Gazebo 2D boxes are inclusive pixel indices (max 639 on a 640 image), so width = x_max − x_min + 1. Details in the `export.py` docstring.
+
 ## Files
 - `generate.py`: the generator (CLI)
+- `export.py`: YOLO + COCO training export (CLI)
 - `gzsim.py`: runs a headless world and drives it over gz-transport (pause/step, set pose, doors, lights, glass panes). Every step request also says `pause: true`: without it Gazebo un-pauses the world.
 - `sampling.py`: random door positions, lights and viewpoints
 - `glass.py`: the glass depth step
