@@ -13,11 +13,11 @@ train/.venv/bin/python train/train.py train/configs/dfine_s_640.yaml [key=value 
 train/.venv/bin/python train/train.py train/configs/smoke.yaml name=smoke              # quick end-to-end check
 train/.venv/bin/python -m pytest train/tests -q                                        # unit tests, no GPU or downloads
 ```
-Runs go to `runs/<name>/` (`best/` = best val-mAP weights, `config.json`); metrics, params and artifacts to `mlruns/`.
+Runs go to `runs/<name>/` (`best/` = best val-mAP weights, `config.json`); metrics + params to `mlflow.db` (SQLite), artifacts to `mlruns/`.
 
 ## MLflow UI
 ```
-train/.venv/bin/mlflow ui --backend-store-uri mlruns
+train/.venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 Logged: `train_loss`, `val_<metric>` per epoch, `test_<metric>` once for the best epoch, `train_seconds`, `imgs_per_sec_eval`,
 params (`model.*`, `imgsz`, `lr`, ..., `export.git_commit`, `export.seed`, `git_commit`, `git_dirty`).

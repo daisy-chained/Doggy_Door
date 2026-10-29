@@ -5,3 +5,4 @@ exports/
 .venv/
 mlruns/
 runs/
+mlflow.db

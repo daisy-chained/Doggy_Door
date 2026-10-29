@@ -47,7 +47,6 @@ def predict_all(adapter, loader, device, cfg):
 
 
 def train(cfg, run_name=None):
-    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")  # mlflow 3.17 refuses file:// stores otherwise
     import mlflow
     seed = cfg["seed"]
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)

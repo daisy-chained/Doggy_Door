@@ -10,7 +10,7 @@ DEFAULTS = {
     "epochs": 30, "batch": 8, "lr": 1e-4, "weight_decay": 1e-4, "warmup_steps": 100, "grad_clip": 1.0,
     "amp": True, "workers": 4, "seed": 0, "device": None,  # None -> cuda if available
     "out": str(REPO / "runs"), "name": None,
-    "mlflow": {"tracking_uri": (REPO / "mlruns").as_uri(), "experiment": "doggy-door"},
+    "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door"},
     "eval_every": 1, "score_threshold": 0.01,
 }
 NESTED = ("model", "mlflow")

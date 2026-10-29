@@ -141,7 +141,7 @@ def test_training_loop_logs_to_mlflow_and_saves_best(tmp_path, export_dir, monke
     monkeypatch.setitem(adapters.FAMILIES, "fake", FakeAdapter)
     cfg = config.resolve({"export": str(export_dir), "model": {"family": "fake"}, "epochs": 2, "batch": 2,
                           "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
-                          "mlflow": {"tracking_uri": (tmp_path / "mlruns").as_uri(), "experiment": "test"}})
+                          "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
     result = loop.train(cfg, run_name="unit")
     run = mlflow.get_run(result["run_id"])
     assert run.data.params["model.family"] == "fake" and run.data.params["imgsz"] == str(cfg["imgsz"])
