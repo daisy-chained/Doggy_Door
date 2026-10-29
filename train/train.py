@@ -9,7 +9,8 @@ def main():
         sys.exit(__doc__)
     cfg = config.load(sys.argv[1], sys.argv[2:])
     r = loop.train(cfg)
-    print(f"run {r['run_id']}  out {r['out']}  best epoch {r['best_epoch']}  best val_map {r['best_val_map']:.4f}  test_map {r['test']['map']:.4f}")
+    test = f"{r['test']['map']:.4f}" if r["test"] else "-"
+    print(f"run {r['run_id']}  out {r['out']}  best epoch {r['best_epoch']}  best val_map {r['best_val_map']:.4f}  test_map {test}")
 
 
 if __name__ == "__main__":

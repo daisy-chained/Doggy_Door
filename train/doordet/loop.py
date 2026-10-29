@@ -46,7 +46,7 @@ def predict_all(adapter, loader, device, cfg):
     return preds, n / max(time.time() - t0, 1e-9)
 
 
-def train(cfg, run_name=None):
+def train(cfg, run_name=None, on_eval=None):
     import mlflow
     seed = cfg["seed"]
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -75,12 +75,14 @@ def train(cfg, run_name=None):
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     export_info = json.loads((export / "export.json").read_text()) if (export / "export.json").exists() else {}
     src = export_info.get("source") or {}
-    best = {"map": -1.0, "epoch": None, "state": None}
+    sel = cfg["select_metric"]
+    best = {"value": -1.0, "map": -1.0, "epoch": None, "state": None}
     with mlflow.start_run(run_name=run_name) as run:
         params = dict(flatten(cfg))
         params.update({"export.git_commit": (src.get("git") or {}).get("commit"), "export.seed": export_info.get("seed"),
                        "export.source": src.get("path"), **git_info()})
         mlflow.log_params({k: str(v) for k, v in params.items()})
+        mlflow.set_tags({k: str(v) for k, v in cfg["mlflow"]["tags"].items()})
         if (export / "export.json").exists():
             mlflow.log_artifact(str(export / "export.json"))
         (out / "config.json").write_text(json.dumps(cfg, indent=2))
@@ -112,17 +114,22 @@ def train(cfg, run_name=None):
                 m = evaluate.coco_metrics(sets["val"].gt_path, preds)
                 mlflow.log_metrics({f"val_{k}": v for k, v in m.items()}, step=epoch)
                 print(f"epoch {epoch} loss {np.mean(losses):.4f} val_map {m['map']:.4f}", flush=True)
-                if m["map"] >= best["map"]:
-                    best.update(map=m["map"], epoch=epoch, state={k: v.detach().cpu().clone() for k, v in adapter.model.state_dict().items()})
+                if m[sel] >= best["value"]:
+                    best.update(value=m[sel], map=m["map"], epoch=epoch,
+                                state={k: v.detach().cpu().clone() for k, v in adapter.model.state_dict().items()})
                     adapter.save(out / "best")
+                if on_eval:
+                    on_eval(epoch, m)
         train_seconds = time.time() - t0
         mlflow.log_metrics({"train_seconds": train_seconds, "imgs_per_sec_eval": speed})
 
         if best["state"] is not None:
             adapter.model.load_state_dict(best["state"])
-        preds, _ = predict_all(adapter, loaders["test"], device, cfg)
-        test = evaluate.coco_metrics(sets["test"].gt_path, preds)
-        mlflow.log_metrics({f"test_{k}": v for k, v in test.items()})
-        print(f"test_map {test['map']:.4f}  train {train_seconds:.0f}s  eval {speed:.1f} img/s", flush=True)
-        return {"run_id": run.info.run_id, "out": str(out), "best_epoch": best["epoch"],
-                "best_val_map": best["map"], "test": test}
+        test = None
+        if cfg["test_eval"]:
+            preds, _ = predict_all(adapter, loaders["test"], device, cfg)
+            test = evaluate.coco_metrics(sets["test"].gt_path, preds)
+            mlflow.log_metrics({f"test_{k}": v for k, v in test.items()})
+            print(f"test_map {test['map']:.4f}  train {train_seconds:.0f}s  eval {speed:.1f} img/s", flush=True)
+        return {"run_id": run.info.run_id, "out": str(out), "best_epoch": best["epoch"], "best_metric": sel,
+                "best_value": best["value"], "best_val_map": best["map"], "test": test}

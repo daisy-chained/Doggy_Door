@@ -1,4 +1,4 @@
-"""Model families. An adapter has: model, collate(batch), loss(inputs, device), predict(inputs, device), save(path)."""
+"""Model families. An adapter has: model, collate(batch), loss(inputs, device), predict(inputs, device), save(path), example_inputs(imgsz, device)."""
 from .hf import HFAdapter
 
 FAMILIES = {"hf": HFAdapter}

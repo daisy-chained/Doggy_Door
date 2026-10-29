@@ -42,6 +42,9 @@ class HFAdapter:
         return {i: {"boxes": r["boxes"].float().cpu().numpy(), "scores": r["scores"].float().cpu().numpy(),
                     "labels": r["labels"].cpu().numpy()} for i, r in zip(inputs["image_ids"], outputs)}
 
+    def example_inputs(self, imgsz, device):
+        return {"pixel_values": torch.zeros(1, 3, imgsz, imgsz, device=device)}
+
     def save(self, path):
         self.model.save_pretrained(path)
         self.processor.save_pretrained(path)

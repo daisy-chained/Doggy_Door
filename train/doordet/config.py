@@ -2,6 +2,8 @@
 import pathlib
 import yaml
 
+from .evaluate import STATS
+
 REPO = pathlib.Path(__file__).resolve().parents[2]
 DEFAULTS = {
     "export": None,  # required: exporter output folder
@@ -10,9 +12,12 @@ DEFAULTS = {
     "epochs": 30, "batch": 8, "lr": 1e-4, "weight_decay": 1e-4, "warmup_steps": 100, "grad_clip": 1.0,
     "amp": True, "workers": 4, "seed": 0, "device": None,  # None -> cuda if available
     "out": str(REPO / "runs"), "name": None,
-    "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door"},
+    "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door", "tags": {}},
     "eval_every": 1, "score_threshold": 0.01,
+    "test_eval": True,  # score the test split once at the end (the search turns this off)
+    "select_metric": "map",  # val metric that picks the best epoch
 }
+METRICS = (*STATS, "ap_door", "ap_handle")
 NESTED = ("model", "mlflow")
 
 
@@ -29,6 +34,8 @@ def resolve(d):
             cfg[k].update(v)
         else:
             cfg[k] = v
+    if cfg["select_metric"] not in METRICS:
+        raise ValueError(f"unknown select_metric {cfg['select_metric']!r}; available: {', '.join(METRICS)}")
     if not cfg["export"]:
         raise ValueError("config key 'export' is required")
     if cfg["device"] is None:
