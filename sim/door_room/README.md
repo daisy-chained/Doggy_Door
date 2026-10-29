@@ -24,7 +24,7 @@ Example frames: v0 [closed](example/closed.png) · [open](example/open.png) — 
 ## Labels and attributes
 Classes: `1` door · `2` handle. Walls and floor are background.
 
-In Gazebo, each object gets its **own id** as its label (`11` door A, `12` handle A, `21` door B, `22` handle B; `0` = background, Gazebo allows at most 255). That way every box says which object it belongs to. `<room>.attributes.json` maps each id to its object and class, so exporting for training turns the ids back into door / handle.
+In Gazebo, each object gets its **own id** as its label (`11` door A, `12` handle A, `21` door B, `22` handle B, and in v1 `13` = door A's glass pane; `0` = background, Gazebo allows at most 255). That way every box says which object it belongs to. `<room>.attributes.json` maps each id to its object and class, so exporting for training turns the ids back into door / handle.
 
 Everything else is an **attribute**, not a class: handle type (`lever`, `knob`, `flush_pull`), opening (`push`, `pull`, `slide`), hinge side or slide direction, door type (`hinged`, `sliding`), glass. That way each property can get its own classifier and its own confidence, and new properties don't multiply the number of classes. Handles point to their door. Each door also has a `joint` entry: how `run_room.sh` opens it.
 
@@ -42,13 +42,15 @@ Everything else is an **attribute**, not a class: handle type (`lever`, `knob`, 
 - Hinged doors: the panel is a link on a **revolute joint** (the hinge) with limits, moved by a `JointPositionController`. The hinge axis sits on the panel face on the opening side; with the axis in the middle of the panel, the corner hit the door jamb.
 - Sliding door: the panel hangs on the camera side of the wall on a **prismatic joint** along the wall, and is 0.98 m wide so it overlaps the 0.9 m opening.
 - **Handles are separate models**, held to the panel by a `DetachableJoint`. When the handle was part of the door model, the bounding-box camera merged it into the door's box (one box per model).
-- Glass: the pane is a transparent visual (`transparency 0.85`) with `visibility_flags 2`.
+- Glass (v1): the pane is its **own model** `glass_a` (id `13`, `class: null`, `part_of: door_a`), held to the panel by a second `DetachableJoint` with its own detach/attach topics, so the dataset generator can find its pixels and move it away for a see-through depth render. Transparent visual (`transparency 0.85`) with `visibility_flags 2`.
+- v1 doors publish their joint state (`JointStatePublisher`), so the generator records where each door actually ended up.
+- The dataset generator for these rooms is in [`sim/doorsim/`](../doorsim/README.md).
 - `grab.py` saves a frame as PNG with PIL.
 
 ## Glass and sensors (tested 2026-10-29)
 - RGB camera, 2D/3D boxes, segmentation: see the glass door as normal (boxes are there, the pane is see-through in RGB).
 - A `gpu_lidar` with `visibility_mask 4294967293` **sees through** the pane (no hit), like a real lidar mostly does.
-- Gazebo's **depth camera ignores visibility masks** (tried the RGB-D and a separate depth camera, high and low mask bits), so in depth the glass looks **solid**. Real depth cameras usually give holes or see through glass. Making the depth realistic needs a step after rendering; not built yet.
+- Gazebo's **depth camera ignores visibility masks** (tried the RGB-D and a separate depth camera, high and low mask bits), so in depth the glass looks **solid**. Real depth cameras usually give holes or see through glass. The dataset generator's glass depth step makes it realistic after rendering (holes / see-through / partial), see [`sim/doorsim/`](../doorsim/README.md).
 
 ## Known limits / open points
 - Handle boxes are small (about 5–20 px at 3 m in 640×480). Something to look at for handle detection (closer views, higher resolution, or a crop step).

@@ -1,15 +1,12 @@
 {
-  "_note": "Ground truth per object for door_room_v1. 'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. Hinge side, push/pull and slide direction are seen from the camera side of the wall. World frame: x toward the wall, y left, z up (metres). hinge_world / slide_world = a point + direction from the joints in door_room_v1.sdf. 'joint' = how run_room.sh opens the door (open = command it sends).",
+  "_note": "Ground truth per object for door_room_v1. 'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. Hinge side, push/pull and slide direction are seen from the camera side of the wall. World frame: x toward the wall, y left, z up (metres). hinge_world / slide_world = a point + direction from the joints in door_room_v1.sdf. 'joint' = how run_room.sh opens the door (open = command it sends). front_world = door centre on the wall face + the direction the door faces (toward the camera side), used to place viewpoints. Objects with class null are parts of another object (part_of), e.g. a glass pane: merge into the parent for segmentation, no box of their own.",
   "classes": {"1": "door", "2": "handle"},
   "camera": {"world_position": [0, 0, 1.2], "world_rpy": [0, 0, 0], "frame": "ROS optical: x right, y down, z forward"},
   "objects": {
-    "door_a":   {"id": 11, "class": 1, "opening": "push", "hinge_side": "right", "door_type": "hinged", "glass": true,
-                 "joint": {"type": "revolute", "unit": "rad", "open": -1.2},
-                 "hinge_world": {"point": [3.02, -1.44, 1.05], "direction": [0, 0, 1]}},
+    "door_a": {"id": 11, "class": 1, "opening": "push", "hinge_side": "right", "door_type": "hinged", "glass": true, "joint": {"name": "hinge", "type": "revolute", "unit": "rad", "open": -1.2, "range": [-1.6, 0]}, "hinge_world": {"point": [3.02, -1.44, 1.05], "direction": [0, 0, 1]}, "front_world": {"point": [2.95, -1.0, 1.05], "direction": [-1, 0, 0]}},
     "handle_a": {"id": 12, "class": 2, "handle_type": "lever", "door": "door_a"},
-    "door_b":   {"id": 21, "class": 1, "opening": "slide", "slide_direction": "left", "door_type": "sliding", "glass": false,
-                 "joint": {"type": "prismatic", "unit": "m", "open": 0.85},
-                 "slide_world": {"point": [2.91, 1.0, 1.06], "direction": [0, 1, 0]}},
+    "glass_a": {"id": 13, "class": null, "part": "glass_pane", "part_of": "door_a", "detach_topic": "/glass_a/detach", "attach_topic": "/glass_a/attach"},
+    "door_b": {"id": 21, "class": 1, "opening": "slide", "slide_direction": "left", "door_type": "sliding", "glass": false, "joint": {"name": "slide", "type": "prismatic", "unit": "m", "open": 0.85, "range": [0, 0.9]}, "slide_world": {"point": [2.91, 1.0, 1.06], "direction": [0, 1, 0]}, "front_world": {"point": [2.95, 1.0, 1.05], "direction": [-1, 0, 0]}},
     "handle_b": {"id": 22, "class": 2, "handle_type": "flush_pull", "door": "door_b"}
   }
 }

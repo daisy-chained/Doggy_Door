@@ -1,0 +1,33 @@
+# Small test dataset for door room v1: 3 scenes x 8 views = 24 frames.
+world: door_room_v1
+seed: 0
+scenes: 3
+views_per_scene: 8
+settle_steps: 6000          # max physics steps (1 ms) to let the doors reach their new position
+
+doors:                      # per scene
+  p_closed: 0.3             # chance a door is closed
+  min_open_fraction: 0.1    # otherwise opened 10..100 % of its range
+
+lights:                     # per scene: base colour (from the world file) x intensity, plus a small tint
+  ceiling_light: {type: point, base: [0.8, 0.8, 0.75], intensity: [0.3, 1.2], tint: 0.1,
+                  range: 8, attenuation: [0.5, 0.1, 0.02], cast_shadows: false}
+  sun: {type: directional, base: [0.9, 0.9, 0.9], intensity: [0.3, 1.0], tint: 0.05,
+        direction: [-0.3, 0.2, -0.9], cast_shadows: true}
+
+view:                       # per frame: camera in front of a random door
+  distance: [0.5, 4.0]      # m from the door centre (on the wall face)
+  angle_deg: 60             # max angle off straight in front
+  height: [0.3, 1.5]        # camera height, m (small to tall robots)
+  target_height: [0.6, 1.6] # aim point on the door, m
+  target_jitter: 0.3        # aim point shift along the wall, m
+  roll_deg: 0
+
+reject:                     # a viewpoint is tried again when
+  min_depth: 0.2            # something is closer than this (camera inside / against a door)
+  need_target_box: true     # the door it aims at isn't in the image
+  max_tries: 20
+
+glass_depth:                # per frame with glass in view
+  mix: {holes: 0.4, see_through: 0.3, partial: 0.3}
+  partial: {holes: 0.35, see_through: 0.35, cell: 32}   # rest of the glass keeps its surface depth

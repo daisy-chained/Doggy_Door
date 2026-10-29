@@ -4,9 +4,9 @@
     Door A (y = -1): GLASS hinged door (aluminium frame + glass pane), lever, hinge on the right (seen from the camera), push.
     Door B (y = +1): SLIDING wooden door on the camera side of the wall, flush pull, slides to the left (seen from the camera).
   Both openings get a door frame trim (part of the wall = background).
-  Labels = one id per object (11 door_a, 12 handle_a, 21 door_b, 22 handle_b; 0 = background, max 255).
+  Labels = one id per object (11 door_a, 12 handle_a, 13 glass_a = door A's glass pane, 21 door_b, 22 handle_b; 0 = background, max 255).
   door_room_v1.attributes.json maps each id to its object, class (1 door, 2 handle) and attributes.
-  Glass pane has visibility_flags 2: a lidar with visibility_mask 4294967293 sees through it (tested).
+  Glass pane (own model glass_a, attached to door A) has visibility_flags 2: a lidar with visibility_mask 4294967293 sees through it (tested).
   Gazebo's depth camera ignores visibility masks, so in depth the glass looks solid (tested 2026-10-29).
   Open: gz topic -t /door_a/cmd_pos -m gz.msgs.Double -p 'data: -1.2'   (radians, -1.6 .. 0)
         gz topic -t /door_b/cmd_pos -m gz.msgs.Double -p 'data: 0.85'   (metres, 0 .. 0.9)
@@ -85,13 +85,6 @@
         <visual name="stile_lock"><pose>0 0.39 0 0 0 0</pose><geometry><box><size>0.04 0.1 2.08</size></box></geometry><material><diffuse>0.6 0.62 0.65 1</diffuse><specular>0.5 0.5 0.5 1</specular></material></visual>
         <visual name="rail_top"><pose>0 0 0.99 0 0 0</pose><geometry><box><size>0.04 0.68 0.1</size></box></geometry><material><diffuse>0.6 0.62 0.65 1</diffuse><specular>0.5 0.5 0.5 1</specular></material></visual>
         <visual name="rail_bottom"><pose>0 0 -0.97 0 0 0</pose><geometry><box><size>0.04 0.68 0.14</size></box></geometry><material><diffuse>0.6 0.62 0.65 1</diffuse><specular>0.5 0.5 0.5 1</specular></material></visual>
-        <visual name="glass">
-          <pose>0 0 0.01 0 0 0</pose>
-          <geometry><box><size>0.01 0.68 1.84</size></box></geometry>
-          <material><diffuse>0.75 0.88 0.92 1</diffuse><specular>0.9 0.9 0.9 1</specular></material>
-          <transparency>0.85</transparency>
-          <visibility_flags>2</visibility_flags>
-        </visual>
       </link>
       <joint name="hinge" type="revolute">
         <parent>frame_anchor</parent>
@@ -113,7 +106,32 @@
         <child_model>handle_a</child_model>
         <child_link>link</child_link>
       </plugin>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">
+        <parent_link>panel</parent_link>
+        <child_model>glass_a</child_model>
+        <child_link>link</child_link>
+        <detach_topic>/glass_a/detach</detach_topic>
+        <attach_topic>/glass_a/attach</attach_topic>
+      </plugin>
+      <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
       <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>11</label></plugin>
+    </model>
+
+    <!-- glass_a: the glass pane of door A as its own model (own id), so its pixels can be found in the segmentation image.
+         Held to the panel by a DetachableJoint; the dataset generator detaches it and moves it away for a see-through depth render. -->
+    <model name="glass_a">
+      <pose>3 -1 1.06 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        <inertial><mass>0.5</mass><inertia><ixx>0.15</ixx><iyy>0.15</iyy><izz>0.02</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+        <visual name="glass">
+          <geometry><box><size>0.01 0.68 1.84</size></box></geometry>
+          <material><diffuse>0.75 0.88 0.92 1</diffuse><specular>0.9 0.9 0.9 1</specular></material>
+          <transparency>0.85</transparency>
+          <visibility_flags>2</visibility_flags>
+        </visual>
+      </link>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>13</label></plugin>
     </model>
 
     <!-- handle_a: its own model so the bounding-box camera gives it its own box; held to the door panel by a DetachableJoint -->
@@ -176,6 +194,7 @@
         <child_model>handle_b</child_model>
         <child_link>link</child_link>
       </plugin>
+      <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
       <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>21</label></plugin>
     </model>
 
