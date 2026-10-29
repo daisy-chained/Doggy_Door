@@ -1,0 +1,30 @@
+# Auto trainer (approach A): per hardware budget, an Optuna search for the best val score among models fast enough.
+#   train/.venv/bin/python train/speed_table.py train/configs/search_v2.yaml       # step 1: speed per model x resolution
+#   train/.venv/bin/python train/search.py train/configs/search_v2.yaml --budget mid_10ms
+name: v2_first
+base: train/configs/dfine_s_640.yaml            # training config every trial starts from
+overrides: {export: exports/door_room_v2_2k}    # applied on top of base, before the search's own choices
+objective: map              # val metric to maximise: map (overall, default) or ap_door / ap_handle / map_small / ...
+speed_table: runs/speed/v2_first.json
+budgets:                    # ms per image on the laptop 4060 (batch 1, same precision as training); null = no limit
+  fast_5ms: 5
+  mid_10ms: 10
+  slow_20ms: 20
+  any: null
+space:
+  models:
+    - {family: hf, checkpoint: ustc-community/dfine-nano-coco}
+    - {family: hf, checkpoint: ustc-community/dfine-small-coco}
+    - {family: hf, checkpoint: ustc-community/dfine-medium-coco}
+    - {family: hf, checkpoint: PekingU/rtdetr_v2_r18vd}
+    - {family: hf, checkpoint: PekingU/rtdetr_v2_r50vd}
+  imgsz: {low: 320, high: 800, step: 32}
+  lr: {low: 2.0e-5, high: 5.0e-4, log: true}
+  weight_decay: {low: 1.0e-6, high: 1.0e-3, log: true}
+  warmup_steps: {low: 0, high: 500}
+  batch: [4, 8, 16]
+pruner: {type: median, grace_epochs: 5}     # no trial is stopped before 5 epochs; type: median or hyperband
+stop: {patience: 10, min_trials: 15, min_delta: 0.005, max_hours: 24}   # stop after 10 trials without a gain > 0.005
+keep_checkpoints: 3         # best/ weights kept for the 3 best trials of each search, the rest deleted
+seed: 0
+storage: sqlite:///optuna.db

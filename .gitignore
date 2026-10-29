@@ -6,3 +6,4 @@ exports/
 mlruns/
 runs/
 mlflow.db
+optuna.db
