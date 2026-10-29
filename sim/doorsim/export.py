@@ -56,7 +56,7 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
             w, h = b["x_max"] - b["x_min"] + 1, b["y_max"] - b["y_min"] + 1  # Gazebo boxes = inclusive pixel indices
             rows.append(f"{o['class'] - 1} {(b['x_min'] + w / 2) / W:.6f} {(b['y_min'] + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
             coco[sp]["annotations"].append({
-                "id": len(coco[sp]["annotations"]), "image_id": image["id"], "category_id": o["class"],
+                "id": len(coco[sp]["annotations"]) + 1, "image_id": image["id"], "category_id": o["class"],
                 "bbox": [b["x_min"], b["y_min"], w, h], "area": w * h, "iscrowd": 0, "segmentation": [],
                 "object": name, "object_id": o["id"], "size_px": [w, h],
                 "truncated": b["x_min"] <= 0 or b["y_min"] <= 0 or b["x_max"] >= W - 1 or b["y_max"] >= H - 1,

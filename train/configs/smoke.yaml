@@ -1,0 +1,5 @@
+export: exports/door_room_v1_small
+model: {family: hf, checkpoint: ustc-community/dfine-small-coco}
+imgsz: 320
+epochs: 2
+batch: 4
