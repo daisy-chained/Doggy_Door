@@ -15,6 +15,13 @@ train/.venv/bin/python -m pytest train/tests -q                                 
 ```
 Runs go to `runs/<name>/` (`best/` = best val-mAP weights, `config.json`); metrics + params to `mlflow.db` (SQLite), artifacts to `mlruns/`.
 
+## Score on other levels
+```
+train/.venv/bin/python train/score.py runs/<name> exports/v3_test_vis2 exports/v3_test_vis8 --out results.jsonl   # test split of each export
+train/.venv/bin/python train/plot_levels.py results.jsonl --axis visibility_m                                    # or light_level
+```
+`score.py` loads `runs/<name>/best` with the run's `config.json`, scores each export (made from fixed-level datasets, see `sim/doorsim/README.md`) and appends one JSON line per export: run, export, split, images, model, imgsz, levels (`visibility_m`, `light_level`, `headlight`, read from `export.json`), metrics, `gflops` (when `config.json` has it). `plot_levels.py` draws mAP against the level (log x axis), one line per run labelled with its GFLOPs.
+
 ## MLflow UI
 ```
 train/.venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db

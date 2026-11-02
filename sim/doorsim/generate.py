@@ -3,6 +3,8 @@
 usage (system Python with ROS sourced, no venv active):
   source /opt/ros/jazzy/setup.bash
   python3 sim/doorsim/generate.py sim/configs/door_room_v1_small.yaml [--out DIR] [--seed N]
+  --split test [--export-seed N]   render only the scenes the exporter would put in that split
+  --light-level L [--headlight H]  every scene at one fixed light level (v3 worlds), headlight 0 unless given
 
 Output (one folder per dataset):
   dataset.json                 config, seed, world, git commit, camera intrinsics, attributes, counts
@@ -20,7 +22,7 @@ from PIL import Image
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import clutter, frames, glass, gzsim, sampling
+from doorsim import clutter, export, frames, glass, sampling  # gzsim (needs the gz python module) is imported in main()
 
 
 def git_state():
@@ -38,16 +40,35 @@ def save_frame(d, rgb, depth, depth_gt, seg, meta):
     (d / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
 
+def scenes_to_render(n_scenes, split=None, export_seed=0, ratios=(0.7, 0.15, 0.15)):
+    """Scene numbers to render: all, or only those the exporter puts in `split`."""
+    if split is None:
+        return list(range(n_scenes))
+    return sorted(export.split_scenes(range(n_scenes), ratios, export_seed)[split])
+
+
 def main():
+    from doorsim import gzsim
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config")
     ap.add_argument("--out", help="output folder (default: datasets/<config name> in the repo)")
     ap.add_argument("--seed", type=int, help="overrides the config seed")
+    ap.add_argument("--split", choices=export.SPLITS, help="render only the scenes of this split (as export.py would split them)")
+    ap.add_argument("--export-seed", type=int, default=0, help="seed of that split (export.py --seed)")
+    ap.add_argument("--light-level", type=float, help="fixed room light level for every scene (needs a lighting section)")
+    ap.add_argument("--headlight", type=float, help="fixed headlight brightness (default 0 with --light-level)")
     args = ap.parse_args()
     cfg_path = pathlib.Path(args.config)
     cfg = yaml.safe_load(cfg_path.read_text())
     if args.seed is not None:
         cfg["seed"] = args.seed
+    lcfg = cfg.get("lighting")
+    if args.light_level is not None:
+        if not lcfg:
+            sys.exit("--light-level needs a lighting section in the config")
+        lcfg["fixed"] = {"level": args.light_level, "headlight": args.headlight or 0.0}
+    elif args.headlight is not None:
+        sys.exit("--headlight goes with --light-level")
     world = cfg["world"]
     room = SIM / "door_room"
     attrs = json.loads((room / f"{world}.attributes.json").read_text())
@@ -56,6 +77,7 @@ def main():
         sys.exit(f"{out} already has a dataset; pick another --out")
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(cfg["seed"])
+    scenes = scenes_to_render(cfg["scenes"], args.split, args.export_seed)
     rej, gcfg = cfg["reject"], cfg["glass_depth"]
     glass_ids = {o["id"]: n for n, o in attrs["objects"].items() if o.get("part") == "glass_pane"}
     ccfg = cfg.get("clutter")
@@ -63,21 +85,44 @@ def main():
     keys = ["rgb", "depth", "seg", "boxes", "boxes3d"]
     info = {"world": world, "config": cfg, "seed": cfg["seed"], "git": git_state(),
             "created": datetime.datetime.now().isoformat(timespec="seconds"), "attributes": attrs}
+    if args.split:
+        info["split_scenes"] = export.split_scenes(range(cfg["scenes"]), (0.7, 0.15, 0.15), args.export_seed)
+    if lcfg:
+        fixed = lcfg.get("fixed")
+        info["lighting"] = {"mode": "fixed", "level": fixed["level"], "headlight": fixed["headlight"]} if fixed else {"mode": "random"}
     sim = gzsim.Sim(room / f"{world}.sdf", world, attrs, out / "gz.log")
     count, rejected, t_start = 0, 0, time.time()
     try:
         info["camera_intrinsics"] = sim.camera_info()
-        for scene in range(cfg["scenes"]):
+        for done, scene in enumerate(scenes):
+            if cfg.get("per_scene_rng"):
+                rng, light_rng = sampling.scene_rngs(cfg["seed"], scene)
+            else:
+                light_rng = rng
             targets = sampling.door_targets(rng, attrs, cfg["doors"])
-            light = sampling.lights(rng, cfg["lights"])
+            lit = sampling.lighting(light_rng, lcfg) if lcfg else None
+            level = lit["level"] if lit else 1.0
+            base = sampling.lights(light_rng, cfg["lights"])  # at level 1; per view the level only scales these
+            at = lambda lv: {n: {"diffuse": [c * lv for c in l["diffuse"]]} for n, l in base.items()}
+            light = at(level)
             for name, l in light.items():
                 sim.set_light(name, cfg["lights"][name], l["diffuse"])
+            if lit:
+                h = lit["headlight"]
+                sim.set_light("headlight", lcfg["headlight"], [h, h, 0.95 * h])
             placed = None
             if ccfg:
                 placed = clutter.place(rng, clutter.POOL, ccfg)
                 sim.place_clutter(placed)
             joints = sim.set_doors(targets, max_steps=cfg.get("settle_steps", 6000))
+            view_level = level
             for v in range(cfg["views_per_scene"]):
+                if lit:
+                    lv = sampling.flicker(light_rng, lcfg, level)
+                    if lv != view_level:  # room lights dip for this view (and come back)
+                        view_level = lv
+                        for name, l in at(lv).items():
+                            sim.set_light(name, cfg["lights"][name], l["diffuse"])
                 for _ in range(rej["max_tries"]):
                     cam = sampling.view(rng, attrs, cfg["view"])
                     if placed and clutter.camera_blocked(cam["world_position"], placed, clutter.POOL, ccfg["camera_margin"]):
@@ -106,6 +151,8 @@ def main():
                 depth = glass.apply(depth_gt, mask, mode or "holes", rng, behind, gcfg.get("partial"))
                 extra = {"scene": scene, "view": v, "target_door": cam["target_door"],
                          "sim_time_ns": gzsim.ns(m["rgb"].header.stamp), "lights": light, "glass_depth_mode": mode}
+                if lit:
+                    extra["lighting"] = {"mode": lit["mode"], "level": level, "view_level": view_level, "headlight": lit["headlight"]}
                 vis = None
                 if placed:
                     in_scene = {n: p for n, p in placed.items() if p["in_scene"]}
@@ -121,7 +168,7 @@ def main():
                     meta["objects"][n]["visible_fraction"] = f
                 save_frame(out / "frames" / f"{count:06d}", gzsim.image_array(m["rgb"], "rgb"), depth, depth_gt, seg, meta)
                 count += 1
-            print(f"scene {scene + 1}/{cfg['scenes']}: {count} frames, {rejected} viewpoints rejected, {time.time() - t_start:.0f} s", flush=True)
+            print(f"scene {scene} ({done + 1}/{len(scenes)}): {count} frames, {rejected} viewpoints rejected, {time.time() - t_start:.0f} s", flush=True)
     finally:
         sim.stop()
         info.update({"frames": count, "rejected_viewpoints": rejected, "seconds": round(time.time() - t_start)})

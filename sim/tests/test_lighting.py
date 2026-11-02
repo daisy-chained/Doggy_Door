@@ -97,6 +97,15 @@ def test_v3_shell_closes_the_room():
     assert any(b[0][1] <= -1.5 and b[2][1] >= 2.6 for b in boxes)  # wall behind the cameras
 
 
+def test_v3_sliding_door_has_track_and_hangers():
+    w = world("door_room_v3")
+    shell = next(m for m in w.iter("model") if m.get("name") == "room_shell")
+    assert any(v.get("name") == "slide_rail" for v in shell.iter("visual"))
+    door_b = next(m for m in w.iter("model") if m.get("name") == "door_b")
+    panel = next(l for l in door_b.iter("link") if l.get("name") == "panel")
+    assert sum(v.get("name", "").startswith("hanger") for v in panel.iter("visual")) == 2  # move with the panel
+
+
 def test_v3_attributes_equal_v2():
     a2 = json.loads((ROOM / "door_room_v2.attributes.json").read_text())
     a3 = json.loads((ROOM / "door_room_v3.attributes.json").read_text())

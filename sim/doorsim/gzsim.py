@@ -159,6 +159,9 @@ class Sim:
             msg.attenuation_constant, msg.attenuation_linear, msg.attenuation_quadratic = cfg["attenuation"]
         if "direction" in cfg:
             msg.direction.x, msg.direction.y, msg.direction.z = cfg["direction"]
+        if cfg["type"] == "spot":  # runtime changes only work with all spot fields sent, under the plain light name
+            msg.spot_inner_angle, msg.spot_outer_angle, msg.spot_falloff = cfg["spot"]
+            msg.pose.position.z, msg.pose.orientation.w = 0.05, 1.0
         self.light_pub.publish(msg)
 
     def set_colour(self, visual, rgb):

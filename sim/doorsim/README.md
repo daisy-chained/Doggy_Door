@@ -47,6 +47,22 @@ Gazebo's depth camera sees glass as solid (it ignores transparency and visibilit
 
 Glass pixels come from the segmentation image: each pane is its own object with its own id.
 
+## Lighting, door_room_v3 and scene subsets
+`door_room_v3` is v2 in a closed room (`room_shell`: ceiling + walls, no sky), no ambient light, sun without shadows, and a spot light `headlight` on the camera rig (starts off). Built by `sim/door_room/make_v3.py`. Configs with a `lighting` section (`door_room_v3_*.yaml`) draw per scene a mode (`normal` / `dim` / `dark`, log-uniform room light level) and a headlight (on with a chance per mode); per view the room lights can flicker (dip). `meta.json` gets `lighting` (`mode`, `level`, `view_level`, `headlight`).
+
+With `per_scene_rng: true` every scene has its own random streams (scene: doors, clutter, views, glass; light: lighting, lights, flicker), so scenes can be rendered alone and the lighting never changes the scene. Without it the single old stream is kept (v1/v2 reproduce).
+```bash
+python3 sim/doorsim/generate.py sim/configs/door_room_v3_2k.yaml --split test --light-level 0.05 --headlight 1.0 --out datasets/v3_test_light5
+```
+`--split test` renders only the scenes `export.py` would put in the test split (`--export-seed`, default 0) and writes them into `dataset.json` as `split_scenes`, so the export keeps them as test. `--light-level L` (+ `--headlight H`, default 0) fixes lighting for every scene (`lighting.fixed`, no flicker).
+
+## Effects tool (smoke, depth, camera noise)
+```bash
+python3 sim/doorsim/effects.py datasets/door_room_v3_2k --config sim/configs/effects_train.yaml                         # random mode → datasets/<name>_fx
+python3 sim/doorsim/effects.py datasets/door_room_v3_2k --config sim/configs/effects_train.yaml --visibility 2 --split test   # fixed level → datasets/<name>_vis2
+```
+Runs on saved frames (no Gazebo, numpy + PIL). Smoke is computed from `depth_gt.png`: transmission `t = exp(-∫β)` along each pixel's line of sight, `β = 3 / visibility` (contrast 5 % at the visibility distance), optionally denser above a height (hot layer) and patchy (seeded 3D noise). The image is `J t + A (1 − t)` in linear light, with the airlight following the scene's blurred brightness (smoke glows in the headlight cone, stays dark in darkness). The sensor `depth.png` loses pixels in thick smoke or gets false close returns. Every frame then gets camera noise (shot + read noise, auto-gain up to `max_gain`). Random mode: smoke on a share `p` of frames, visibility log-uniform. `--visibility V`: every frame at V with the same layer / patch as other levels (`inf` = noise only). Per-frame random streams are seeded from the config seed and the frame number. `rgb.png` and `depth.png` are new, `seg.png` and `depth_gt.png` are symlinks; `meta.json` gets `effects` and per-object `smoke_transmission`; `dataset.json` gets `effects` (source, config, visibility). Export as usual: `export.json` carries `effects` / `lighting` so `train/score.py` knows the level.
+
 ## Training export
 ```bash
 python3 sim/doorsim/export.py datasets/door_room_v1_small          # → exports/door_room_v1_small/
@@ -55,9 +71,10 @@ YOLO (`images/`, `labels/`, `data.yaml`) + COCO (`coco/<split>.json`) from one d
 
 ## Files
 - `generate.py`: the generator (CLI)
-- `export.py`: YOLO + COCO training export (CLI)
+- `export.py`: YOLO + COCO training export (CLI); keeps `split_scenes` from `dataset.json` when present
+- `effects.py`: smoke, depth and camera-noise effects on a saved dataset (CLI)
 - `gzsim.py`: runs a headless world and drives it over gz-transport (pause/step, set pose, doors, lights, glass panes, clutter placement + colours). Every step request also says `pause: true`: without it Gazebo un-pauses the world.
-- `sampling.py`: random door positions, lights and viewpoints
+- `sampling.py`: random door positions, lights, lighting modes, flicker, per-scene streams and viewpoints
 - `clutter.py`: the clutter pool, its SDF, placement, camera-inside check and `visible_fraction`
 - `glass.py`: the glass depth step
 - `frames.py`: frame metadata (also used by `sim/door_room/meta.py`)

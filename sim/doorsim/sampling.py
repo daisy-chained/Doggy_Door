@@ -1,6 +1,7 @@
 """Random scenes (door open amounts, lights) and viewpoints (camera poses in an approach zone per door).
 Everything takes a numpy Generator, so a seed gives the same dataset every time."""
 import math
+import numpy as np
 
 
 def door_targets(rng, attrs, cfg):
@@ -19,14 +20,45 @@ def door_targets(rng, attrs, cfg):
     return out
 
 
-def lights(rng, cfg):
-    """{light name: {"diffuse": [r, g, b]}}: base colour times a random intensity, plus a small random tint."""
+def lights(rng, cfg, level=1.0):
+    """{light name: {"diffuse": [r, g, b]}}: base colour times a random intensity, plus a small random tint,
+    then times `level` (lighting mode; same random draws whatever the level)."""
     out = {}
     for name, c in cfg.items():
         k = rng.uniform(*c["intensity"])
         tint = rng.uniform(-c["tint"], c["tint"], 3)
-        out[name] = {"diffuse": [float(min(1.0, max(0.0, b * k * (1 + t)))) for b, t in zip(c["base"], tint)]}
+        out[name] = {"diffuse": [float(min(1.0, max(0.0, b * k * (1 + t))) * level) for b, t in zip(c["base"], tint)]}
     return out
+
+
+def scene_rngs(seed, scene):
+    """(scene stream, light stream) for one scene: scenes can be rendered on their own, and the lighting
+    never changes what the scene stream draws (doors, clutter, views, glass)."""
+    return np.random.default_rng([seed, scene]), np.random.default_rng([seed, scene, 1])
+
+
+def lighting(rng, cfg):
+    """{"mode", "level", "headlight"} for one scene: mode by share p, room light level log-uniform in the mode's range,
+    headlight on with a chance per mode (brightness uniform), else 0. cfg["fixed"] = {level, headlight} skips the draws."""
+    if cfg.get("fixed"):
+        f = cfg["fixed"]
+        return {"mode": "fixed", "level": float(f["level"]), "headlight": float(f.get("headlight", 0.0))}
+    modes = list(cfg["modes"])
+    p = np.array([cfg["modes"][m]["p"] for m in modes], float)
+    mode = modes[rng.choice(len(modes), p=p / p.sum())]
+    lo, hi = cfg["modes"][mode]["level"]
+    level = float(math.exp(rng.uniform(math.log(lo), math.log(hi))))
+    on = rng.random() < cfg["headlight"]["p"][mode]
+    head = float(rng.uniform(*cfg["headlight"]["level"])) if on else 0.0
+    return {"mode": mode, "level": level, "headlight": head}
+
+
+def flicker(rng, cfg, level):
+    """Room light level for one view: with chance p it dips to level x (1 - depth). Fixed lighting never flickers."""
+    if cfg.get("fixed"):
+        return level
+    f = cfg["flicker"]
+    return float(level * (1 - rng.uniform(*f["depth"]))) if rng.random() < f["p"] else level
 
 
 def look_at(position, target):

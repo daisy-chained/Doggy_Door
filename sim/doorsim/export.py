@@ -34,7 +34,13 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
     names = {int(k): v for k, v in ds["attributes"]["classes"].items()}
     W, H = ds["camera_intrinsics"]["width"], ds["camera_intrinsics"]["height"]
     metas = {d.name: json.loads((d / "meta.json").read_text()) for d in sorted((src / "frames").iterdir())}
-    split_of = {s: sp for sp, scenes in split_scenes([m["scene"] for m in metas.values()], ratios, seed).items() for s in scenes}
+    given = ds.get("split_scenes")  # a dataset made for one split (generator --split / effects --split) keeps it
+    if given is None:
+        given = split_scenes([m["scene"] for m in metas.values()], ratios, seed)
+    split_of = {s: sp for sp, scenes in given.items() for s in scenes}
+    missing = sorted({m["scene"] for m in metas.values()} - set(split_of))
+    if missing:
+        raise ValueError(f"scenes {missing} are not in the dataset's split_scenes")
     scenes = {sp: sorted(s for s, v in split_of.items() if v == sp) for sp in SPLITS}
     coco = {sp: {"images": [], "categories": [{"id": i, "name": n} for i, n in names.items()], "annotations": []} for sp in SPLITS}
     counts = {sp: {"images": 0, **{n: 0 for n in names.values()}} for sp in SPLITS}
@@ -67,7 +73,8 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
         (out / "coco" / f"{sp}.json").write_text(json.dumps(coco[sp]) + "\n")
     (out / "data.yaml").write_text(f"path: {out}\ntrain: images/train\nval: images/val\ntest: images/test\nnames:\n"
                                    + "".join(f"  {i - 1}: {n}\n" for i, n in sorted(names.items())))
-    info = {"source": {"path": str(src), "git": ds.get("git"), "seed": ds.get("seed"), "world": ds.get("world"), "frames": ds.get("frames")},
+    info = {"source": {"path": str(src), "git": ds.get("git"), "seed": ds.get("seed"), "world": ds.get("world"), "frames": ds.get("frames"),
+                       "effects": ds.get("effects"), "lighting": ds.get("lighting")},
             "seed": seed, "ratios": list(ratios), "scenes": scenes, "counts": counts}
     (out / "export.json").write_text(json.dumps(info, indent=2) + "\n")
     return info

@@ -26,7 +26,7 @@ lighting:                   # per scene; room lights (below) x level. Hard limit
     dark: {p: 0.33, level: [0.003, 0.05]}
   headlight:                # spot light on the camera rig (the robot's own light)
     p: {normal: 0.0, dim: 0.5, dark: 1.0}   # chance it is on, per mode
-    level: [0.4, 1.2]       # brightness when on, uniform
+    level: [0.4, 1.0]       # brightness when on, uniform (Gazebo ignores a light colour above 1: tested 2026-11-02)
     type: spot
     range: 10
     attenuation: [0.2, 0.05, 0.02]
