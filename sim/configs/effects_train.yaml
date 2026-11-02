@@ -13,9 +13,9 @@ smoke:
     width: 0.15               # m, how soft the layer edge is
   patch: [0.0, 0.4]           # density varies +- this much through the room (smooth 3D noise)
   patch_scale: 1.5            # m, size of the denser / thinner regions
-  colour: [0.75, 0.75, 0.75]  # smoke colour (linear) under normal light
-  illum_sigma: 40             # px, blur of the scene's light that lights the smoke (headlight cone glows, dark stays dark)
-  illum_ref: 0.35             # linear brightness that counts as "normal light" for the smoke colour
+  colour: [0.75, 0.75, 0.75]  # smoke albedo (linear): share of the lamps' light it scatters
+  scatter_gain: 0.25          # Gazebo lights surfaces as albedo x light (no 1/pi); smoke scattering evenly in all directions
+                              # gets 1/(4 pi) -> on Gazebo's scale that is x pi / (4 pi) = 1/4
   samples: 24                 # steps along each pixel's line of sight
   far: 12.0                   # m, distance for pixels without depth (camera far clip)
 depth:

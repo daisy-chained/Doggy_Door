@@ -1,0 +1,6 @@
+# Property classifier on handle crops: one shared backbone, one head per property, temperature-scaled confidence.
+#   train/.venv/bin/python train/train_props.py train/configs/props_handle.yaml [key=value ...]
+# NOTE: in the current rooms the door properties are fixed per door (door A glass/push/right/lever, door B sliding/flush pull),
+# so results on these exports only show that the program works, not real property recognition.
+export: exports/door_room_v3_2k
+crop: handle

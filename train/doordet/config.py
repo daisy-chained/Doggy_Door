@@ -44,7 +44,7 @@ def resolve(d):
     return cfg
 
 
-def load(path, overrides=None):
+def load(path, overrides=None, resolve=resolve):
     d = yaml.safe_load(pathlib.Path(path).read_text()) or {}
     for o in overrides or []:
         key, _, val = o.partition("=")

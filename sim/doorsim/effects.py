@@ -2,8 +2,10 @@
 
 Smoke: Beer-Lambert along each pixel's line of sight, t = exp(-integral of beta), beta = 3 / visibility (contrast drops to
 5 % at the visibility distance), optionally denser above a height (hot smoke layer) and patchy (smooth 3D noise).
-Image: I = J t + A (1 - t), in linear light; the airlight A follows the scene's own (blurred) brightness, so smoke glows
-where the scene is lit (headlight cone) and stays dark in darkness. Depth: pixels in thick smoke get lost or return a
+Image: I = J t + smoke light, in linear light. The smoke light is single scattering of the frame's real lamps (positions
+from the world file, brightness from meta.json, headlight with the camera): beams and halos where the lamps are, dark
+smoke where there is no light. (A first version blurred the image's own brightness instead; that looked like a fogged
+lens, Madelief 2026-11-02.) Depth: pixels in thick smoke get lost or return a
 false close hit. Camera: shot + read noise with auto-gain up to a cap.
 
 usage:
@@ -84,55 +86,110 @@ def value_noise(p, cell, seed):
     return out / NOISE_STD
 
 
-def transmission(depth, K, camera, smoke, samples=24, far=12.0):
-    """(H, W) transmission exp(-tau) from the camera to each pixel's 3D point (tau = integral of beta, midpoint rule).
-    Pixels without depth look `far` m along their ray. smoke = {visibility_m, layer, patch, patch_scale, seed}."""
+def smoke_render(depth, K, camera, smoke, lights=(), colour=(0.75, 0.75, 0.75), samples=24, far=12.0):
+    """(transmission (H, W), smoke light (H, W, 3) linear) along each pixel's line of sight (midpoint rule).
+    t = exp(-integral of beta). Smoke light = single scattering: at each step the light reaching that point from
+    the frame's lamps (light_at) x colour (smoke albedo) x beta ds x transmission back to the camera. Pixels without
+    depth look `far` m along their ray. smoke = {visibility_m, layer, patch, patch_scale, seed}."""
     cam = np.array(camera["world_position"], np.float64)
     pts = world_points(depth, K, camera)
     nodata = np.isnan(pts[..., 0])
     ends = np.where(nodata[..., None], cam + far * ray_directions(depth.shape, K, camera), pts)
     seg = ends - cam
-    dist = np.linalg.norm(seg, axis=-1)
-    tau = np.zeros(depth.shape)
+    ds = np.linalg.norm(seg, axis=-1) / samples
+    tau, air = np.zeros(depth.shape), np.zeros(depth.shape + (3,))
+    colour = np.asarray(colour, np.float64)
     for k in range(samples):
         p = cam + seg * ((k + 0.5) / samples)
         beta = smoke_beta(p[..., 2], smoke["visibility_m"], smoke.get("layer"))
         if smoke.get("patch", 0) > 0:
             beta = beta * np.maximum(0.0, 1 + smoke["patch"] * value_noise(p, smoke["patch_scale"], smoke["seed"]))
-        tau += beta
-    return np.exp(-tau * dist / samples)
+        step = beta * ds
+        if lights:
+            air += light_at(p, lights) * colour * (step * np.exp(-(tau + step / 2)))[..., None]
+        tau += step
+    return np.exp(-tau), air
 
 
-def blur(a, sigma):
-    """Gaussian blur of a 2D float array (sigma px): box-downsample, blur, upsample (edge values extend)."""
-    f = max(1, int(sigma // 4))
-    H, W = a.shape
-    ph, pw = -H % f, -W % f
-    small = np.pad(a, ((0, ph), (0, pw)), mode="edge").reshape((H + ph) // f, f, (W + pw) // f, f).mean(axis=(1, 3))
-    s = sigma / f
-    r = max(1, int(math.ceil(3 * s)))
-    k = np.exp(-0.5 * (np.arange(-r, r + 1) / s) ** 2)
-    k /= k.sum()
-    for axis in (0, 1):
-        pad = [(0, 0), (0, 0)]
-        pad[axis] = (r, r)
-        padded = np.pad(small, pad, mode="edge")
-        small = sum(w * np.take(padded, range(i, i + small.shape[axis]), axis=axis) for i, w in enumerate(k))
-    big = Image.fromarray(small.astype(np.float32), mode="F").resize((W + pw, H + ph), Image.BILINEAR)
-    return np.asarray(big)[:H, :W]
+def transmission(depth, K, camera, smoke, samples=24, far=12.0):
+    """(H, W) transmission exp(-tau) from the camera to each pixel's 3D point (see smoke_render)."""
+    return smoke_render(depth, K, camera, smoke, samples=samples, far=far)[0]
 
 
-def add_smoke(rgb, t, colour, illum_sigma=40, illum_ref=0.35):
-    """I = J t + A (1 - t) in linear light; A = colour x blurred scene brightness / illum_ref (0..1.5).
-    t == 1 leaves a pixel unchanged."""
-    t = np.asarray(t, np.float32)
-    if (t >= 1).all():
-        return rgb.copy()
-    J = to_linear(rgb)
-    lum = J @ np.array([0.2126, 0.7152, 0.0722], np.float32)
-    A = np.array(colour, np.float32) * np.clip(blur(lum, illum_sigma) / illum_ref, 0, 1.5)[..., None]
-    out = to_srgb(J * t[..., None] + A * (1 - t[..., None]))
-    return np.where((t >= 1)[..., None], rgb, out)
+def add_smoke(rgb, t, air):
+    """I = J t + smoke light (linear light, from smoke_render). t == 1 without smoke light leaves a pixel unchanged."""
+    t, air = np.asarray(t, np.float32), np.asarray(air, np.float32)
+    keep = (t >= 1) & (air.max(-1) <= 0)
+    return np.where(keep[..., None], rgb, to_srgb(to_linear(rgb) * t[..., None] + air))
+
+
+# --- lamps (the light the smoke scatters) ---
+def world_lights(sdf_path):
+    """Lamps of a door room world file: [{name, type, position, direction, attenuation [range, c, l, q],
+    spot [inner, outer, falloff]}]; the headlight's position / direction are relative to the camera rig.
+    A non-zero scene ambient comes as {"name": "ambient", "type": "ambient", "diffuse"}."""
+    import xml.etree.ElementTree as ET
+    world = ET.parse(sdf_path).getroot().find("world")
+    nums = lambda e, d: [float(v) for v in e.text.split()] if e is not None else d
+    out = []
+    for l in world.iter("light"):
+        a, sp = l.find("attenuation"), l.find("spot")
+        out.append({"name": l.get("name"), "type": l.get("type"), "position": nums(l.find("pose"), [0.0] * 3)[:3],
+                    "direction": nums(l.find("direction"), [0.0, 0.0, -1.0]),
+                    "attenuation": [nums(a.find(k) if a is not None else None, [d])[0]
+                                    for k, d in (("range", 1e9), ("constant", 1.0), ("linear", 0.0), ("quadratic", 0.0))],
+                    "spot": [nums(sp.find(k) if sp is not None else None, [d])[0]
+                             for k, d in (("inner_angle", 0.0), ("outer_angle", 0.0), ("falloff", 1.0))]})
+    scene = world.find("scene")
+    amb = nums(scene.find("ambient") if scene is not None else None, [0.0] * 3)[:3]
+    if any(amb):
+        out.append({"name": "ambient", "type": "ambient", "diffuse": amb})
+    return out
+
+
+def frame_lights(lamps, meta):
+    """The lamps as they were in one frame: room lights' colour from meta "lights" (x flicker), the headlight at the
+    camera (meta "lighting" headlight), ambient as is. Lamps giving no light are left out."""
+    R = np.array(frames.rot(*meta["camera"]["world_rpy"]))
+    cam = np.array(meta["camera"]["world_position"], np.float64)
+    lit = meta.get("lighting") or {}
+    flick = lit["view_level"] / lit["level"] if lit.get("level") else 1.0
+    out = []
+    for l in lamps:
+        l = dict(l)
+        if l["name"] == "headlight":
+            h = lit.get("headlight", 0.0)
+            l["diffuse"] = [h, h, 0.95 * h]
+            l["position"] = (cam + R @ np.array(l["position"])).tolist()
+            l["direction"] = (R @ np.array(l["direction"])).tolist()
+        elif l["type"] != "ambient":
+            if l["name"] not in meta.get("lights", {}):
+                continue
+            l["diffuse"] = [c * flick for c in meta["lights"][l["name"]]["diffuse"]]
+        if any(l["diffuse"]):
+            out.append(l)
+    return out
+
+
+def light_at(p, lights):
+    """(..., 3) light arriving at points p (..., 3) from the lamps, no shadows: diffuse x 1 / (c + l d + q d^2)
+    (0 past range) x spot cone (inner / outer = full cone angles, smooth between)."""
+    out = np.zeros(p.shape[:-1] + (3,))
+    for l in lights:
+        k = np.ones(p.shape[:-1])
+        if l["type"] in ("point", "spot"):
+            v = p - np.array(l["position"])
+            d = np.linalg.norm(v, axis=-1)
+            rng_, c, li, q = l["attenuation"]
+            k = np.where(d <= rng_, 1.0 / (c + li * d + q * d * d), 0.0)
+            if l["type"] == "spot":
+                axis = np.array(l["direction"], np.float64)
+                axis = axis / np.linalg.norm(axis)
+                ang = np.arccos(np.clip((v @ axis) / np.maximum(d, 1e-9), -1, 1))
+                inner, outer = l["spot"][0] / 2, l["spot"][1] / 2
+                k = k * np.clip((outer - ang) / max(outer - inner, 1e-9), 0, 1) ** l["spot"][2]
+        out += k[..., None] * np.array(l["diffuse"], np.float64)
+    return out
 
 
 def smoke_depth(depth_m, t, rng, cfg):
@@ -222,6 +279,8 @@ def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, rat
         given = export.split_scenes([m["scene"] for m in metas.values()], ratios, export_seed)
         keep = {n: m for n, m in metas.items() if m["scene"] in set(given[split])}
     sc = cfg["smoke"]
+    sdf = SIM / "door_room" / f"{ds.get('world')}.sdf"
+    lamps = world_lights(sdf) if sdf.exists() else []
     out.mkdir(parents=True, exist_ok=True)
     for k, (name, meta) in enumerate(keep.items()):
         rng = np.random.default_rng([cfg["seed"], int(name)])
@@ -232,8 +291,9 @@ def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, rat
         seg = np.asarray(Image.open(s / "seg.png"))
         smoke = sample_smoke(rng, sc, visibility)
         if smoke:
-            t = transmission(depth_gt, K, meta["camera"], smoke, sc.get("samples", 24), sc.get("far", 12.0))
-            rgb = add_smoke(rgb, t, sc["colour"], sc.get("illum_sigma", 40), sc.get("illum_ref", 0.35))
+            t, air = smoke_render(depth_gt, K, meta["camera"], smoke, frame_lights(lamps, meta), sc["colour"],
+                                  sc.get("samples", 24), sc.get("far", 12.0))
+            rgb = add_smoke(rgb, t, air * sc.get("scatter_gain", 1.0))
             depth = smoke_depth(depth, t, rng, cfg["depth"])
             for n, v in object_transmission(t, seg, attrs).items():
                 if n in meta["objects"]:

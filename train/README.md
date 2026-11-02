@@ -66,3 +66,11 @@ train/.venv/bin/python train/plot_search.py train/configs/search_v2.yaml        
 - `keep_checkpoints`: only the `best/` weights of the best N trials of each search are kept.
 - The test split is scored once per search, for the winning trial (a run named `<study>_test`, tag `final_test`).
 - Studies are named `<name>_<budget>` and resume if you rerun. MLflow runs carry tags `study`, `trial`, `budget`, `speed_ms`, `gflops`; the speed table is also logged in experiment `doggy-door-speed`.
+
+## Property classifier (`doordet/props.py`)
+Classifies the properties of a detected box from a square crop (box + margin): door -> `opening` (push/pull/slide), `hinge_side` (left/right/none), `glass` (no/yes); handle -> `handle_type` (lever/knob/flush_pull). One backbone, one linear head per property (`heads: [glass]` trains a single-property model). Labels come from the COCO `attributes`.
+```
+train/.venv/bin/python train/train_props.py train/configs/props_door.yaml [key=value ...]     # crop: door
+train/.venv/bin/python train/train_props.py train/configs/props_handle.yaml                    # crop: handle
+```
+Best epoch = highest mean val accuracy; `best/model.pt` + `best/heads.json` (classes, backbone, imgsz, margin, per-head temperature). After training one temperature per head is fitted on val (Guo et al. 2017) and the test split is scored once: `test_acc_<head>`, `test_ece_<head>` (calibrated), `test_ece_raw_<head>`. Experiment `doggy-door-props` in MLflow. In the current rooms the properties are fixed per door, so results only show the program works.

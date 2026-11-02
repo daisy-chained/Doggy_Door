@@ -139,3 +139,11 @@ def test_resolve_defaults_per_crop():
     assert props.resolve({"export": "x", "crop": "door", "heads": ["glass"]})["heads"] == ["glass"]
     with pytest.raises(ValueError):
         props.resolve({"export": "x", "crop": "door", "heads": ["handle_type"]})
+
+
+def test_workers_jitter_differs_per_worker_and_epoch(export_dir):
+    ds = props.CropDataset(export_dir, "train", "door", imgsz=32, margin=0.1, min_px=8, jitter={"shift": 0.2, "scale": 0.2}, seed=0)
+    gen = torch.Generator().manual_seed(0)
+    dl = torch.utils.data.DataLoader(ds, batch_size=1, shuffle=False, num_workers=2, generator=gen, worker_init_fn=props.reseed_worker)
+    e1, e2 = [x for x, _ in dl], [x for x, _ in dl]
+    assert not torch.equal(e1[0], e2[0])            # a new jitter for the same crop in the next epoch

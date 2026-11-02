@@ -78,15 +78,41 @@ def test_transmission_patch_is_seeded_and_varies():
 
 def test_add_smoke_limits():
     rgb = np.random.default_rng(0).integers(0, 255, (H, W, 3), dtype=np.uint8)
-    assert np.array_equal(effects.add_smoke(rgb, np.ones((H, W)), [0.75] * 3), rgb)
-    full = effects.add_smoke(np.full((H, W, 3), 180, np.uint8), np.zeros((H, W)), [0.75] * 3)
-    assert full.std() < 3 and full.mean() > 150  # all smoke, lit by the scene's own light
+    assert np.array_equal(effects.add_smoke(rgb, np.ones((H, W)), np.zeros((H, W, 3))), rgb)
+    full = effects.add_smoke(rgb, np.zeros((H, W)), np.full((H, W, 3), 0.2))
+    assert np.all(full == effects.to_srgb(np.full((H, W, 3), 0.2)))  # all smoke: only the smoke's own light
 
 
-def test_add_smoke_is_dark_in_a_dark_scene():
-    dark = effects.add_smoke(np.full((H, W, 3), 5, np.uint8), np.zeros((H, W)), [0.75] * 3)
-    lit = effects.add_smoke(np.full((H, W, 3), 200, np.uint8), np.zeros((H, W)), [0.75] * 3)
-    assert dark.mean() < 0.2 * lit.mean()  # smoke isn't self-lit: no light, no glow
+def test_smoke_light_without_lamps_is_dark():
+    t, air = effects.smoke_render(np.full((H, W), 3.0, np.float32), K, CAM, smoke(2.0))
+    assert air.max() == 0 and t.max() < 0.2  # smoke isn't self-lit: no light, no glow
+
+
+def test_smoke_light_uniform_lamp_matches_haze_formula():
+    """Same light everywhere -> smoke light = colour x light x (1 - t), the classic haze formula."""
+    lamp = [{"name": "ambient", "type": "ambient", "diffuse": [0.5, 0.5, 0.5]}]
+    t, air = effects.smoke_render(np.full((H, W), 3.0, np.float32), K, CAM, smoke(4.0), lamp, colour=(0.8, 0.8, 0.8), samples=64)
+    assert air[..., 0] == pytest.approx(0.8 * 0.5 * (1 - t), rel=0.01)
+
+
+def test_headlight_makes_a_beam():
+    meta = {"camera": CAM, "lights": {}, "lighting": {"mode": "dark", "level": 0.01, "view_level": 0.01, "headlight": 1.0}}
+    lamps = [{"name": "headlight", "type": "spot", "position": [0, 0, 0.05], "direction": [1, 0, 0],
+              "attenuation": [10, 0.2, 0.05, 0.02], "spot": [0.4, 0.8, 1.0]}]
+    lit = effects.frame_lights(lamps, meta)
+    assert lit[0]["position"] == pytest.approx([0, 0, 1.05]) and lit[0]["diffuse"] == [1.0, 1.0, 0.95]
+    _, air = effects.smoke_render(np.full((H, W), 3.0, np.float32), K, CAM, smoke(4.0), lit)
+    assert air[24, 32, 0] > 5 * air[0, 0, 0]  # light in the beam, little outside the cone
+
+
+def test_frame_lights_room_lamps_follow_meta_and_flicker():
+    lamps = effects.world_lights(SIM / "door_room" / "door_room_v3.sdf")
+    names = {l["name"] for l in lamps}
+    assert {"sun", "ceiling_light", "headlight"} <= names and "ambient" not in names  # v3: no ambient
+    meta = {"camera": CAM, "lights": {"ceiling_light": {"diffuse": [0.4, 0.4, 0.4]}, "sun": {"diffuse": [0, 0, 0]}},
+            "lighting": {"mode": "dim", "level": 0.2, "view_level": 0.1, "headlight": 0.0}}
+    lit = {l["name"]: l for l in effects.frame_lights(lamps, meta)}
+    assert set(lit) == {"ceiling_light"} and lit["ceiling_light"]["diffuse"] == pytest.approx([0.2] * 3)
 
 
 def test_object_transmission_merges_parts():
