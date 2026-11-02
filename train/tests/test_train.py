@@ -150,3 +150,38 @@ def test_training_loop_logs_to_mlflow_and_saves_best(tmp_path, export_dir, monke
     assert "train_loss" in run.data.metrics and "test_map" in run.data.metrics  # test split scored once, at the end
     assert (pathlib.Path(result["out"]) / "best" / "weights.txt").exists()
     assert result["best_epoch"] in (0, 1)
+
+
+# --- score: a trained run on another export (fixed smoke / light levels) ---
+def test_score_run_on_an_export(tmp_path, export_dir, monkeypatch):
+    from doordet import score
+    monkeypatch.setitem(adapters.FAMILIES, "fake", FakeAdapter)
+    run = tmp_path / "runs" / "r1"
+    (run / "best").mkdir(parents=True)
+    cfg = config.resolve({"export": "elsewhere", "model": {"family": "fake"}, "device": "cpu", "workers": 0, "batch": 2})
+    (run / "config.json").write_text(json.dumps(cfg))
+    r = score.score_run(run, export_dir, split="test")
+    assert r["metrics"]["map"] == pytest.approx(1.0)
+    assert r["run"] == "r1" and r["export"] == str(export_dir) and r["split"] == "test" and r["images"] == 2
+    assert r["model"] == {"family": "fake"} and r["imgsz"] == cfg["imgsz"]
+
+
+def test_score_reads_level_from_export(tmp_path, export_dir, monkeypatch):
+    from doordet import score
+    info = json.loads((export_dir / "export.json").read_text())
+    info["source"]["effects"] = {"visibility_m": 2.0}
+    info["source"]["lighting"] = {"mode": "fixed", "level": 0.05, "headlight": 1.0}
+    (export_dir / "export.json").write_text(json.dumps(info))
+    assert score.levels(export_dir) == {"visibility_m": 2.0, "light_level": 0.05, "headlight": 1.0}
+    (export_dir / "export.json").write_text(json.dumps({"source": {}}))
+    assert score.levels(export_dir) == {"visibility_m": None, "light_level": None, "headlight": None}
+
+
+def test_levels_table_one_row_per_run_sorted():
+    from doordet import score
+    rows = [{"run": "b", "levels": {"visibility_m": 2.0, "light_level": None, "headlight": None}, "metrics": {"map": 0.5}, "gflops": 27},
+            {"run": "b", "levels": {"visibility_m": 8.0, "light_level": None, "headlight": None}, "metrics": {"map": 0.8}, "gflops": 27},
+            {"run": "a", "levels": {"visibility_m": 2.0, "light_level": None, "headlight": None}, "metrics": {"map": 0.3}, "gflops": 7}]
+    t = score.table(rows, axis="visibility_m")
+    assert [r["run"] for r in t] == ["a", "b"]  # by GFLOPs
+    assert t[1]["points"] == [(2.0, 0.5), (8.0, 0.8)]
