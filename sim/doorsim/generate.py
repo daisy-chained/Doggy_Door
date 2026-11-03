@@ -5,12 +5,18 @@ usage (system Python with ROS sourced, no venv active):
   python3 sim/doorsim/generate.py sim/configs/door_room_v1_small.yaml [--out DIR] [--seed N]
   --split test [--export-seed N]   render only the scenes the exporter would put in that split
   --light-level L [--headlight H]  every scene at one fixed light level (v3 worlds), headlight 0 unless given
+  --workers N                      many worlds: N Gazebo runs at once (default: `workers:` in the config, else 1)
 
 Many worlds (door room v4): a config with `worlds: door_room/v4/worlds.json` (made by sim/door_room/make_v4.py) renders
 `scenes_per_world` scenes in each world, one Gazebo run per world (gz_<world>.log), scene numbers global and consecutive per
 world. The split comes from the worlds (--split uses it; dataset.json "split_scenes" always has it), `max_worlds` keeps only the
 first N worlds. Each frame's meta gets "world" and "side" (camera in front of / behind the wall: the door properties in the meta
 are what that side sees). dataset.json adds "worlds" (split, held-out flag, door specs per world) and "world_files".
+
+Parallel (workers > 1, needs per_scene_rng): worlds are dealt over N worker processes, each running its worlds one after
+another with its own GZ_PARTITION (gz-transport isolates runs by it, so the Gazebo runs don't see each other; set before
+gzsim is imported). Frames are written at the numbers sequential rendering would give, so the dataset is the same as with
+one worker (only timings and logs differ). One Gazebo run uses ~1 core and little GPU: the time is waiting on round trips.
 
 Output (one folder per dataset):
   dataset.json                 config, seed, world, git commit, camera intrinsics, attributes, counts
@@ -21,7 +27,7 @@ Output (one folder per dataset):
   frames/000000/meta.json      frame metadata (sim/doorsim/frames.py) + camera pose, scene, glass depth mode;
                                with clutter: visible_fraction per door / handle and the placed clutter items
 """
-import argparse, datetime, json, pathlib, subprocess, sys, time, types
+import argparse, datetime, json, multiprocessing, os, pathlib, signal, subprocess, sys, time, types
 import numpy as np
 import yaml
 from PIL import Image
@@ -62,6 +68,37 @@ def world_scenes(worlds, scenes_per_world, split=None):
 def world_split_scenes(worlds, scenes_per_world):
     """{split: scene numbers}: a world's scenes all go to the world's split (a door never leaks into test)."""
     return {sp: [s for _, scenes in world_scenes(worlds, scenes_per_world, sp) for s in scenes] for sp in export.SPLITS}
+
+
+def frame_offsets(plan, views_per_scene):
+    """First frame number of each plan item (its last element = its scenes): sequential numbering, every view gives one frame."""
+    offs, n = [], 0
+    for *_, scenes in plan:
+        offs.append(n)
+        n += len(scenes) * views_per_scene
+    return offs
+
+
+def assign_workers(plan, n):
+    """[[plan indices]] for min(n, len(plan)) workers, round-robin so sizes differ by at most 1."""
+    n = max(1, min(n, len(plan)))
+    return [list(range(i, len(plan), n)) for i in range(n)]
+
+
+def worker_partition(i):
+    """gz-transport partition of worker i (parent pid: two datasets rendering at once don't share one)."""
+    return f"doorsim_{os.getpid()}_{i}"
+
+
+def worker_env(i, base_env):
+    return {**base_env, "GZ_PARTITION": worker_partition(i)}
+
+
+def n_workers(cfg, cli):
+    n = cli if cli is not None else cfg.get("workers", 1)
+    if n < 1:
+        raise ValueError(f"workers must be >= 1, got {n}")
+    return n
 
 
 def render_scenes(sim, attrs, scenes, run, world=None):
@@ -154,12 +191,58 @@ def render_scenes(sim, attrs, scenes, run, world=None):
             save_frame(out / "frames" / f"{run.count:06d}", gzsim.image_array(m["rgb"], "rgb"), depth, depth_gt, seg, meta)
             run.count += 1
         run.scenes_done += 1
-        print(f"scene {scene} ({run.scenes_done}/{run.scenes_total}): {run.count} frames, {run.rejected} viewpoints rejected, {time.time() - run.t_start:.0f} s", flush=True)
+        print(f"{'[' + world['name'] + '] ' if world else ''}scene {scene} ({run.scenes_done}/{run.scenes_total}): {run.count} frames, {run.rejected} viewpoints rejected, {time.time() - run.t_start:.0f} s", flush=True)
     run.rng = rng
 
 
-def main():
+def render_world(w, sdf, attrs, scenes, run, out):
+    """One Gazebo run for one world (stopped at the end); returns the camera info."""
     from doorsim import gzsim
+    name = w["name"] if w else run.cfg["world"]
+    sim = gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log"))
+    try:
+        cam = sim.camera_info()
+        render_scenes(sim, attrs, scenes, run, w)
+        return cam
+    finally:
+        sim.stop()
+
+
+def render_worker(args):
+    """Worker process: its worlds one after another, frames at their global numbers. Returns {frames, rejected, camera_intrinsics}."""
+    partition, cfg, lcfg, out, jobs = args
+    os.environ["GZ_PARTITION"] = partition  # before gzsim / gz.transport is imported (render_world imports it)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))  # so the parent's terminate() runs the finally blocks that stop gz
+    run = types.SimpleNamespace(cfg=cfg, lcfg=lcfg, out=out, rng=np.random.default_rng(cfg["seed"]), count=0, rejected=0, t_start=time.time(),
+                                scenes_total=sum(len(s) for (*_, s), _ in jobs), scenes_done=0)
+    frames, cam = 0, None
+    for (w, sdf, attrs, scenes), offset in jobs:
+        run.count = offset
+        cam = render_world(w, sdf, attrs, scenes, run, out)
+        frames += run.count - offset
+    return {"frames": frames, "rejected": run.rejected, "camera_intrinsics": cam}
+
+
+def render_parallel(plan, offsets, workers, cfg, lcfg, out, info):
+    """Deal the plan's worlds over `workers` processes (spawn, own GZ_PARTITION each) and sum their results into info.
+    A failing worker stops the others (terminate = SIGTERM, their finally blocks stop gz) and the error is raised again."""
+    jobs = [(worker_partition(i), cfg, lcfg, out, [(plan[k], offsets[k]) for k in idx]) for i, idx in enumerate(assign_workers(plan, workers))]
+    info.update({"frames": 0, "rejected_viewpoints": 0})
+    pool = multiprocessing.get_context("spawn").Pool(len(jobs))
+    try:
+        for r in pool.imap_unordered(render_worker, jobs):
+            info["frames"] += r["frames"]
+            info["rejected_viewpoints"] += r["rejected"]
+            info.setdefault("camera_intrinsics", r["camera_intrinsics"])
+        pool.close()
+    except BaseException:
+        pool.terminate()
+        raise
+    finally:
+        pool.join()
+
+
+def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("config")
     ap.add_argument("--out", help="output folder (default: datasets/<config name> in the repo)")
@@ -168,6 +251,7 @@ def main():
     ap.add_argument("--export-seed", type=int, default=0, help="seed of that split (export.py --seed)")
     ap.add_argument("--light-level", type=float, help="fixed room light level for every scene (needs a lighting section)")
     ap.add_argument("--headlight", type=float, help="fixed headlight brightness (default 0 with --light-level)")
+    ap.add_argument("--workers", type=int, help="many worlds: Gazebo runs at once (default: workers in the config, else 1)")
     args = ap.parse_args()
     cfg_path = pathlib.Path(args.config)
     cfg = yaml.safe_load(cfg_path.read_text())
@@ -206,17 +290,26 @@ def main():
     if lcfg:
         fixed = lcfg.get("fixed")
         info["lighting"] = {"mode": "fixed", "level": fixed["level"], "headlight": fixed["headlight"]} if fixed else {"mode": "random"}
-    run = types.SimpleNamespace(cfg=cfg, lcfg=lcfg, out=out, rng=np.random.default_rng(cfg["seed"]), count=0, rejected=0, t_start=time.time(),
+    offsets = frame_offsets(plan, cfg["views_per_scene"])
+    workers = n_workers(cfg, args.workers) if "worlds" in cfg else 1  # a single world is one Gazebo run
+    t_start = time.time()
+    if workers > 1:
+        if not cfg.get("per_scene_rng"):
+            sys.exit("--workers > 1 needs per_scene_rng in the config (else the scenes depend on the render order)")
+        info["workers"] = min(workers, len(plan))
+        try:
+            render_parallel(plan, offsets, workers, cfg, lcfg, out, info)
+        finally:
+            info["seconds"] = round(time.time() - t_start)
+            (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
+        print(f"done: {info['frames']} frames in {out}")
+        return
+    run = types.SimpleNamespace(cfg=cfg, lcfg=lcfg, out=out, rng=np.random.default_rng(cfg["seed"]), count=0, rejected=0, t_start=t_start,
                                 scenes_total=sum(len(s) for *_, s in plan), scenes_done=0)
     try:
-        for w, sdf, attrs, scenes in plan:  # one Gazebo run per world, stopped before the next starts
-            name = w["name"] if w else world
-            sim = gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log"))
-            try:
-                info.setdefault("camera_intrinsics", sim.camera_info())
-                render_scenes(sim, attrs, scenes, run, w)
-            finally:
-                sim.stop()
+        for (w, sdf, attrs, scenes), offset in zip(plan, offsets):  # one Gazebo run per world, stopped before the next starts
+            run.count = offset
+            info.setdefault("camera_intrinsics", render_world(w, sdf, attrs, scenes, run, out))
     finally:
         info.update({"frames": run.count, "rejected_viewpoints": run.rejected, "seconds": round(time.time() - run.t_start)})
         (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")

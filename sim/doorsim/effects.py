@@ -10,15 +10,17 @@ false close hit. Camera: shot + read noise with auto-gain up to a cap.
 
 usage:
   python3 sim/doorsim/effects.py datasets/<name> --config sim/configs/effects_train.yaml [--out DIR]
-         [--visibility V|inf] [--split test --export-seed N]
+         [--visibility V|inf] [--split test --export-seed N] [--workers N]
 Random mode (no --visibility): per frame smoke or not, random level (training sets). --visibility V: every frame at that
 visibility with the same layer / patch as the other levels (inf = camera noise only). --split keeps only that split's
-scenes, written into dataset.json so export.py keeps them as that split.
+scenes, written into dataset.json so export.py keeps them as that split. --workers N: frames over N processes (default
+min(8, cores / 2)); every frame's rng is seeded from (config seed, frame name), so the output is the same for any N. Each
+worker holds one frame's smoke arrays at a time (~140 MB peak RSS at 640x480, numpy threads off: one core per worker).
 
 Output: a dataset folder like the source (rgb.png, depth.png new; seg.png, depth_gt.png symlinked), meta.json with
 "effects": {"smoke": params or None, "noise_gain"} and objects[...]["smoke_transmission"], dataset.json with "effects".
 """
-import argparse, json, math, pathlib, sys
+import argparse, json, math, multiprocessing, os, pathlib, sys
 import numpy as np
 import yaml
 from PIL import Image
@@ -281,9 +283,66 @@ def depth_m(path):
     return np.asarray(Image.open(path)).astype(np.float32) / 1000.0
 
 
-def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, ratios=(0.7, 0.15, 0.15)):
+THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS")
+_lamp_cache = {}  # per process: world file -> lamps (one per world in v4 datasets)
+_ctx = None
+
+
+def default_workers():
+    return min(8, max(1, (os.cpu_count() or 2) // 2))
+
+
+def process_frame(ctx, name, meta, lamp_cache):
+    """Effects on one frame -> out/frames/<name>; the rng depends only on (config seed, frame name)."""
+    src, out, ds, K, cfg, visibility = ctx
+    sc = cfg["smoke"]
+    rng = np.random.default_rng([cfg["seed"], int(name)])
+    s, d = src / "frames" / name, out / "frames" / name
+    d.mkdir(parents=True, exist_ok=True)
+    rgb = np.asarray(Image.open(s / "rgb.png").convert("RGB"))
+    depth, depth_gt = depth_m(s / "depth.png"), depth_m(s / "depth_gt.png")
+    seg = np.asarray(Image.open(s / "seg.png"))
+    smoke = sample_smoke(rng, sc, visibility)
+    if smoke:
+        sdf = world_file(ds, meta)
+        if sdf not in lamp_cache:
+            lamp_cache[sdf] = world_lights(sdf) if sdf.exists() else []
+        t, air = smoke_render(depth_gt, K, meta["camera"], smoke, frame_lights(lamp_cache[sdf], meta), sc["colour"],
+                              sc.get("samples", 24), sc.get("far", 12.0))
+        rgb = add_smoke(rgb, t, air * sc.get("scatter_gain", 1.0))
+        depth = smoke_depth(depth, t, rng, cfg["depth"])
+        for n, v in object_transmission(t, seg, meta).items():
+            if n in meta["objects"]:
+                meta["objects"][n]["smoke_transmission"] = v
+    rgb, gain = sensor_noise(rgb, rng, cfg["noise"])
+    Image.fromarray(rgb).save(d / "rgb.png")
+    Image.fromarray(glass.to_png16(depth)).save(d / "depth.png")
+    for f in ("seg.png", "depth_gt.png"):
+        (d / f).symlink_to((s / f).resolve())
+    meta["effects"] = {"smoke": smoke, "noise_gain": gain}
+    (d / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _init_worker(ctx):
+    global _ctx
+    _ctx = ctx
+
+
+def _run_chunk(chunk):
+    for name, meta in chunk:
+        process_frame(_ctx, name, meta, _lamp_cache)
+    return len(chunk)
+
+
+def progress(before, done, total):
+    """Print when the count passes a multiple of 50 (parallel: as chunks come back) and at the end."""
+    if done // 50 != before // 50 or done == total:
+        print(f"{done}/{total} frames", flush=True)
+
+
+def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, ratios=(0.7, 0.15, 0.15), workers=None):
     """Effects on every frame (or only the scenes of `split`) of a generator dataset -> new dataset folder `out`.
-    Returns the new dataset.json dict."""
+    workers = frames over that many processes (default_workers()); the output does not depend on it. Returns the new dataset.json dict."""
     src, out = pathlib.Path(src).resolve(), pathlib.Path(out)
     if (out / "dataset.json").exists():
         raise FileExistsError(f"{out} already has a dataset; pick another --out")
@@ -291,42 +350,34 @@ def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, rat
     K = ds["camera_intrinsics"]["K"]
     metas = {d.name: json.loads((d / "meta.json").read_text()) for d in sorted((src / "frames").iterdir())}
     keep, given = split_frames(ds, metas, split, ratios, export_seed)
-    sc = cfg["smoke"]
-    lamp_cache = {}  # world file -> lamps (one per world in v4 datasets)
     out.mkdir(parents=True, exist_ok=True)
-    for k, (name, meta) in enumerate(keep.items()):
-        rng = np.random.default_rng([cfg["seed"], int(name)])
-        s, d = src / "frames" / name, out / "frames" / name
-        d.mkdir(parents=True, exist_ok=True)
-        rgb = np.asarray(Image.open(s / "rgb.png").convert("RGB"))
-        depth, depth_gt = depth_m(s / "depth.png"), depth_m(s / "depth_gt.png")
-        seg = np.asarray(Image.open(s / "seg.png"))
-        smoke = sample_smoke(rng, sc, visibility)
-        if smoke:
-            sdf = world_file(ds, meta)
-            if sdf not in lamp_cache:
-                lamp_cache[sdf] = world_lights(sdf) if sdf.exists() else []
-            t, air = smoke_render(depth_gt, K, meta["camera"], smoke, frame_lights(lamp_cache[sdf], meta), sc["colour"],
-                                  sc.get("samples", 24), sc.get("far", 12.0))
-            rgb = add_smoke(rgb, t, air * sc.get("scatter_gain", 1.0))
-            depth = smoke_depth(depth, t, rng, cfg["depth"])
-            for n, v in object_transmission(t, seg, meta).items():
-                if n in meta["objects"]:
-                    meta["objects"][n]["smoke_transmission"] = v
-        rgb, gain = sensor_noise(rgb, rng, cfg["noise"])
-        Image.fromarray(rgb).save(d / "rgb.png")
-        Image.fromarray(glass.to_png16(depth)).save(d / "depth.png")
-        for f in ("seg.png", "depth_gt.png"):
-            (d / f).symlink_to((s / f).resolve())
-        meta["effects"] = {"smoke": smoke, "noise_gain": gain}
-        (d / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
-        if (k + 1) % 50 == 0 or k + 1 == len(keep):
-            print(f"{k + 1}/{len(keep)} frames", flush=True)
+    workers = default_workers() if workers is None else workers
+    ctx = (src, out, ds, K, cfg, visibility)
+    items = list(keep.items())
+    if workers <= 1 or len(items) <= 1:
+        workers, lamps = 1, {}
+        for k, (name, meta) in enumerate(items):
+            process_frame(ctx, name, meta, lamps)
+            progress(k, k + 1, len(items))
+    else:
+        size = max(1, min(10, len(items) // (workers * 4)))  # small chunks: even load, little pickling
+        chunks = [items[i:i + size] for i in range(0, len(items), size)]
+        saved = {k: os.environ.get(k) for k in THREAD_VARS}
+        os.environ.update({k: "1" for k in THREAD_VARS})  # inherited by the spawned workers, set before numpy loads there
+        try:
+            with multiprocessing.get_context("spawn").Pool(workers, _init_worker, (ctx,)) as pool:
+                n = 0
+                for n_done in pool.imap_unordered(_run_chunk, chunks):
+                    progress(n, n + n_done, len(items))
+                    n += n_done
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
     info = dict(ds)
     info["frames"] = len(keep)
     if split:
         info["split_scenes"] = given
-    info["effects"] = {"source": str(src), "config": cfg, "visibility_m": visibility, "split": split}
+    info["effects"] = {"source": str(src), "config": cfg, "visibility_m": visibility, "split": split, "workers": workers}
     (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
     return info
 
@@ -339,13 +390,14 @@ def main():
     ap.add_argument("--visibility", type=float, help="fixed visibility in m for every frame (inf = camera noise only)")
     ap.add_argument("--split", choices=export.SPLITS, help="only this split's scenes")
     ap.add_argument("--export-seed", type=int, default=0, help="seed of that split (export.py --seed)")
+    ap.add_argument("--workers", type=int, default=default_workers(), help="processes (default: min(8, cores / 2))")
     args = ap.parse_args()
     src = pathlib.Path(args.dataset).resolve()
     cfg = yaml.safe_load(pathlib.Path(args.config).read_text())
     tag = "_fx" if args.visibility is None else f"_vis{args.visibility:g}"
     out = pathlib.Path(args.out) if args.out else SIM.parent / "datasets" / (src.name + tag)
     try:
-        info = apply_dataset(src, out, cfg, args.visibility, args.split, args.export_seed)
+        info = apply_dataset(src, out, cfg, args.visibility, args.split, args.export_seed, workers=args.workers)
     except FileExistsError as e:
         sys.exit(str(e))
     print(f"done: {info['frames']} frames in {out}")
