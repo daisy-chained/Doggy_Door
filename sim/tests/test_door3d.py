@@ -19,7 +19,7 @@ def plane_depth(z0, tilt_deg=0.0):
     x, y = (u - W / 2) / F, (v - H / 2) / F
     n = np.array([math.sin(math.radians(tilt_deg)), 0.0, -math.cos(math.radians(tilt_deg))])  # toward the camera
     # ray (x, y, 1) * z hits the plane n . (p - p0) = 0
-    z = (n[2] * -z0) / (n[0] * x + n[1] * y + n[2])
+    z = (n[2] * z0) / (n[0] * x + n[1] * y + n[2])
     return z.astype(np.float32)
 
 
