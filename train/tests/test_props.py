@@ -173,3 +173,26 @@ def test_train_no_group_metrics_without_heldout(tmp_path, export_dir):
                          "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
     r = props.train(cfg, run_name="unit")
     assert not any("_seen_" in k or "_unseen_" in k for k in r["test"])
+
+
+# --- scored on the detector's own boxes (Madelief 2026-11-02: true boxes and detector boxes) ---
+def test_score_on_detector_boxes(tmp_path):
+    root = make_export(tmp_path / "export")
+    cfg = props.resolve({"export": str(root), "crop": "door", "backbone": "resnet18", "pretrained": False,
+                         "imgsz": 64, "epochs": 1, "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
+                         "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
+    r = props.train(cfg, run_name="unit")
+    # detector output per image id: door_a found (slightly off), door_b missed in image 0, plus a false door far from any door
+    preds = {}
+    for i in range(4):
+        boxes = [[12, 11, 12 + 48, 11 + 99], [70, 0, 80, 5]]
+        scores, labels = [0.9, 0.8], [0, 0]
+        if i > 0:
+            boxes.append([91, 10, 91 + 50, 10 + 100]); scores.append(0.85); labels.append(0)
+        preds[i] = {"boxes": np.array(boxes, float), "scores": np.array(scores), "labels": np.array(labels)}
+    s = props.score_on_boxes(r["out"], root, "test", preds, score_min=0.3, iou=0.5)
+    assert s["crops"] == 8 and s["matched"] == 7 and s["missed"] == 1 and s["false"] == 4
+    for h in props.HEADS["door"]:
+        assert 0.0 <= s[f"acc_{h}"] <= 1.0
+    # against the true-box accuracy the same keys exist, so the two can be compared side by side
+    assert set(k for k in s if k.startswith("acc_")) == {f"acc_{h}" for h in props.HEADS["door"]}
