@@ -6,6 +6,7 @@ world: door_room_v4             # name of the world set (dataset.json)
 worlds: door_room/v4/worlds.json  # relative to sim/
 scenes_per_world: 1
 max_worlds: 8              # small check set: only the first 8 worlds
+workers: 4                 # Gazebo runs at once (one world each, own GZ_PARTITION); --workers overrides
 per_scene_rng: true        # seed per scene (+ a separate stream for lighting): scenes can be rendered on their own
 seed: 0
 views_per_scene: 4
