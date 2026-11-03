@@ -85,13 +85,15 @@ class CropDataset(Dataset):
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
         files = {im["id"]: im["file_name"] for im in coco["images"]}
-        self.items = []
+        self.items, self.heldout = [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
         for a in coco["annotations"]:
             if a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px:
                 continue
-            lab = labels(a.get("attributes") or {}, crop)
+            attrs = a.get("attributes") or {}
+            lab = labels(attrs, crop)
             if all(v in HEADS[crop][h] for h, v in lab.items()):
                 self.items.append((files[a["image_id"]], a["bbox"], {h: HEADS[crop][h].index(v) for h, v in lab.items()}))
+                self.heldout.append(bool(attrs.get("heldout")))
 
     def __len__(self):
         return len(self.items)
@@ -245,12 +247,18 @@ def train(cfg, run_name=None):
             mlflow.log_metrics({f"temperature_{h}": t for h, t in temps.items()})
         (out / "best" / "heads.json").write_text(json.dumps(meta(temps), indent=2))
         if len(sets["test"]):
+            held = torch.tensor(sets["test"].heldout, dtype=torch.bool)
             for h, (lg, lb) in predict(model, loaders["test"], device, heads).items():
                 for tag, T in (("", temps.get(h, 1.0)), ("_raw", 1.0)):
                     p = torch.softmax(lg / T, 1)
                     conf, pred = p.max(1)
                     test[f"test_ece{tag}_{h}"] = ece(conf.numpy(), (pred == lb).numpy())
                 test[f"test_acc_{h}"] = (lg.argmax(1) == lb).float().mean().item()
+                if held.any():  # the test loader does not shuffle: logits are in dataset order
+                    hit = (lg.argmax(1) == lb).float()
+                    for tag, grp in (("seen", ~held), ("unseen", held)):
+                        if grp.any():
+                            test[f"test_acc_{tag}_{h}"] = hit[grp].mean().item()
             mlflow.log_metrics(test)
             print("test " + "  ".join(f"{k} {v:.4f}" for k, v in test.items()), flush=True)
         return {"run_id": run.info.run_id, "out": str(out), "best_epoch": best["epoch"], "best_val_acc": best["value"],

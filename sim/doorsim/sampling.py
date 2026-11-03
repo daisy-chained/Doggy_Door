@@ -70,10 +70,15 @@ def look_at(position, target):
 
 def view(rng, attrs, cfg):
     """A camera pose in front of a random door: distance, angle off the door's facing direction and
-    camera height from cfg ranges; aimed at a point on the door (target_height, target_jitter along the wall)."""
-    doors = [n for n, o in attrs["objects"].items() if "front_world" in o]
+    camera height from cfg ranges; aimed at a point on the door (target_height, target_jitter along the wall).
+    Doors with `approach` (v4) are seen from the front or, with chance cfg p_back, from the back; old doors only from the front."""
+    doors = [n for n, o in attrs["objects"].items() if "front_world" in o or "approach" in o]
     door = doors[rng.integers(len(doors))]
-    f = attrs["objects"][door]["front_world"]
+    o = attrs["objects"][door]
+    side = "front"
+    if "approach" in o:
+        side = "back" if rng.random() < cfg.get("p_back", 0) else "front"
+    f = o["approach"][side] if "approach" in o else o["front_world"]
     px, py, pz = f["point"]
     nx, ny = f["direction"][0], f["direction"][1]
     a = math.radians(rng.uniform(-cfg["angle_deg"], cfg["angle_deg"]))
@@ -84,4 +89,4 @@ def view(rng, attrs, cfg):
     target = [px - ny * along, py + nx * along, rng.uniform(*cfg["target_height"])]
     yaw, pitch = look_at(position, target)
     roll = math.radians(rng.uniform(-cfg["roll_deg"], cfg["roll_deg"]))
-    return {"world_position": position, "world_rpy": [roll, pitch, yaw], "target_door": door, "target_world": target}
+    return {"world_position": position, "world_rpy": [roll, pitch, yaw], "target_door": door, "target_world": target, "side": side}

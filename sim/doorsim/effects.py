@@ -223,7 +223,8 @@ def sensor_noise(rgb, rng, cfg):
 
 def object_transmission(t, seg, attrs):
     """{object: mean transmission over its pixels (its id + ids of its parts)} for objects with a class; None when
-    not in view (same grouping as clutter.visible_fraction)."""
+    not in view (same grouping as clutter.visible_fraction). attrs = anything with "objects": the dataset's attributes or a
+    frame's meta (v4: ids differ per world, so use the frame's own)."""
     objs = attrs["objects"]
     out = {}
     for name, o in objs.items():
@@ -260,6 +261,22 @@ def sample_smoke(rng, cfg, visibility=None):
 
 
 # --- dataset ---
+def world_file(ds, meta):
+    """World file of one frame: v4 datasets have one per world (ds["world_files"], meta["world"]), older ones a single world."""
+    if meta.get("world") in ds.get("world_files", {}):
+        return SIM / ds["world_files"][meta["world"]]
+    return SIM / "door_room" / f"{ds.get('world')}.sdf"
+
+
+def split_frames(ds, metas, split, ratios, export_seed):
+    """(metas of `split`, the split's scenes per split) or (all metas, None) without a split. A dataset with its own
+    split_scenes (v4: by world) keeps it; otherwise the scenes are split like export.py would."""
+    if not split:
+        return metas, None
+    given = ds.get("split_scenes") or export.split_scenes([m["scene"] for m in metas.values()], ratios, export_seed)
+    return {n: m for n, m in metas.items() if m["scene"] in set(given[split])}, given
+
+
 def depth_m(path):
     return np.asarray(Image.open(path)).astype(np.float32) / 1000.0
 
@@ -271,16 +288,11 @@ def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, rat
     if (out / "dataset.json").exists():
         raise FileExistsError(f"{out} already has a dataset; pick another --out")
     ds = json.loads((src / "dataset.json").read_text())
-    K, attrs = ds["camera_intrinsics"]["K"], ds["attributes"]
+    K = ds["camera_intrinsics"]["K"]
     metas = {d.name: json.loads((d / "meta.json").read_text()) for d in sorted((src / "frames").iterdir())}
-    keep = metas
-    given = None
-    if split:
-        given = export.split_scenes([m["scene"] for m in metas.values()], ratios, export_seed)
-        keep = {n: m for n, m in metas.items() if m["scene"] in set(given[split])}
+    keep, given = split_frames(ds, metas, split, ratios, export_seed)
     sc = cfg["smoke"]
-    sdf = SIM / "door_room" / f"{ds.get('world')}.sdf"
-    lamps = world_lights(sdf) if sdf.exists() else []
+    lamp_cache = {}  # world file -> lamps (one per world in v4 datasets)
     out.mkdir(parents=True, exist_ok=True)
     for k, (name, meta) in enumerate(keep.items()):
         rng = np.random.default_rng([cfg["seed"], int(name)])
@@ -291,11 +303,14 @@ def apply_dataset(src, out, cfg, visibility=None, split=None, export_seed=0, rat
         seg = np.asarray(Image.open(s / "seg.png"))
         smoke = sample_smoke(rng, sc, visibility)
         if smoke:
-            t, air = smoke_render(depth_gt, K, meta["camera"], smoke, frame_lights(lamps, meta), sc["colour"],
+            sdf = world_file(ds, meta)
+            if sdf not in lamp_cache:
+                lamp_cache[sdf] = world_lights(sdf) if sdf.exists() else []
+            t, air = smoke_render(depth_gt, K, meta["camera"], smoke, frame_lights(lamp_cache[sdf], meta), sc["colour"],
                                   sc.get("samples", 24), sc.get("far", 12.0))
             rgb = add_smoke(rgb, t, air * sc.get("scatter_gain", 1.0))
             depth = smoke_depth(depth, t, rng, cfg["depth"])
-            for n, v in object_transmission(t, seg, attrs).items():
+            for n, v in object_transmission(t, seg, meta).items():
                 if n in meta["objects"]:
                     meta["objects"][n]["smoke_transmission"] = v
         rgb, gain = sensor_noise(rgb, rng, cfg["noise"])

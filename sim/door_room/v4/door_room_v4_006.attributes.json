@@ -1,0 +1,602 @@
+{
+  "_note": "Ground truth per object for door_room_v4_006 (door room v4: two random doors in one wall, see sim/doorsim/doors.py). 'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. World frame: x toward the wall, y left, z up (metres). 'front' = camera at x < 3 looking +x, 'back' = camera at x > 3 looking -x. Push / pull, hinge side and slide direction depend on the camera side: seen_from has both, the keys on the object itself are the front view and the generator sets them per frame. Each door has a handle on each face (handle_<slot> front, handle_<slot>_back back). 'heldout' = the door's property combo was never in training worlds. approach = where viewpoints are placed per side, keep_out = floor areas clutter stays off. hinge_world / slide_world = a point + direction from the joints in the world file; 'joint' = how to open the door (open = command). Objects with class null are parts of another object (part_of), e.g. a glass pane, or the clutter pool (ids 100-254, no box).",
+  "classes": {
+    "1": "door",
+    "2": "handle"
+  },
+  "camera": {
+    "world_position": [
+      0,
+      0,
+      1.2
+    ],
+    "world_rpy": [
+      0,
+      0,
+      0
+    ],
+    "frame": "ROS optical: x right, y down, z forward"
+  },
+  "objects": {
+    "door_a": {
+      "id": 11,
+      "class": 1,
+      "door_type": "hinged",
+      "glass": false,
+      "heldout": false,
+      "width": 0.837,
+      "height": 2.289,
+      "frame_style": "thick",
+      "seen_from": {
+        "front": {
+          "opening": "pull",
+          "hinge_side": "left"
+        },
+        "back": {
+          "opening": "push",
+          "hinge_side": "right"
+        }
+      },
+      "opening": "pull",
+      "hinge_side": "left",
+      "joint": {
+        "name": "hinge",
+        "type": "revolute",
+        "unit": "rad",
+        "open": -1.2,
+        "range": [
+          -1.6,
+          0.0
+        ]
+      },
+      "hinge_world": {
+        "point": [
+          2.98,
+          -0.5915,
+          1.1445
+        ],
+        "direction": [
+          0,
+          0,
+          1
+        ]
+      },
+      "approach": {
+        "front": {
+          "point": [
+            2.95,
+            -1.0,
+            1.05
+          ],
+          "direction": [
+            -1,
+            0,
+            0
+          ]
+        },
+        "back": {
+          "point": [
+            3.05,
+            -1.0,
+            1.05
+          ],
+          "direction": [
+            1,
+            0,
+            0
+          ]
+        }
+      },
+      "keep_out": {
+        "front": [
+          {
+            "x": [
+              2.65,
+              2.95
+            ],
+            "y": [
+              -1.639,
+              -0.362
+            ]
+          },
+          {
+            "x": [
+              2.063,
+              2.95
+            ],
+            "y": [
+              -1.568,
+              -0.431
+            ]
+          }
+        ],
+        "back": [
+          {
+            "x": [
+              3.05,
+              3.35
+            ],
+            "y": [
+              -1.639,
+              -0.362
+            ]
+          }
+        ]
+      }
+    },
+    "handle_a": {
+      "id": 12,
+      "class": 2,
+      "handle_type": "knob",
+      "door": "door_a",
+      "face": "front",
+      "heldout": false
+    },
+    "handle_a_back": {
+      "id": 14,
+      "class": 2,
+      "handle_type": "knob",
+      "door": "door_a",
+      "face": "back",
+      "heldout": false
+    },
+    "door_b": {
+      "id": 21,
+      "class": 1,
+      "door_type": "hinged",
+      "glass": false,
+      "heldout": false,
+      "width": 0.885,
+      "height": 2.263,
+      "frame_style": "none",
+      "seen_from": {
+        "front": {
+          "opening": "pull",
+          "hinge_side": "left"
+        },
+        "back": {
+          "opening": "push",
+          "hinge_side": "right"
+        }
+      },
+      "opening": "pull",
+      "hinge_side": "left",
+      "joint": {
+        "name": "hinge",
+        "type": "revolute",
+        "unit": "rad",
+        "open": -1.2,
+        "range": [
+          -1.6,
+          0.0
+        ]
+      },
+      "hinge_world": {
+        "point": [
+          2.98,
+          1.4325,
+          1.1315
+        ],
+        "direction": [
+          0,
+          0,
+          1
+        ]
+      },
+      "approach": {
+        "front": {
+          "point": [
+            2.95,
+            1.0,
+            1.05
+          ],
+          "direction": [
+            -1,
+            0,
+            0
+          ]
+        },
+        "back": {
+          "point": [
+            3.05,
+            1.0,
+            1.05
+          ],
+          "direction": [
+            1,
+            0,
+            0
+          ]
+        }
+      },
+      "keep_out": {
+        "front": [
+          {
+            "x": [
+              2.65,
+              2.95
+            ],
+            "y": [
+              0.458,
+              1.542
+            ]
+          },
+          {
+            "x": [
+              2.015,
+              2.95
+            ],
+            "y": [
+              0.407,
+              1.592
+            ]
+          }
+        ],
+        "back": [
+          {
+            "x": [
+              3.05,
+              3.35
+            ],
+            "y": [
+              0.458,
+              1.542
+            ]
+          }
+        ]
+      }
+    },
+    "handle_b": {
+      "id": 22,
+      "class": 2,
+      "handle_type": "lever",
+      "door": "door_b",
+      "face": "front",
+      "heldout": false
+    },
+    "handle_b_back": {
+      "id": 24,
+      "class": 2,
+      "handle_type": "lever",
+      "door": "door_b",
+      "face": "back",
+      "heldout": false
+    },
+    "box_1": {
+      "id": 100,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.15,
+        0.15,
+        0.15
+      ]
+    },
+    "box_2": {
+      "id": 101,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.3,
+        0.3,
+        0.3
+      ]
+    },
+    "box_3": {
+      "id": 102,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.5,
+        0.4,
+        0.3
+      ]
+    },
+    "box_4": {
+      "id": 103,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.25,
+        0.6,
+        0.2
+      ]
+    },
+    "box_5": {
+      "id": 104,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.8,
+        0.5,
+        0.4
+      ]
+    },
+    "box_6": {
+      "id": 105,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.4,
+        0.4,
+        0.8
+      ]
+    },
+    "box_7": {
+      "id": 106,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.2,
+        0.2,
+        0.5
+      ]
+    },
+    "box_8": {
+      "id": 107,
+      "class": null,
+      "role": "clutter",
+      "kind": "box",
+      "place": "floor",
+      "size": [
+        0.6,
+        0.6,
+        0.15
+      ]
+    },
+    "cylinder_1": {
+      "id": 110,
+      "class": null,
+      "role": "clutter",
+      "kind": "cylinder",
+      "place": "floor",
+      "size": [
+        0.2,
+        0.2,
+        0.4
+      ]
+    },
+    "cylinder_2": {
+      "id": 111,
+      "class": null,
+      "role": "clutter",
+      "kind": "cylinder",
+      "place": "floor",
+      "size": [
+        0.4,
+        0.4,
+        0.3
+      ]
+    },
+    "cylinder_3": {
+      "id": 112,
+      "class": null,
+      "role": "clutter",
+      "kind": "cylinder",
+      "place": "floor",
+      "size": [
+        0.3,
+        0.3,
+        0.8
+      ]
+    },
+    "cylinder_4": {
+      "id": 113,
+      "class": null,
+      "role": "clutter",
+      "kind": "cylinder",
+      "place": "floor",
+      "size": [
+        0.15,
+        0.15,
+        0.25
+      ]
+    },
+    "sphere_1": {
+      "id": 115,
+      "class": null,
+      "role": "clutter",
+      "kind": "sphere",
+      "place": "floor",
+      "size": [
+        0.2,
+        0.2,
+        0.2
+      ]
+    },
+    "sphere_2": {
+      "id": 116,
+      "class": null,
+      "role": "clutter",
+      "kind": "sphere",
+      "place": "floor",
+      "size": [
+        0.35,
+        0.35,
+        0.35
+      ]
+    },
+    "sphere_3": {
+      "id": 117,
+      "class": null,
+      "role": "clutter",
+      "kind": "sphere",
+      "place": "floor",
+      "size": [
+        0.5,
+        0.5,
+        0.5
+      ]
+    },
+    "table": {
+      "id": 120,
+      "class": null,
+      "role": "clutter",
+      "kind": "table",
+      "place": "floor",
+      "size": [
+        0.7,
+        1.2,
+        0.76
+      ]
+    },
+    "chair_1": {
+      "id": 121,
+      "class": null,
+      "role": "clutter",
+      "kind": "chair",
+      "place": "floor",
+      "size": [
+        0.45,
+        0.45,
+        0.9
+      ]
+    },
+    "chair_2": {
+      "id": 122,
+      "class": null,
+      "role": "clutter",
+      "kind": "chair",
+      "place": "floor",
+      "size": [
+        0.5175,
+        0.5175,
+        1.035
+      ]
+    },
+    "plant": {
+      "id": 123,
+      "class": null,
+      "role": "clutter",
+      "kind": "plant",
+      "place": "floor",
+      "size": [
+        0.5,
+        0.5,
+        0.75
+      ]
+    },
+    "bookcase": {
+      "id": 124,
+      "class": null,
+      "role": "clutter",
+      "kind": "bookcase",
+      "place": "floor",
+      "size": [
+        0.3,
+        0.8,
+        1.8
+      ]
+    },
+    "box_stack": {
+      "id": 125,
+      "class": null,
+      "role": "clutter",
+      "kind": "box_stack",
+      "place": "floor",
+      "size": [
+        0.6,
+        0.6,
+        0.9
+      ]
+    },
+    "cabinet": {
+      "id": 140,
+      "class": null,
+      "role": "lookalike",
+      "kind": "cabinet",
+      "place": "floor",
+      "size": [
+        0.4,
+        1.0,
+        0.9
+      ]
+    },
+    "wardrobe": {
+      "id": 141,
+      "class": null,
+      "role": "lookalike",
+      "kind": "wardrobe",
+      "place": "floor",
+      "size": [
+        0.55,
+        1.0,
+        1.9
+      ]
+    },
+    "drawers": {
+      "id": 142,
+      "class": null,
+      "role": "lookalike",
+      "kind": "drawers",
+      "place": "floor",
+      "size": [
+        0.45,
+        0.8,
+        0.9
+      ]
+    },
+    "frame_1": {
+      "id": 143,
+      "class": null,
+      "role": "lookalike",
+      "kind": "frame",
+      "place": "wall",
+      "size": [
+        0.03,
+        0.4,
+        0.5
+      ]
+    },
+    "frame_2": {
+      "id": 144,
+      "class": null,
+      "role": "lookalike",
+      "kind": "frame",
+      "place": "wall",
+      "size": [
+        0.03,
+        0.7,
+        0.5
+      ]
+    },
+    "frame_3": {
+      "id": 145,
+      "class": null,
+      "role": "lookalike",
+      "kind": "frame",
+      "place": "wall",
+      "size": [
+        0.03,
+        0.3,
+        0.4
+      ]
+    },
+    "whiteboard": {
+      "id": 147,
+      "class": null,
+      "role": "lookalike",
+      "kind": "whiteboard",
+      "place": "wall",
+      "size": [
+        0.03,
+        1.0,
+        0.7
+      ]
+    }
+  }
+}

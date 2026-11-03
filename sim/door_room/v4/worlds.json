@@ -1,0 +1,3456 @@
+{
+  "seed": 0,
+  "config": {
+    "seed": 0,
+    "count": 44,
+    "heldout_count": 6,
+    "split_ratios": [
+      0.7,
+      0.15,
+      0.15
+    ],
+    "heldout": [
+      {
+        "glass": true,
+        "handle_type": "knob"
+      },
+      {
+        "door_type": "sliding",
+        "glass": true
+      }
+    ],
+    "door": {
+      "p_sliding": 0.35,
+      "p_glass": 0.35,
+      "handle": {
+        "lever": 0.5,
+        "knob": 0.5
+      },
+      "width": [
+        0.8,
+        1.0
+      ],
+      "height": [
+        2.0,
+        2.3
+      ],
+      "frame_style": {
+        "none": 0.33,
+        "thin": 0.34,
+        "thick": 0.33
+      },
+      "p_hangs_back": 0.5,
+      "colours": {
+        "wood": {
+          "p": 0.4,
+          "rgb": [
+            [
+              0.45,
+              0.28,
+              0.14
+            ],
+            [
+              0.85,
+              0.7,
+              0.5
+            ]
+          ]
+        },
+        "white": {
+          "p": 0.25,
+          "rgb": [
+            [
+              0.85,
+              0.85,
+              0.82
+            ],
+            [
+              0.97,
+              0.97,
+              0.95
+            ]
+          ]
+        },
+        "grey": {
+          "p": 0.15,
+          "rgb": [
+            [
+              0.25,
+              0.25,
+              0.27
+            ],
+            [
+              0.6,
+              0.6,
+              0.62
+            ]
+          ]
+        },
+        "painted": {
+          "p": 0.2,
+          "rgb": [
+            [
+              0.05,
+              0.05,
+              0.05
+            ],
+            [
+              0.9,
+              0.9,
+              0.9
+            ]
+          ]
+        }
+      },
+      "glass_frame": {
+        "aluminium": {
+          "p": 0.4,
+          "rgb": [
+            [
+              0.55,
+              0.57,
+              0.6
+            ],
+            [
+              0.7,
+              0.72,
+              0.75
+            ]
+          ]
+        },
+        "black": {
+          "p": 0.25,
+          "rgb": [
+            [
+              0.05,
+              0.05,
+              0.05
+            ],
+            [
+              0.15,
+              0.15,
+              0.15
+            ]
+          ]
+        },
+        "white": {
+          "p": 0.15,
+          "rgb": [
+            [
+              0.85,
+              0.85,
+              0.85
+            ],
+            [
+              0.95,
+              0.95,
+              0.95
+            ]
+          ]
+        },
+        "wood": {
+          "p": 0.2,
+          "rgb": [
+            [
+              0.45,
+              0.28,
+              0.14
+            ],
+            [
+              0.85,
+              0.7,
+              0.5
+            ]
+          ]
+        }
+      },
+      "trim": {
+        "white": {
+          "p": 0.5,
+          "rgb": [
+            [
+              0.9,
+              0.9,
+              0.88
+            ],
+            [
+              0.97,
+              0.97,
+              0.95
+            ]
+          ]
+        },
+        "match": {
+          "p": 0.3
+        },
+        "dark": {
+          "p": 0.2,
+          "rgb": [
+            [
+              0.1,
+              0.1,
+              0.1
+            ],
+            [
+              0.35,
+              0.3,
+              0.25
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "worlds": [
+    {
+      "name": "door_room_v4_000",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_000.sdf",
+      "attributes": "door_room/v4/door_room_v4_000.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.803,
+          "height": 2.244,
+          "frame_style": "thick",
+          "colour": [
+            0.938,
+            0.915,
+            0.942
+          ],
+          "frame_colour": [
+            0.451,
+            0.64,
+            0.152
+          ],
+          "trim_colour": [
+            0.938,
+            0.915,
+            0.942
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.885,
+          "height": 2.008,
+          "frame_style": "none",
+          "colour": [
+            0.477,
+            0.465,
+            0.404
+          ],
+          "frame_colour": [
+            0.477,
+            0.465,
+            0.404
+          ],
+          "trim_colour": [
+            0.345,
+            0.237,
+            0.198
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_001",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_001.sdf",
+      "attributes": "door_room/v4/door_room_v4_001.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.985,
+          "height": 2.132,
+          "frame_style": "thick",
+          "colour": [
+            0.901,
+            0.924,
+            0.949
+          ],
+          "frame_colour": [
+            0.901,
+            0.924,
+            0.949
+          ],
+          "trim_colour": [
+            0.215,
+            0.252,
+            0.175
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.942,
+          "height": 2.28,
+          "frame_style": "none",
+          "colour": [
+            0.575,
+            0.589,
+            0.275
+          ],
+          "frame_colour": [
+            0.575,
+            0.589,
+            0.275
+          ],
+          "trim_colour": [
+            0.345,
+            0.291,
+            0.122
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_002",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_002.sdf",
+      "attributes": "door_room/v4/door_room_v4_002.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.846,
+          "height": 2.241,
+          "frame_style": "thick",
+          "colour": [
+            0.666,
+            0.466,
+            0.475
+          ],
+          "frame_colour": [
+            0.666,
+            0.466,
+            0.475
+          ],
+          "trim_colour": [
+            0.951,
+            0.943,
+            0.882
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.903,
+          "height": 2.279,
+          "frame_style": "none",
+          "colour": [
+            0.107,
+            0.343,
+            0.416
+          ],
+          "frame_colour": [
+            0.107,
+            0.343,
+            0.416
+          ],
+          "trim_colour": [
+            0.241,
+            0.152,
+            0.136
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_003",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_003.sdf",
+      "attributes": "door_room/v4/door_room_v4_003.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.982,
+          "height": 2.013,
+          "frame_style": "thick",
+          "colour": [
+            0.95,
+            0.851,
+            0.867
+          ],
+          "frame_colour": [
+            0.648,
+            0.611,
+            0.705
+          ],
+          "trim_colour": [
+            0.132,
+            0.273,
+            0.109
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.955,
+          "height": 2.093,
+          "frame_style": "none",
+          "colour": [
+            0.799,
+            0.484,
+            0.343
+          ],
+          "frame_colour": [
+            0.799,
+            0.484,
+            0.343
+          ],
+          "trim_colour": [
+            0.179,
+            0.137,
+            0.232
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_004",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_004.sdf",
+      "attributes": "door_room/v4/door_room_v4_004.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.95,
+          "height": 2.258,
+          "frame_style": "none",
+          "colour": [
+            0.718,
+            0.58,
+            0.2
+          ],
+          "frame_colour": [
+            0.718,
+            0.58,
+            0.2
+          ],
+          "trim_colour": [
+            0.964,
+            0.939,
+            0.92
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.996,
+          "height": 2.171,
+          "frame_style": "none",
+          "colour": [
+            0.592,
+            0.456,
+            0.382
+          ],
+          "frame_colour": [
+            0.592,
+            0.456,
+            0.382
+          ],
+          "trim_colour": [
+            0.947,
+            0.914,
+            0.92
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_005",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_005.sdf",
+      "attributes": "door_room/v4/door_room_v4_005.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.949,
+          "height": 2.053,
+          "frame_style": "thin",
+          "colour": [
+            0.74,
+            0.317,
+            0.282
+          ],
+          "frame_colour": [
+            0.639,
+            0.663,
+            0.416
+          ],
+          "trim_colour": [
+            0.132,
+            0.115,
+            0.111
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.935,
+          "height": 2.095,
+          "frame_style": "thick",
+          "colour": [
+            0.911,
+            0.945,
+            0.832
+          ],
+          "frame_colour": [
+            0.911,
+            0.945,
+            0.832
+          ],
+          "trim_colour": [
+            0.911,
+            0.945,
+            0.832
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_006",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_006.sdf",
+      "attributes": "door_room/v4/door_room_v4_006.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.837,
+          "height": 2.289,
+          "frame_style": "thick",
+          "colour": [
+            0.948,
+            0.922,
+            0.905
+          ],
+          "frame_colour": [
+            0.948,
+            0.922,
+            0.905
+          ],
+          "trim_colour": [
+            0.116,
+            0.267,
+            0.157
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.885,
+          "height": 2.263,
+          "frame_style": "none",
+          "colour": [
+            0.526,
+            0.53,
+            0.383
+          ],
+          "frame_colour": [
+            0.526,
+            0.53,
+            0.383
+          ],
+          "trim_colour": [
+            0.526,
+            0.53,
+            0.383
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_007",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_007.sdf",
+      "attributes": "door_room/v4/door_room_v4_007.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.823,
+          "height": 2.122,
+          "frame_style": "none",
+          "colour": [
+            0.548,
+            0.299,
+            0.516
+          ],
+          "frame_colour": [
+            0.548,
+            0.299,
+            0.516
+          ],
+          "trim_colour": [
+            0.345,
+            0.269,
+            0.164
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.983,
+          "height": 2.143,
+          "frame_style": "thick",
+          "colour": [
+            0.353,
+            0.519,
+            0.47
+          ],
+          "frame_colour": [
+            0.353,
+            0.519,
+            0.47
+          ],
+          "trim_colour": [
+            0.927,
+            0.905,
+            0.913
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_008",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_008.sdf",
+      "attributes": "door_room/v4/door_room_v4_008.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.987,
+          "height": 2.205,
+          "frame_style": "thick",
+          "colour": [
+            0.546,
+            0.084,
+            0.655
+          ],
+          "frame_colour": [
+            0.546,
+            0.084,
+            0.655
+          ],
+          "trim_colour": [
+            0.546,
+            0.084,
+            0.655
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.87,
+          "height": 2.051,
+          "frame_style": "thin",
+          "colour": [
+            0.404,
+            0.456,
+            0.315
+          ],
+          "frame_colour": [
+            0.404,
+            0.456,
+            0.315
+          ],
+          "trim_colour": [
+            0.404,
+            0.456,
+            0.315
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_009",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_009.sdf",
+      "attributes": "door_room/v4/door_room_v4_009.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.913,
+          "height": 2.145,
+          "frame_style": "thick",
+          "colour": [
+            0.728,
+            0.418,
+            0.203
+          ],
+          "frame_colour": [
+            0.728,
+            0.418,
+            0.203
+          ],
+          "trim_colour": [
+            0.728,
+            0.418,
+            0.203
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.84,
+          "height": 2.154,
+          "frame_style": "none",
+          "colour": [
+            0.803,
+            0.611,
+            0.34
+          ],
+          "frame_colour": [
+            0.803,
+            0.611,
+            0.34
+          ],
+          "trim_colour": [
+            0.939,
+            0.901,
+            0.93
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_010",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_010.sdf",
+      "attributes": "door_room/v4/door_room_v4_010.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.849,
+          "height": 2.172,
+          "frame_style": "thin",
+          "colour": [
+            0.835,
+            0.179,
+            0.551
+          ],
+          "frame_colour": [
+            0.835,
+            0.179,
+            0.551
+          ],
+          "trim_colour": [
+            0.835,
+            0.179,
+            0.551
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.98,
+          "height": 2.103,
+          "frame_style": "none",
+          "colour": [
+            0.547,
+            0.455,
+            0.268
+          ],
+          "frame_colour": [
+            0.547,
+            0.455,
+            0.268
+          ],
+          "trim_colour": [
+            0.901,
+            0.941,
+            0.893
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_011",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_011.sdf",
+      "attributes": "door_room/v4/door_room_v4_011.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.879,
+          "height": 2.07,
+          "frame_style": "thick",
+          "colour": [
+            0.937,
+            0.86,
+            0.866
+          ],
+          "frame_colour": [
+            0.937,
+            0.86,
+            0.866
+          ],
+          "trim_colour": [
+            0.937,
+            0.86,
+            0.866
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.988,
+          "height": 2.028,
+          "frame_style": "none",
+          "colour": [
+            0.846,
+            0.391,
+            0.439
+          ],
+          "frame_colour": [
+            0.846,
+            0.391,
+            0.439
+          ],
+          "trim_colour": [
+            0.941,
+            0.967,
+            0.93
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_012",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_012.sdf",
+      "attributes": "door_room/v4/door_room_v4_012.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.956,
+          "height": 2.267,
+          "frame_style": "thin",
+          "colour": [
+            0.661,
+            0.375,
+            0.42
+          ],
+          "frame_colour": [
+            0.661,
+            0.375,
+            0.42
+          ],
+          "trim_colour": [
+            0.94,
+            0.938,
+            0.927
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.883,
+          "height": 2.184,
+          "frame_style": "thick",
+          "colour": [
+            0.938,
+            0.912,
+            0.88
+          ],
+          "frame_colour": [
+            0.938,
+            0.912,
+            0.88
+          ],
+          "trim_colour": [
+            0.916,
+            0.949,
+            0.929
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_013",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_013.sdf",
+      "attributes": "door_room/v4/door_room_v4_013.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.968,
+          "height": 2.146,
+          "frame_style": "thin",
+          "colour": [
+            0.512,
+            0.579,
+            0.444
+          ],
+          "frame_colour": [
+            0.512,
+            0.579,
+            0.444
+          ],
+          "trim_colour": [
+            0.512,
+            0.579,
+            0.444
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.878,
+          "height": 2.049,
+          "frame_style": "thick",
+          "colour": [
+            0.091,
+            0.218,
+            0.591
+          ],
+          "frame_colour": [
+            0.091,
+            0.218,
+            0.591
+          ],
+          "trim_colour": [
+            0.091,
+            0.218,
+            0.591
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_014",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_014.sdf",
+      "attributes": "door_room/v4/door_room_v4_014.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.877,
+          "height": 2.187,
+          "frame_style": "thin",
+          "colour": [
+            0.571,
+            0.509,
+            0.36
+          ],
+          "frame_colour": [
+            0.571,
+            0.509,
+            0.36
+          ],
+          "trim_colour": [
+            0.571,
+            0.509,
+            0.36
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.969,
+          "height": 2.024,
+          "frame_style": "thick",
+          "colour": [
+            0.273,
+            0.06,
+            0.461
+          ],
+          "frame_colour": [
+            0.273,
+            0.06,
+            0.461
+          ],
+          "trim_colour": [
+            0.968,
+            0.963,
+            0.947
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_015",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_015.sdf",
+      "attributes": "door_room/v4/door_room_v4_015.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.85,
+          "height": 2.28,
+          "frame_style": "thin",
+          "colour": [
+            0.425,
+            0.314,
+            0.374
+          ],
+          "frame_colour": [
+            0.425,
+            0.314,
+            0.374
+          ],
+          "trim_colour": [
+            0.425,
+            0.314,
+            0.374
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.952,
+          "height": 2.184,
+          "frame_style": "none",
+          "colour": [
+            0.42,
+            0.6,
+            0.542
+          ],
+          "frame_colour": [
+            0.42,
+            0.6,
+            0.542
+          ],
+          "trim_colour": [
+            0.165,
+            0.13,
+            0.13
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_016",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_016.sdf",
+      "attributes": "door_room/v4/door_room_v4_016.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.883,
+          "height": 2.116,
+          "frame_style": "thin",
+          "colour": [
+            0.481,
+            0.28,
+            0.474
+          ],
+          "frame_colour": [
+            0.481,
+            0.28,
+            0.474
+          ],
+          "trim_colour": [
+            0.481,
+            0.28,
+            0.474
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.865,
+          "height": 2.278,
+          "frame_style": "thin",
+          "colour": [
+            0.441,
+            0.692,
+            0.462
+          ],
+          "frame_colour": [
+            0.882,
+            0.939,
+            0.877
+          ],
+          "trim_colour": [
+            0.95,
+            0.947,
+            0.926
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_017",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_017.sdf",
+      "attributes": "door_room/v4/door_room_v4_017.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.855,
+          "height": 2.227,
+          "frame_style": "thin",
+          "colour": [
+            0.414,
+            0.762,
+            0.062
+          ],
+          "frame_colour": [
+            0.414,
+            0.762,
+            0.062
+          ],
+          "trim_colour": [
+            0.414,
+            0.762,
+            0.062
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.997,
+          "height": 2.245,
+          "frame_style": "none",
+          "colour": [
+            0.269,
+            0.26,
+            0.707
+          ],
+          "frame_colour": [
+            0.935,
+            0.864,
+            0.925
+          ],
+          "trim_colour": [
+            0.923,
+            0.951,
+            0.939
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_018",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_018.sdf",
+      "attributes": "door_room/v4/door_room_v4_018.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.984,
+          "height": 2.087,
+          "frame_style": "thick",
+          "colour": [
+            0.815,
+            0.605,
+            0.211
+          ],
+          "frame_colour": [
+            0.815,
+            0.605,
+            0.211
+          ],
+          "trim_colour": [
+            0.942,
+            0.925,
+            0.932
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.803,
+          "height": 2.034,
+          "frame_style": "none",
+          "colour": [
+            0.455,
+            0.671,
+            0.226
+          ],
+          "frame_colour": [
+            0.455,
+            0.671,
+            0.226
+          ],
+          "trim_colour": [
+            0.926,
+            0.966,
+            0.905
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_019",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_019.sdf",
+      "attributes": "door_room/v4/door_room_v4_019.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.873,
+          "height": 2.025,
+          "frame_style": "thin",
+          "colour": [
+            0.38,
+            0.324,
+            0.413
+          ],
+          "frame_colour": [
+            0.38,
+            0.324,
+            0.413
+          ],
+          "trim_colour": [
+            0.97,
+            0.96,
+            0.923
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.876,
+          "height": 2.098,
+          "frame_style": "thin",
+          "colour": [
+            0.313,
+            0.414,
+            0.617
+          ],
+          "frame_colour": [
+            0.313,
+            0.414,
+            0.617
+          ],
+          "trim_colour": [
+            0.926,
+            0.923,
+            0.908
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_020",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_020.sdf",
+      "attributes": "door_room/v4/door_room_v4_020.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.885,
+          "height": 2.076,
+          "frame_style": "thick",
+          "colour": [
+            0.875,
+            0.866,
+            0.836
+          ],
+          "frame_colour": [
+            0.875,
+            0.866,
+            0.836
+          ],
+          "trim_colour": [
+            0.201,
+            0.264,
+            0.234
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.971,
+          "height": 2.0,
+          "frame_style": "thin",
+          "colour": [
+            0.701,
+            0.386,
+            0.216
+          ],
+          "frame_colour": [
+            0.701,
+            0.386,
+            0.216
+          ],
+          "trim_colour": [
+            0.701,
+            0.386,
+            0.216
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_021",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_021.sdf",
+      "attributes": "door_room/v4/door_room_v4_021.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.976,
+          "height": 2.165,
+          "frame_style": "thick",
+          "colour": [
+            0.946,
+            0.95,
+            0.919
+          ],
+          "frame_colour": [
+            0.946,
+            0.95,
+            0.919
+          ],
+          "trim_colour": [
+            0.902,
+            0.946,
+            0.909
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.943,
+          "height": 2.213,
+          "frame_style": "thick",
+          "colour": [
+            0.541,
+            0.489,
+            0.489
+          ],
+          "frame_colour": [
+            0.541,
+            0.489,
+            0.489
+          ],
+          "trim_colour": [
+            0.192,
+            0.268,
+            0.176
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_022",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_022.sdf",
+      "attributes": "door_room/v4/door_room_v4_022.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.855,
+          "height": 2.212,
+          "frame_style": "thin",
+          "colour": [
+            0.929,
+            0.852,
+            0.841
+          ],
+          "frame_colour": [
+            0.929,
+            0.852,
+            0.841
+          ],
+          "trim_colour": [
+            0.948,
+            0.949,
+            0.928
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.905,
+          "height": 2.223,
+          "frame_style": "thin",
+          "colour": [
+            0.53,
+            0.154,
+            0.596
+          ],
+          "frame_colour": [
+            0.53,
+            0.154,
+            0.596
+          ],
+          "trim_colour": [
+            0.958,
+            0.948,
+            0.946
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_023",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_023.sdf",
+      "attributes": "door_room/v4/door_room_v4_023.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.954,
+          "height": 2.214,
+          "frame_style": "thin",
+          "colour": [
+            0.577,
+            0.49,
+            0.399
+          ],
+          "frame_colour": [
+            0.577,
+            0.49,
+            0.399
+          ],
+          "trim_colour": [
+            0.307,
+            0.271,
+            0.116
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.937,
+          "height": 2.24,
+          "frame_style": "thin",
+          "colour": [
+            0.674,
+            0.289,
+            0.343
+          ],
+          "frame_colour": [
+            0.481,
+            0.441,
+            0.199
+          ],
+          "trim_colour": [
+            0.901,
+            0.958,
+            0.915
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_024",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_024.sdf",
+      "attributes": "door_room/v4/door_room_v4_024.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.854,
+          "height": 2.015,
+          "frame_style": "none",
+          "colour": [
+            0.467,
+            0.512,
+            0.206
+          ],
+          "frame_colour": [
+            0.467,
+            0.512,
+            0.206
+          ],
+          "trim_colour": [
+            0.964,
+            0.91,
+            0.887
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.814,
+          "height": 2.253,
+          "frame_style": "thin",
+          "colour": [
+            0.504,
+            0.328,
+            0.328
+          ],
+          "frame_colour": [
+            0.504,
+            0.328,
+            0.328
+          ],
+          "trim_colour": [
+            0.504,
+            0.328,
+            0.328
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_025",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_025.sdf",
+      "attributes": "door_room/v4/door_room_v4_025.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.876,
+          "height": 2.077,
+          "frame_style": "none",
+          "colour": [
+            0.945,
+            0.903,
+            0.825
+          ],
+          "frame_colour": [
+            0.945,
+            0.903,
+            0.825
+          ],
+          "trim_colour": [
+            0.906,
+            0.923,
+            0.928
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.859,
+          "height": 2.153,
+          "frame_style": "thin",
+          "colour": [
+            0.78,
+            0.462,
+            0.444
+          ],
+          "frame_colour": [
+            0.78,
+            0.462,
+            0.444
+          ],
+          "trim_colour": [
+            0.966,
+            0.908,
+            0.934
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_026",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_026.sdf",
+      "attributes": "door_room/v4/door_room_v4_026.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.87,
+          "height": 2.28,
+          "frame_style": "thick",
+          "colour": [
+            0.387,
+            0.78,
+            0.439
+          ],
+          "frame_colour": [
+            0.387,
+            0.78,
+            0.439
+          ],
+          "trim_colour": [
+            0.96,
+            0.957,
+            0.889
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.843,
+          "height": 2.254,
+          "frame_style": "thin",
+          "colour": [
+            0.596,
+            0.641,
+            0.309
+          ],
+          "frame_colour": [
+            0.596,
+            0.641,
+            0.309
+          ],
+          "trim_colour": [
+            0.924,
+            0.958,
+            0.912
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_027",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_027.sdf",
+      "attributes": "door_room/v4/door_room_v4_027.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.857,
+          "height": 2.23,
+          "frame_style": "none",
+          "colour": [
+            0.554,
+            0.645,
+            0.256
+          ],
+          "frame_colour": [
+            0.554,
+            0.645,
+            0.256
+          ],
+          "trim_colour": [
+            0.907,
+            0.94,
+            0.887
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.92,
+          "height": 2.044,
+          "frame_style": "none",
+          "colour": [
+            0.388,
+            0.786,
+            0.682
+          ],
+          "frame_colour": [
+            0.563,
+            0.596,
+            0.674
+          ],
+          "trim_colour": [
+            0.958,
+            0.933,
+            0.919
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_028",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_028.sdf",
+      "attributes": "door_room/v4/door_room_v4_028.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.954,
+          "height": 2.12,
+          "frame_style": "none",
+          "colour": [
+            0.344,
+            0.638,
+            0.89
+          ],
+          "frame_colour": [
+            0.344,
+            0.638,
+            0.89
+          ],
+          "trim_colour": [
+            0.344,
+            0.638,
+            0.89
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.819,
+          "height": 2.262,
+          "frame_style": "thick",
+          "colour": [
+            0.503,
+            0.63,
+            0.387
+          ],
+          "frame_colour": [
+            0.503,
+            0.63,
+            0.387
+          ],
+          "trim_colour": [
+            0.289,
+            0.219,
+            0.181
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_029",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_029.sdf",
+      "attributes": "door_room/v4/door_room_v4_029.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.909,
+          "height": 2.111,
+          "frame_style": "thin",
+          "colour": [
+            0.516,
+            0.507,
+            0.36
+          ],
+          "frame_colour": [
+            0.516,
+            0.507,
+            0.36
+          ],
+          "trim_colour": [
+            0.945,
+            0.959,
+            0.9
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.993,
+          "height": 2.103,
+          "frame_style": "thick",
+          "colour": [
+            0.945,
+            0.961,
+            0.937
+          ],
+          "frame_colour": [
+            0.945,
+            0.961,
+            0.937
+          ],
+          "trim_colour": [
+            0.181,
+            0.283,
+            0.123
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_030",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_030.sdf",
+      "attributes": "door_room/v4/door_room_v4_030.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.854,
+          "height": 2.111,
+          "frame_style": "thick",
+          "colour": [
+            0.806,
+            0.421,
+            0.362
+          ],
+          "frame_colour": [
+            0.806,
+            0.421,
+            0.362
+          ],
+          "trim_colour": [
+            0.115,
+            0.209,
+            0.133
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.866,
+          "height": 2.104,
+          "frame_style": "thick",
+          "colour": [
+            0.485,
+            0.408,
+            0.371
+          ],
+          "frame_colour": [
+            0.656,
+            0.674,
+            0.666
+          ],
+          "trim_colour": [
+            0.181,
+            0.225,
+            0.181
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_031",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_031.sdf",
+      "attributes": "door_room/v4/door_room_v4_031.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.995,
+          "height": 2.235,
+          "frame_style": "thin",
+          "colour": [
+            0.558,
+            0.298,
+            0.349
+          ],
+          "frame_colour": [
+            0.558,
+            0.298,
+            0.349
+          ],
+          "trim_colour": [
+            0.946,
+            0.937,
+            0.909
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.815,
+          "height": 2.008,
+          "frame_style": "none",
+          "colour": [
+            0.768,
+            0.344,
+            0.262
+          ],
+          "frame_colour": [
+            0.768,
+            0.344,
+            0.262
+          ],
+          "trim_colour": [
+            0.965,
+            0.922,
+            0.939
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_032",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_032.sdf",
+      "attributes": "door_room/v4/door_room_v4_032.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.957,
+          "height": 2.21,
+          "frame_style": "thick",
+          "colour": [
+            0.929,
+            0.894,
+            0.845
+          ],
+          "frame_colour": [
+            0.85,
+            0.928,
+            0.851
+          ],
+          "trim_colour": [
+            0.929,
+            0.894,
+            0.845
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.952,
+          "height": 2.161,
+          "frame_style": "thick",
+          "colour": [
+            0.322,
+            0.574,
+            0.385
+          ],
+          "frame_colour": [
+            0.322,
+            0.574,
+            0.385
+          ],
+          "trim_colour": [
+            0.322,
+            0.574,
+            0.385
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_033",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_033.sdf",
+      "attributes": "door_room/v4/door_room_v4_033.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.913,
+          "height": 2.008,
+          "frame_style": "none",
+          "colour": [
+            0.119,
+            0.17,
+            0.537
+          ],
+          "frame_colour": [
+            0.119,
+            0.17,
+            0.537
+          ],
+          "trim_colour": [
+            0.119,
+            0.17,
+            0.537
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.916,
+          "height": 2.244,
+          "frame_style": "none",
+          "colour": [
+            0.633,
+            0.41,
+            0.141
+          ],
+          "frame_colour": [
+            0.633,
+            0.41,
+            0.141
+          ],
+          "trim_colour": [
+            0.633,
+            0.41,
+            0.141
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_034",
+      "split": "val",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_034.sdf",
+      "attributes": "door_room/v4/door_room_v4_034.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.866,
+          "height": 2.168,
+          "frame_style": "none",
+          "colour": [
+            0.853,
+            0.875,
+            0.878
+          ],
+          "frame_colour": [
+            0.853,
+            0.875,
+            0.878
+          ],
+          "trim_colour": [
+            0.853,
+            0.875,
+            0.878
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.874,
+          "height": 2.149,
+          "frame_style": "thick",
+          "colour": [
+            0.506,
+            0.687,
+            0.454
+          ],
+          "frame_colour": [
+            0.506,
+            0.687,
+            0.454
+          ],
+          "trim_colour": [
+            0.219,
+            0.107,
+            0.211
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_035",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_035.sdf",
+      "attributes": "door_room/v4/door_room_v4_035.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.883,
+          "height": 2.231,
+          "frame_style": "thick",
+          "colour": [
+            0.733,
+            0.659,
+            0.462
+          ],
+          "frame_colour": [
+            0.733,
+            0.659,
+            0.462
+          ],
+          "trim_colour": [
+            0.17,
+            0.181,
+            0.176
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.952,
+          "height": 2.044,
+          "frame_style": "thick",
+          "colour": [
+            0.965,
+            0.957,
+            0.943
+          ],
+          "frame_colour": [
+            0.965,
+            0.957,
+            0.943
+          ],
+          "trim_colour": [
+            0.958,
+            0.96,
+            0.946
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_036",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_036.sdf",
+      "attributes": "door_room/v4/door_room_v4_036.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.999,
+          "height": 2.217,
+          "frame_style": "thin",
+          "colour": [
+            0.656,
+            0.333,
+            0.84
+          ],
+          "frame_colour": [
+            0.656,
+            0.333,
+            0.84
+          ],
+          "trim_colour": [
+            0.922,
+            0.902,
+            0.929
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.994,
+          "height": 2.019,
+          "frame_style": "thick",
+          "colour": [
+            0.794,
+            0.285,
+            0.21
+          ],
+          "frame_colour": [
+            0.794,
+            0.285,
+            0.21
+          ],
+          "trim_colour": [
+            0.244,
+            0.126,
+            0.101
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_037",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_037.sdf",
+      "attributes": "door_room/v4/door_room_v4_037.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.831,
+          "height": 2.096,
+          "frame_style": "none",
+          "colour": [
+            0.41,
+            0.627,
+            0.292
+          ],
+          "frame_colour": [
+            0.41,
+            0.627,
+            0.292
+          ],
+          "trim_colour": [
+            0.914,
+            0.901,
+            0.928
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.864,
+          "height": 2.274,
+          "frame_style": "thin",
+          "colour": [
+            0.671,
+            0.54,
+            0.432
+          ],
+          "frame_colour": [
+            0.671,
+            0.54,
+            0.432
+          ],
+          "trim_colour": [
+            0.671,
+            0.54,
+            0.432
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_038",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_038.sdf",
+      "attributes": "door_room/v4/door_room_v4_038.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.934,
+          "height": 2.214,
+          "frame_style": "thin",
+          "colour": [
+            0.967,
+            0.919,
+            0.873
+          ],
+          "frame_colour": [
+            0.967,
+            0.919,
+            0.873
+          ],
+          "trim_colour": [
+            0.913,
+            0.969,
+            0.947
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.844,
+          "height": 2.199,
+          "frame_style": "none",
+          "colour": [
+            0.58,
+            0.384,
+            0.419
+          ],
+          "frame_colour": [
+            0.58,
+            0.384,
+            0.419
+          ],
+          "trim_colour": [
+            0.964,
+            0.913,
+            0.943
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_039",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_039.sdf",
+      "attributes": "door_room/v4/door_room_v4_039.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.809,
+          "height": 2.251,
+          "frame_style": "none",
+          "colour": [
+            0.965,
+            0.864,
+            0.869
+          ],
+          "frame_colour": [
+            0.965,
+            0.864,
+            0.869
+          ],
+          "trim_colour": [
+            0.965,
+            0.864,
+            0.869
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.89,
+          "height": 2.133,
+          "frame_style": "none",
+          "colour": [
+            0.644,
+            0.451,
+            0.234
+          ],
+          "frame_colour": [
+            0.644,
+            0.451,
+            0.234
+          ],
+          "trim_colour": [
+            0.968,
+            0.94,
+            0.904
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_040",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_040.sdf",
+      "attributes": "door_room/v4/door_room_v4_040.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.829,
+          "height": 2.071,
+          "frame_style": "thick",
+          "colour": [
+            0.365,
+            0.577,
+            0.571
+          ],
+          "frame_colour": [
+            0.365,
+            0.577,
+            0.571
+          ],
+          "trim_colour": [
+            0.942,
+            0.969,
+            0.929
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.893,
+          "height": 2.224,
+          "frame_style": "thin",
+          "colour": [
+            0.851,
+            0.942,
+            0.945
+          ],
+          "frame_colour": [
+            0.851,
+            0.942,
+            0.945
+          ],
+          "trim_colour": [
+            0.304,
+            0.195,
+            0.21
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_041",
+      "split": "test",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_041.sdf",
+      "attributes": "door_room/v4/door_room_v4_041.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.835,
+          "height": 2.123,
+          "frame_style": "none",
+          "colour": [
+            0.701,
+            0.33,
+            0.217
+          ],
+          "frame_colour": [
+            0.497,
+            0.374,
+            0.467
+          ],
+          "trim_colour": [
+            0.701,
+            0.33,
+            0.217
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "knob",
+          "width": 0.982,
+          "height": 2.107,
+          "frame_style": "none",
+          "colour": [
+            0.446,
+            0.259,
+            0.392
+          ],
+          "frame_colour": [
+            0.446,
+            0.259,
+            0.392
+          ],
+          "trim_colour": [
+            0.922,
+            0.933,
+            0.905
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_042",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_042.sdf",
+      "attributes": "door_room/v4/door_room_v4_042.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.842,
+          "height": 2.025,
+          "frame_style": "thin",
+          "colour": [
+            0.362,
+            0.57,
+            0.324
+          ],
+          "frame_colour": [
+            0.362,
+            0.57,
+            0.324
+          ],
+          "trim_colour": [
+            0.959,
+            0.931,
+            0.919
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.898,
+          "height": 2.051,
+          "frame_style": "none",
+          "colour": [
+            0.922,
+            0.896,
+            0.821
+          ],
+          "frame_colour": [
+            0.922,
+            0.896,
+            0.821
+          ],
+          "trim_colour": [
+            0.919,
+            0.97,
+            0.92
+          ],
+          "hinge_y": -1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_043",
+      "split": "train",
+      "heldout": false,
+      "sdf": "door_room/v4/door_room_v4_043.sdf",
+      "attributes": "door_room/v4/door_room_v4_043.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.99,
+          "height": 2.159,
+          "frame_style": "none",
+          "colour": [
+            0.522,
+            0.507,
+            0.501
+          ],
+          "frame_colour": [
+            0.622,
+            0.423,
+            0.462
+          ],
+          "trim_colour": [
+            0.968,
+            0.912,
+            0.903
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.93,
+          "height": 2.099,
+          "frame_style": "thick",
+          "colour": [
+            0.686,
+            0.428,
+            0.179
+          ],
+          "frame_colour": [
+            0.686,
+            0.428,
+            0.179
+          ],
+          "trim_colour": [
+            0.957,
+            0.922,
+            0.904
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_044",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_044.sdf",
+      "attributes": "door_room/v4/door_room_v4_044.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "lever",
+          "width": 0.958,
+          "height": 2.114,
+          "frame_style": "thick",
+          "colour": [
+            0.845,
+            0.555,
+            0.24
+          ],
+          "frame_colour": [
+            0.13,
+            0.075,
+            0.08
+          ],
+          "trim_colour": [
+            0.925,
+            0.966,
+            0.925
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": true,
+          "handle_type": "flush_pull",
+          "width": 0.813,
+          "height": 2.053,
+          "frame_style": "thin",
+          "colour": [
+            0.6,
+            0.283,
+            0.469
+          ],
+          "frame_colour": [
+            0.488,
+            0.568,
+            0.317
+          ],
+          "trim_colour": [
+            0.145,
+            0.136,
+            0.243
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": true
+      }
+    },
+    {
+      "name": "door_room_v4_045",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_045.sdf",
+      "attributes": "door_room/v4/door_room_v4_045.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": true,
+          "handle_type": "flush_pull",
+          "width": 0.836,
+          "height": 2.076,
+          "frame_style": "thick",
+          "colour": [
+            0.781,
+            0.592,
+            0.491
+          ],
+          "frame_colour": [
+            0.862,
+            0.944,
+            0.934
+          ],
+          "trim_colour": [
+            0.93,
+            0.902,
+            0.895
+          ],
+          "hangs_on": "front",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.804,
+          "height": 2.297,
+          "frame_style": "none",
+          "colour": [
+            0.915,
+            0.885,
+            0.849
+          ],
+          "frame_colour": [
+            0.915,
+            0.885,
+            0.849
+          ],
+          "trim_colour": [
+            0.958,
+            0.968,
+            0.889
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": true,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_046",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_046.sdf",
+      "attributes": "door_room/v4/door_room_v4_046.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.938,
+          "height": 2.289,
+          "frame_style": "thin",
+          "colour": [
+            0.665,
+            0.331,
+            0.398
+          ],
+          "frame_colour": [
+            0.665,
+            0.331,
+            0.398
+          ],
+          "trim_colour": [
+            0.665,
+            0.331,
+            0.398
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": true,
+          "handle_type": "flush_pull",
+          "width": 0.936,
+          "height": 2.208,
+          "frame_style": "thin",
+          "colour": [
+            0.715,
+            0.324,
+            0.366
+          ],
+          "frame_colour": [
+            0.086,
+            0.072,
+            0.122
+          ],
+          "trim_colour": [
+            0.911,
+            0.944,
+            0.926
+          ],
+          "hangs_on": "back",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": false,
+        "b": true
+      }
+    },
+    {
+      "name": "door_room_v4_047",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_047.sdf",
+      "attributes": "door_room/v4/door_room_v4_047.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": true,
+          "handle_type": "flush_pull",
+          "width": 0.983,
+          "height": 2.003,
+          "frame_style": "thin",
+          "colour": [
+            0.637,
+            0.661,
+            0.395
+          ],
+          "frame_colour": [
+            0.578,
+            0.676,
+            0.681
+          ],
+          "trim_colour": [
+            0.637,
+            0.661,
+            0.395
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.864,
+          "height": 2.293,
+          "frame_style": "none",
+          "colour": [
+            0.288,
+            0.116,
+            0.581
+          ],
+          "frame_colour": [
+            0.288,
+            0.116,
+            0.581
+          ],
+          "trim_colour": [
+            0.192,
+            0.169,
+            0.139
+          ],
+          "hinge_y": 1,
+          "swing_x": -1
+        }
+      },
+      "doors_heldout": {
+        "a": true,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_048",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_048.sdf",
+      "attributes": "door_room/v4/door_room_v4_048.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "sliding",
+          "glass": true,
+          "handle_type": "flush_pull",
+          "width": 0.87,
+          "height": 2.05,
+          "frame_style": "thin",
+          "colour": [
+            0.466,
+            0.371,
+            0.312
+          ],
+          "frame_colour": [
+            0.682,
+            0.579,
+            0.697
+          ],
+          "trim_colour": [
+            0.33,
+            0.197,
+            0.16
+          ],
+          "hangs_on": "back",
+          "slide_y": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "hinged",
+          "glass": false,
+          "handle_type": "lever",
+          "width": 0.832,
+          "height": 2.141,
+          "frame_style": "none",
+          "colour": [
+            0.905,
+            0.969,
+            0.841
+          ],
+          "frame_colour": [
+            0.905,
+            0.969,
+            0.841
+          ],
+          "trim_colour": [
+            0.905,
+            0.969,
+            0.841
+          ],
+          "hinge_y": 1,
+          "swing_x": 1
+        }
+      },
+      "doors_heldout": {
+        "a": true,
+        "b": false
+      }
+    },
+    {
+      "name": "door_room_v4_049",
+      "split": "test",
+      "heldout": true,
+      "sdf": "door_room/v4/door_room_v4_049.sdf",
+      "attributes": "door_room/v4/door_room_v4_049.attributes.json",
+      "doors": {
+        "a": {
+          "slot": "a",
+          "door_type": "hinged",
+          "glass": true,
+          "handle_type": "knob",
+          "width": 0.803,
+          "height": 2.158,
+          "frame_style": "thin",
+          "colour": [
+            0.806,
+            0.424,
+            0.343
+          ],
+          "frame_colour": [
+            0.558,
+            0.696,
+            0.619
+          ],
+          "trim_colour": [
+            0.946,
+            0.915,
+            0.935
+          ],
+          "hinge_y": -1,
+          "swing_x": -1
+        },
+        "b": {
+          "slot": "b",
+          "door_type": "sliding",
+          "glass": false,
+          "handle_type": "flush_pull",
+          "width": 0.973,
+          "height": 2.04,
+          "frame_style": "none",
+          "colour": [
+            0.904,
+            0.903,
+            0.85
+          ],
+          "frame_colour": [
+            0.904,
+            0.903,
+            0.85
+          ],
+          "trim_colour": [
+            0.904,
+            0.903,
+            0.85
+          ],
+          "hangs_on": "front",
+          "slide_y": 1
+        }
+      },
+      "doors_heldout": {
+        "a": true,
+        "b": false
+      }
+    }
+  ]
+}

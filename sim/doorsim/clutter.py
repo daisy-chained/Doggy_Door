@@ -177,13 +177,15 @@ def _overlap(a, b, grow=0.0):
 
 
 def _floor_spot(rng, p, cfg, taken, tries=50):
-    """(x, y, yaw) for a floor item inside the zone, clear of keep_out and of `taken` AABBs, or None."""
+    """(x, y, yaw) for a floor item inside the zone, clear of keep_out and of `taken` AABBs, or None.
+    cfg["side"] == "back": against-the-wall items stand on the zone's near edge facing +x (yaw pi), else facing -x (yaw 0)."""
     zx, zy = cfg["zone"]["x"], cfg["zone"]["y"]
     keep = [(k["x"][0], k["x"][1], k["y"][0], k["y"][1]) for k in cfg["keep_out"]]
+    back = cfg.get("side") == "back"
     d, w = p["size"][0], p["size"][1]
     for _ in range(tries):
         if rng.random() < cfg["p_against_wall"]:
-            yaw, x, hy = 0.0, zx[1] - d / 2, w / 2
+            yaw, x, hy = (math.pi, zx[0] + d / 2, w / 2) if back else (0.0, zx[1] - d / 2, w / 2)
             hx = d / 2
         else:
             yaw = float(rng.uniform(-math.pi, math.pi))
@@ -203,7 +205,8 @@ def _floor_spot(rng, p, cfg, taken, tries=50):
 
 
 def _wall_spot(rng, p, cfg, taken, tries=50):
-    """(x, y, z) for a wall item within the wall's y / z range, off the keep_out_y spans and other wall items."""
+    """(x, y, z) for a wall item within the wall's y / z range, off the keep_out_y spans and other wall items.
+    The item hangs on the wall face at wall x: toward -x of it, or (cfg["side"] == "back") toward +x."""
     w = cfg["wall"]
     d, wd, h = p["size"]
     if wd > w["y"][1] - w["y"][0] or h > w["z"][1] - w["z"][0]:
@@ -214,16 +217,15 @@ def _wall_spot(rng, p, cfg, taken, tries=50):
         lo, hi = y - wd / 2, y + wd / 2
         if any(lo < b and a < hi for a, b in w["keep_out_y"]) or any(lo < b and a < hi for a, b in taken):
             continue
-        return w["x"] - d / 2, y, z
+        return w["x"] + d / 2 if cfg.get("side") == "back" else w["x"] - d / 2, y, z
     return None
 
 
-def place(rng, pool, cfg):
-    """Pick items for one scene and place them. Returns {name: {"position", "yaw", "colour", "in_scene"}} for every
-    pool item; items not used stay at PARK. A picked item that finds no spot is skipped for the next one."""
-    out = {p["name"]: {"position": list(PARK), "yaw": 0.0, "colour": None, "in_scene": False} for p in pool}
+def _fill(rng, pool, cfg, out, used):
+    """Place floor, then wall items for one zone (the whole room, or one side of the wall) from pool items not in `used`; fills `out`."""
+    yaw0 = math.pi if cfg.get("side") == "back" else 0.0
     for place_kind, key in (("floor", "floor_count"), ("wall", "wall_count")):
-        group = [p for p in pool if p["place"] == place_kind]
+        group = [p for p in pool if p["place"] == place_kind and p["name"] not in used]
         want = int(rng.integers(cfg[key][0], cfg[key][1] + 1))
         taken, n = [], 0
         for i in rng.permutation(len(group)):
@@ -241,11 +243,29 @@ def place(rng, pool, cfg):
                 spot = _wall_spot(rng, p, cfg, taken)
                 if spot is None:
                     continue
-                pos, yaw = list(spot), 0.0
+                pos, yaw = list(spot), yaw0
                 taken.append((pos[1] - p["size"][1] / 2, pos[1] + p["size"][1] / 2))
             colour = [float(c) for c in rng.uniform(0, 1, 3)] if p["recolour"] else None
             out[p["name"]] = {"position": [float(v) for v in pos], "yaw": float(yaw), "colour": colour, "in_scene": True}
+            used.add(p["name"])
             n += 1
+
+
+def place(rng, pool, cfg, keep_out=None):
+    """Pick items for one scene and place them. Returns {name: {"position", "yaw", "colour", "in_scene"}} for every
+    pool item; items not used stay at PARK. A picked item that finds no spot is skipped for the next one.
+    Old configs (zone / keep_out / wall x): one zone. Configs with `sides` (v4, both sides of the wall): floor_count / wall_count
+    per side, each side from the items not used yet, off that side's rects in `keep_out` ({"front": [rects], "back": [rects]},
+    from doors.keep_out; rect = {"x": [x0, x1], "y": [y0, y1]}); wall items also stay off those rects' y spans."""
+    out = {p["name"]: {"position": list(PARK), "yaw": 0.0, "colour": None, "in_scene": False} for p in pool}
+    if "sides" not in cfg:
+        _fill(rng, pool, cfg, out, set())
+        return out
+    used = set()
+    for side, sc in cfg["sides"].items():
+        rects = (keep_out or {}).get(side, [])
+        wall = dict(cfg["wall"], x=sc["wall_x"], keep_out_y=[tuple(r["y"]) for r in rects])
+        _fill(rng, pool, {**cfg, "side": side, "zone": sc["zone"], "keep_out": rects, "wall": wall}, out, used)
     return out
 
 

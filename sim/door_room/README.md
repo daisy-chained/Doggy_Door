@@ -59,6 +59,14 @@ Everything else is an **attribute**, not a class: handle type (`lever`, `knob`, 
 - A `gpu_lidar` with `visibility_mask 4294967293` **sees through** the pane (no hit), like a real lidar mostly does.
 - Gazebo's **depth camera ignores visibility masks** (tried the RGB-D and a separate depth camera, high and low mask bits), so in depth the glass looks **solid**. Real depth cameras usually give holes or see through glass. The dataset generator's glass depth step makes it realistic after rendering (holes / see-through / partial), see [`sim/doorsim/`](../doorsim/README.md).
 
+## Door variety (v4)
+`door_room_v4_NNN.sdf` (in `v4/`, 50 worlds) = v3's room (closed, headlight, clutter pool) with **two random doors per world** and the room continuing 5 m behind the wall, so the camera can stand on both sides. `python3 sim/door_room/make_v4.py sim/configs/worlds_v4.yaml` writes `v4/<world>.sdf`, `v4/<world>.attributes.json` and `v4/worlds.json` (split, held-out flag and door specs per world); the doors come from `sim/doorsim/doors.py`. Gazebo can't change a joint while running, so variety = many worlds, and the generator restarts Gazebo per world (`scenes_per_world` scenes each).
+- **Per door** (slot `a` at y = -1, `b` at y = +1): hinged or sliding, glass or solid, handle (lever / knob; sliding gets a flush pull), width 0.8-1.0 m, height 2.0-2.3 m, frame style (none / thin / thick trim on both faces), colours (door, glass frame, trim). Hinged: hinge edge and swing direction. Sliding: hung on the front or the back face of the wall, always sliding away from the other doorway, with a top rail.
+- The wall is made of boxes around the two openings, each exactly as wide and high as its door, with a lintel above.
+- **Both sides**: every door has a handle on each face (`handle_a` front, `handle_a_back` back, ids 12 / 14; door 11, glass 13; slot `b` 21-24). Push / pull and left / right flip with the side the camera is on: the attributes have `seen_from` for both, the keys on the door itself are the front view, and the generator sets the right ones per frame (meta also has `world` and `side`).
+- **Held-out combos** (`heldout` in `worlds_v4.yaml`, e.g. glass + knob, sliding + glass): normal worlds never contain them; 6 extra worlds each have one such door and go to the test split only. Door and handle attributes carry `heldout`.
+- `approach` (viewpoint per side) and `keep_out` (floor areas where clutter stays off: opening strip, swing arc, panel + slide path) are generator helpers; the exporter drops them.
+
 ## Known limits / open points
 - Handle boxes are small (about 5–20 px at 3 m in 640×480). Something to look at for handle detection (closer views, higher resolution, or a crop step).
 - One fixed camera, one lighting setup, no smoke yet.

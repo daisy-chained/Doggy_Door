@@ -15,7 +15,7 @@ import argparse, json, pathlib, sys
 import numpy as np
 
 SPLITS = ("train", "val", "test")
-DROP = {"id", "class", "box", "joint"}
+DROP = {"id", "class", "box", "joint", "seen_from", "approach", "keep_out"}  # seen_from etc: v4 helpers, the frame has the side already
 
 
 def split_scenes(scenes, ratios, seed):
