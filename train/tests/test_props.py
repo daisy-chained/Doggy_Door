@@ -147,3 +147,29 @@ def test_workers_jitter_differs_per_worker_and_epoch(export_dir):
     dl = torch.utils.data.DataLoader(ds, batch_size=1, shuffle=False, num_workers=2, generator=gen, worker_init_fn=props.reseed_worker)
     e1, e2 = [x for x, _ in dl], [x for x, _ in dl]
     assert not torch.equal(e1[0], e2[0])            # a new jitter for the same crop in the next epoch
+
+
+# --- held-out property combos (door room v4): test accuracy also per group ---
+def test_train_reports_seen_and_unseen_combos_on_test(tmp_path):
+    import mlflow
+    root = make_export(tmp_path / "export")
+    coco = json.loads((root / "coco" / "test.json").read_text())
+    for a in coco["annotations"]:
+        a["attributes"] = dict(a["attributes"], heldout=a["object"] in ("door_b", "handle_b"))
+    (root / "coco" / "test.json").write_text(json.dumps(coco))
+    cfg = props.resolve({"export": str(root), "crop": "door", "backbone": "resnet18", "pretrained": False,
+                         "imgsz": 64, "epochs": 1, "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
+                         "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
+    r = props.train(cfg, run_name="unit")
+    for h in props.HEADS["door"]:
+        assert f"test_acc_seen_{h}" in r["test"] and f"test_acc_unseen_{h}" in r["test"]
+        # 4 seen (door_a) + 4 unseen (door_b) crops: the overall accuracy is their mean
+        assert r["test"][f"test_acc_{h}"] == pytest.approx((r["test"][f"test_acc_seen_{h}"] + r["test"][f"test_acc_unseen_{h}"]) / 2)
+
+
+def test_train_no_group_metrics_without_heldout(tmp_path, export_dir):
+    cfg = props.resolve({"export": str(export_dir), "crop": "door", "backbone": "resnet18", "pretrained": False,
+                         "imgsz": 64, "epochs": 1, "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
+                         "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
+    r = props.train(cfg, run_name="unit")
+    assert not any("_seen_" in k or "_unseen_" in k for k in r["test"])
