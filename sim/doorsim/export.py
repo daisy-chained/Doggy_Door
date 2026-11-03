@@ -9,7 +9,12 @@ Output (default exports/<name> in the repo; refuses to overwrite an existing exp
   data.yaml                    YOLO dataset file (train/val/test folders, names 0: door, 1: handle)
   coco/<split>.json            COCO: images, categories (attribute class ids), annotations with extra fields
                                (object, object_id, size_px, truncated, attributes = object meta without box/joint/*_world)
-  export.json                  source dataset, seed, ratios, scenes per split, counts per split
+  export.json                  source dataset, seed, ratios, scenes per split, counts per split (+ ignore setting)
+
+--ignore-below T: door / handle objects whose smoke_transmission is below T get iscrowd 1 + attributes.ignored in the
+train / val COCO files (--ignore-splits) and no YOLO row. Madelief 2026-11-03: doors that have nearly vanished in smoke
+should neither teach the model to hallucinate doors nor punish it; test sets keep counting them (the visibility curve).
+Objects without a smoke_transmission are never ignored.
 """
 import argparse, json, pathlib, sys
 import numpy as np
@@ -26,7 +31,7 @@ def split_scenes(scenes, ratios, seed):
     return {"train": order[n_val + n_test:], "val": order[:n_val], "test": order[n_val:n_val + n_test]}
 
 
-def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
+def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore_splits=("train", "val")):
     src, out = pathlib.Path(src).resolve(), pathlib.Path(out).resolve()
     if (out / "export.json").exists():
         raise FileExistsError(f"{out} already has an export; pick another --out")
@@ -60,13 +65,17 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
             if o.get("class") is None or b is None:
                 continue
             w, h = b["x_max"] - b["x_min"] + 1, b["y_max"] - b["y_min"] + 1  # Gazebo boxes = inclusive pixel indices
-            rows.append(f"{o['class'] - 1} {(b['x_min'] + w / 2) / W:.6f} {(b['y_min'] + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
+            t = o.get("smoke_transmission")
+            ignored = ignore_below is not None and sp in ignore_splits and t is not None and t < ignore_below
+            if not ignored:
+                rows.append(f"{o['class'] - 1} {(b['x_min'] + w / 2) / W:.6f} {(b['y_min'] + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
             coco[sp]["annotations"].append({
                 "id": len(coco[sp]["annotations"]) + 1, "image_id": image["id"], "category_id": o["class"],
-                "bbox": [b["x_min"], b["y_min"], w, h], "area": w * h, "iscrowd": 0, "segmentation": [],
+                "bbox": [b["x_min"], b["y_min"], w, h], "area": w * h, "iscrowd": int(ignored), "segmentation": [],
                 "object": name, "object_id": o["id"], "size_px": [w, h],
                 "truncated": b["x_min"] <= 0 or b["y_min"] <= 0 or b["x_max"] >= W - 1 or b["y_max"] >= H - 1,
-                "attributes": {k: v for k, v in o.items() if k not in DROP and not k.endswith(("_world", "_topic"))}})
+                "attributes": {**{k: v for k, v in o.items() if k not in DROP and not k.endswith(("_world", "_topic"))},
+                               **({"ignored": True} if ignored else {})}})
             counts[sp][names[o["class"]]] += 1
         (out / "labels" / sp / f"{frame}.txt").write_text("".join(r + "\n" for r in rows))
     for sp in SPLITS:
@@ -76,6 +85,8 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15)):
     info = {"source": {"path": str(src), "git": ds.get("git"), "seed": ds.get("seed"), "world": ds.get("world"), "frames": ds.get("frames"),
                        "effects": ds.get("effects"), "lighting": ds.get("lighting")},
             "seed": seed, "ratios": list(ratios), "scenes": scenes, "counts": counts}
+    if ignore_below is not None:
+        info["ignore"] = {"below": ignore_below, "splits": list(ignore_splits)}
     (out / "export.json").write_text(json.dumps(info, indent=2) + "\n")
     return info
 
@@ -86,11 +97,13 @@ def main():
     ap.add_argument("--out", help="output folder (default: exports/<dataset name> in the repo)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--ratios", type=float, nargs=3, default=(0.7, 0.15, 0.15), metavar=("TRAIN", "VAL", "TEST"))
+    ap.add_argument("--ignore-below", type=float, help="ignore objects with smoke_transmission below this (see above)")
+    ap.add_argument("--ignore-splits", nargs="+", default=["train", "val"], choices=SPLITS)
     args = ap.parse_args()
     src = pathlib.Path(args.dataset).resolve()
     out = pathlib.Path(args.out) if args.out else pathlib.Path(__file__).resolve().parents[2] / "exports" / src.name
     try:
-        info = export(src, out, args.seed, tuple(args.ratios))
+        info = export(src, out, args.seed, tuple(args.ratios), args.ignore_below, tuple(args.ignore_splits))
     except FileExistsError as e:
         sys.exit(str(e))
     print(f"done: {sum(c['images'] for c in info['counts'].values())} images in {out}")

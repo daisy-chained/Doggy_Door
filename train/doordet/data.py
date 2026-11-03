@@ -1,4 +1,8 @@
-"""COCO export folder -> torch Dataset of (PIL RGB image, target) with 0-based category ids."""
+"""COCO export folder -> torch Dataset of (PIL RGB image, target) with 0-based category ids.
+
+Ignore boxes (iscrowd 1, from the exporter's --ignore-below) are ignore in scoring (pycocotools reads them from the gt json)
+and left out of the training targets, like DETR's COCO loader. A true ignore in D-FINE's loss (matched but unpunished)
+would need a custom loss: its denoising queries are built from every target box."""
 import json, pathlib
 from PIL import Image
 from torch.utils.data import Dataset
@@ -13,8 +17,10 @@ class CocoDetection(Dataset):
         self.id2label = {c["id"] - 1: c["name"] for c in coco["categories"]}
         self.anns = {im["id"]: [] for im in self.images}
         for a in coco["annotations"]:
+            if a.get("iscrowd", 0):
+                continue
             self.anns[a["image_id"]].append({"bbox": list(a["bbox"]), "category_id": a["category_id"] - 1,
-                                             "area": a["area"], "iscrowd": a.get("iscrowd", 0)})
+                                             "area": a["area"], "iscrowd": 0})
 
     def __len__(self):
         return len(self.images)

@@ -13,20 +13,27 @@ def levels(export_dir):
     return {"visibility_m": fx.get("visibility_m"), "light_level": light.get("level"), "headlight": light.get("headlight")}
 
 
-def score_run(run_dir, export_dir, split="test"):
-    """Best checkpoint of a run on one split of an export -> {run, export, split, images, model, imgsz, levels, metrics, gflops}."""
+def predict_run(run_dir, export_dir, split="test", device=None):
+    """Best checkpoint of a run on one split of an export -> (CocoDetection, predictions {image_id: boxes xyxy, scores, labels}, run config).
+    device overrides the run's config."""
     import torch
     run_dir, export_dir = pathlib.Path(run_dir), pathlib.Path(export_dir)
     cfg = json.loads((run_dir / "config.json").read_text())
-    model = {k: v for k, v in cfg["model"].items() if v is not None}
-    cfg["model"] = {**cfg["model"], "checkpoint": str(run_dir / "best")}
-    cfg["export"] = str(export_dir)
+    use = {**cfg, "model": {**cfg["model"], "checkpoint": str(run_dir / "best")}, "export": str(export_dir)}
     ds = CocoDetection(export_dir, split)
-    adapter = adapters.get(cfg["model"]["family"])(cfg, ds.id2label)
-    device = torch.device(cfg["device"] or ("cuda" if torch.cuda.is_available() else "cpu"))
+    adapter = adapters.get(cfg["model"]["family"])(use, ds.id2label)
+    device = torch.device(device or use["device"] or ("cuda" if torch.cuda.is_available() else "cpu"))
     adapter.model.to(device)
-    loader = DataLoader(ds, batch_size=cfg["batch"], shuffle=False, num_workers=cfg["workers"], collate_fn=adapter.collate)
-    preds, _ = loop.predict_all(adapter, loader, device, cfg)
+    loader = DataLoader(ds, batch_size=use["batch"], shuffle=False, num_workers=use["workers"], collate_fn=adapter.collate)
+    preds, _ = loop.predict_all(adapter, loader, device, use)
+    return ds, preds, cfg
+
+
+def score_run(run_dir, export_dir, split="test"):
+    """Best checkpoint of a run on one split of an export -> {run, export, split, images, model, imgsz, levels, metrics, gflops}."""
+    run_dir, export_dir = pathlib.Path(run_dir), pathlib.Path(export_dir)
+    ds, preds, cfg = predict_run(run_dir, export_dir, split)
+    model = {k: v for k, v in cfg["model"].items() if v is not None}
     return {"run": run_dir.name, "export": str(export_dir), "split": split, "images": len(ds), "model": model,
             "imgsz": cfg["imgsz"], "levels": levels(export_dir), "metrics": evaluate.coco_metrics(ds.gt_path, preds),
             "gflops": cfg.get("gflops")}

@@ -78,6 +78,15 @@ def crop_box(bbox, margin, rng, jitter):
     return cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2
 
 
+def crop_tensor(img, box, imgsz):
+    """Crop box (x0, y0, x1, y1) of a PIL image -> normalised 3 x imgsz x imgsz tensor."""
+    # transform maps output pixels to source coordinates, so outside the image the crop is zero padded
+    s = (box[2] - box[0]) / imgsz
+    crop = img.transform((imgsz, imgsz), Image.AFFINE, (s, 0, box[0], 0, s, box[1]), Image.BILINEAR, fillcolor=(0, 0, 0))
+    x = (np.asarray(crop, np.float32) / 255 - MEAN) / STD
+    return torch.from_numpy(x).permute(2, 0, 1).contiguous()
+
+
 class CropDataset(Dataset):
     """Crops of door or handle boxes from a COCO export; item = (normalised 3 x imgsz x imgsz tensor, {head: class index})."""
     def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0):
@@ -85,15 +94,16 @@ class CropDataset(Dataset):
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
         files = {im["id"]: im["file_name"] for im in coco["images"]}
-        self.items, self.heldout = [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
+        self.items, self.heldout, self.image_ids = [], [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
         for a in coco["annotations"]:
-            if a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px:
+            if a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px or a.get("iscrowd"):  # ignore boxes: nearly vanished in smoke
                 continue
             attrs = a.get("attributes") or {}
             lab = labels(attrs, crop)
             if all(v in HEADS[crop][h] for h, v in lab.items()):
                 self.items.append((files[a["image_id"]], a["bbox"], {h: HEADS[crop][h].index(v) for h, v in lab.items()}))
                 self.heldout.append(bool(attrs.get("heldout")))
+                self.image_ids.append(a["image_id"])
 
     def __len__(self):
         return len(self.items)
@@ -101,12 +111,7 @@ class CropDataset(Dataset):
     def __getitem__(self, i):
         fn, bbox, y = self.items[i]
         box = crop_box(bbox, self.margin, self.rng, self.jitter)
-        img = Image.open(self.root / fn).convert("RGB")
-        # transform maps output pixels to source coordinates, so outside the image the crop is zero padded
-        s = (box[2] - box[0]) / self.imgsz
-        crop = img.transform((self.imgsz, self.imgsz), Image.AFFINE, (s, 0, box[0], 0, s, box[1]), Image.BILINEAR, fillcolor=(0, 0, 0))
-        x = (np.asarray(crop, np.float32) / 255 - MEAN) / STD
-        return torch.from_numpy(x).permute(2, 0, 1).contiguous(), y
+        return crop_tensor(Image.open(self.root / fn).convert("RGB"), box, self.imgsz), y
 
 
 def reseed_worker(worker_id):
@@ -263,3 +268,53 @@ def train(cfg, run_name=None):
             print("test " + "  ".join(f"{k} {v:.4f}" for k, v in test.items()), flush=True)
         return {"run_id": run.info.run_id, "out": str(out), "best_epoch": best["epoch"], "best_val_acc": best["value"],
                 "temperature": temps, "test": test}
+
+
+def load(run_dir, device="cpu"):
+    """Trained props run -> (model in eval mode, heads.json meta: heads, backbone, imgsz, crop, margin, temperature; config.json keys min_px)."""
+    run_dir = pathlib.Path(run_dir)
+    meta = json.loads((run_dir / "best" / "heads.json").read_text())
+    meta["min_px"] = json.loads((run_dir / "config.json").read_text())["min_px"]
+    model = Model(meta["backbone"], meta["heads"], pretrained=False)
+    model.load_state_dict(torch.load(run_dir / "best" / "model.pt", map_location="cpu"))
+    return model.to(device).eval(), meta
+
+
+def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
+    """Classifier accuracy on the detector's own boxes (Madelief 2026-11-02: score on true boxes and on detector boxes).
+    Per image the detector's boxes of the crop's category (score >= score_min) are matched to the GT crops the dataset keeps;
+    a matched box is cropped like the dataset does (no jitter) and compared with its GT's labels.
+    -> {"crops" GT items, "matched", "missed", "false" (unmatched predictions), "acc_<head>", "ece_<head>" over the matched}"""
+    from .evaluate import match
+    model, meta = load(run_dir, "cpu")
+    crop, heads, imgsz = meta["crop"], list(meta["heads"]), meta["imgsz"]
+    ds = CropDataset(export_dir, split, crop, imgsz, meta["margin"], meta["min_px"])
+    by_image = {}
+    for i, image_id in enumerate(ds.image_ids):
+        by_image.setdefault(image_id, []).append(i)
+    xs, ys, matched, false = [], [], 0, 0
+    for image_id in sorted(set(by_image) | {int(k) for k in preds}):
+        items = by_image.get(image_id, [])
+        p = preds.get(image_id) or preds.get(str(image_id)) or {"boxes": [], "scores": [], "labels": []}
+        keep = [j for j, (s, l) in enumerate(zip(p["scores"], p["labels"])) if s >= score_min and l == CATEGORY[crop] - 1]
+        boxes = np.asarray(p["boxes"], float).reshape(-1, 4)[keep]
+        xywh = [[x1, y1, x2 - x1, y2 - y1] for x1, y1, x2, y2 in boxes]
+        hit = match([ds.items[i][1] for i in items], xywh, np.asarray(p["scores"], float)[keep], iou)
+        false += len(keep) - len(hit)
+        if not hit:
+            continue
+        img = Image.open(ds.root / ds.items[items[0]][0]).convert("RGB")
+        for g, j in hit.items():
+            xs.append(crop_tensor(img, crop_box(xywh[j], meta["margin"], None, None), imgsz))
+            ys.append(ds.items[items[g]][2])
+            matched += 1
+    out = {"crops": len(ds), "matched": matched, "missed": len(ds) - matched, "false": false}
+    if xs:
+        with torch.no_grad():
+            o = model(torch.stack(xs))
+        for h in heads:
+            y = torch.tensor([t[h] for t in ys])
+            conf, pred = torch.softmax(o[h] / meta["temperature"].get(h, 1.0), 1).max(1)
+            out[f"acc_{h}"] = (pred == y).float().mean().item()
+            out[f"ece_{h}"] = ece(conf.numpy(), (pred == y).numpy())
+    return out
