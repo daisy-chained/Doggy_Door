@@ -72,6 +72,18 @@ class Sim:
         time.sleep(1.0)  # let publishers get matched to subscribers
         self.step(200)
         self.wait_for(["rgb"], 0, timeout=60)  # first render can take a while
+        # a message published before Gazebo's subscriber is matched is lost silently (doors stay shut, lights unchanged);
+        # with several Gazebo runs starting at once matching takes longer, so wait for every command publisher (after the
+        # first steps: the glass panes' DetachableJoint only subscribes once the simulation has run)
+        pubs = {**{f"/{n}/cmd_pos": p for n, p in self.door_pub.items()}, "light_config": self.light_pub, "material_color": self.colour_pub,
+                **{o["detach_topic"]: self.pane_pub[n][0] for n, o in self.panes.items()}, **{o["attach_topic"]: self.pane_pub[n][1] for n, o in self.panes.items()}}
+        for _ in range(240):
+            missing = [t for t, p in pubs.items() if not p.has_connections()]
+            if not missing:
+                break
+            time.sleep(0.25)
+        else:
+            self.stop(); raise RuntimeError(f"Gazebo did not subscribe to {', '.join(missing)} within 60 s")
 
     def _sub(self, typ, topic, key):
         def cb(m):
@@ -93,10 +105,16 @@ class Sim:
         """Run `steps` physics steps (1 ms each) and wait until the clock has moved that far."""
         target = self.now() + steps * 10**6
         self._control(steps)  # no reply comes (see _control), so judge by the clock
-        t = time.time()
+        t = sent = time.time()
+        last = self.now()
         while self.now() < target:
-            if time.time() - t > 60:
+            now = self.now()
+            if now != last:
+                last, t = now, time.time()
+            elif time.time() - t > 60:
                 raise TimeoutError("sim clock did not advance")
+            elif time.time() - t > 5 and time.time() - sent > 5:  # no progress: request lost under load, ask for the rest again
+                self._control(max(1, (target - now) // 10**6)); sent = time.time()
             time.sleep(0.01)
 
     def wait_for(self, keys, after_ns, timeout=20):
@@ -144,6 +162,8 @@ class Sim:
         done = 0
         while done < max_steps:
             self.step(chunk); done += chunk
+            for n, v in targets.items():  # same target again: harmless, and a lost first command can't leave a door shut
+                self.door_pub[n].publish(Double(data=v))
             js = {n: self.joint(n) for n in targets}
             if all(abs(p - targets[n]) < 0.02 and abs(v) < still for n, (p, v) in js.items()):
                 break
