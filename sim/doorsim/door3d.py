@@ -22,6 +22,8 @@ MIN_RING = 30       # fewest ring points worth fitting
 THRESH = 0.025      # RANSAC inlier distance, m (sim depth is exact; real sensors are ~1-2 cm)
 ITERS = 300
 MAX_PTS = 3000      # RANSAC scores a random subset of this size (the refit uses all inliers)
+AGREE_DEG = 10      # box and ring normals within this angle ...
+AGREE_M = 0.1       # ... and their hit points on the box centre ray within this distance (m) = one plane: a closed door
 BEHIND = 0.3        # box plane this far behind the ring's plane (along the box centre ray) = see-through glass
 
 
@@ -48,12 +50,13 @@ def points(depth, K, box, shrink=SHRINK):
 
 
 def ring_points(depth, K, box, margin=RING):
-    """Valid depth pixels in the band just outside the box (the whole box excluded), clipped to the image -> (N, 3)."""
+    """Valid depth pixels in the band left, right and above the box (not below: that is the floor; the whole box excluded),
+    clipped to the image -> (N, 3)."""
     x0, y0, x1, y1 = _rect(box, depth.shape, margin)
     mask = np.ones(depth.shape, bool)
-    mask[:y0] = mask[y1:] = False
-    mask[:, :x0] = mask[:, x1:] = False
     bx0, by0, bx1, by1 = _rect(box, depth.shape, 0.0)
+    mask[:y0] = mask[by1:] = False
+    mask[:, :x0] = mask[:, x1:] = False
     mask[by0:by1, bx0:bx1] = False
     ys, xs = np.nonzero(mask)
     return _backproject(depth, K, ys, xs)
@@ -111,9 +114,13 @@ def _geometry(plane, K, box):
 
 
 def fit(depth, K, box):
-    """Door pose from depth + 2D box -> {"center", "normal" (toward the camera), "width", "height", "source" "box" | "ring",
-    "inliers" (fraction of the points used), "points"}, or None when there is no usable depth. Box route first; the ring
-    around the box (glass: wall/frame) when the box has too little depth, a poor plane, or a plane clearly behind the ring's."""
+    """Door pose from depth + 2D box -> {"center", "normal" (toward the camera), "width", "height", "source", "inliers"
+    (fraction of the points used), "points", "open_angle_deg"}, or None when there is no usable depth. Box plane and ring
+    (wall/frame) plane are both fitted. They agree (normals within AGREE_DEG, box-centre-ray hits within AGREE_M) or there is
+    no good ring: "box" (closed door; open_angle_deg = box vs ring normal angle, 0.0 without a ring). The box plane is good but
+    disagrees with a good ring plane that it is not clearly behind: "wall" (open door: the ring plane is the doorway,
+    open_angle_deg = angle between the swung panel's plane and the wall, 0..90). No box plane, a poor one, or one clearly
+    behind the ring's (see-through glass): "ring", open_angle_deg None."""
     x0, y0, x1, y1 = _rect(box, depth.shape, -SHRINK)
     pts = points(depth, K, box)
     got = plane_fit(pts) if len(pts) >= MIN_VALID * max(1, (x1 - x0) * (y1 - y0)) else None
@@ -121,16 +128,36 @@ def fit(depth, K, box):
         got = None
     rpts = ring_points(depth, K, box)
     ring = plane_fit(rpts) if len(rpts) >= MIN_RING else None
-    use, source, npts = got, "box", len(pts)
-    if got is None or (ring is not None and ring[2] >= MIN_INLIERS and _behind(got, ring, pts, K, box)):
-        use, source, npts = ring, "ring", len(rpts)
+    good = ring if ring is not None and ring[2] >= MIN_INLIERS else None  # a poor ring still serves as the glass fallback
+    use, source, npts, angle = got, "box", len(pts), 0.0
+    if got is not None and good is not None:
+        angle = math.degrees(math.acos(min(1.0, abs(float(got[0] @ ring[0])))))
+    if got is None or (good is not None and _behind(got, ring, pts, K, box)):
+        use, source, npts, angle = ring, "ring", len(rpts), None
+    elif good is not None and not _agree(got, ring, K, box):
+        use, source, npts = ring, "wall", len(rpts)
     if use is None:
         return None
     g = _geometry(use, K, box)
     if g is None:
         return None
     c, n, w, h, frac = g
-    return {"center": c.tolist(), "normal": n.tolist(), "width": w, "height": h, "source": source, "inliers": frac, "points": int(npts)}
+    return {"center": c.tolist(), "normal": n.tolist(), "width": w, "height": h, "source": source, "inliers": frac, "points": int(npts),
+            "open_angle_deg": angle}
+
+
+def _agree(a, b, K, box):
+    """True when planes a and b are one plane: normals within AGREE_DEG, hits of the box centre ray within AGREE_M."""
+    if abs(float(a[0] @ b[0])) < math.cos(math.radians(AGREE_DEG)):
+        return False
+    r = _ray(K, (box["x_min"] + box["x_max"] + 1) / 2, (box["y_min"] + box["y_max"] + 1) / 2)
+    ha, hb = _hit(a[0], a[1], r), _hit(b[0], b[1], r)
+    return ha is not None and hb is not None and float(np.linalg.norm(ha - hb)) < AGREE_M
+
+
+def clipped(box, shape):
+    """True when the box touches an image edge (shape = (h, w)): the door is cut off by the frame."""
+    return box["x_min"] <= 0 or box["y_min"] <= 0 or box["x_max"] >= shape[1] - 1 or box["y_max"] >= shape[0] - 1
 
 
 def _behind(got, ring, pts, K, box):
@@ -211,6 +238,8 @@ def score_dataset(dataset_dir, boxes="gt", preds=None, iou=0.5, door_label=None)
             row.update(failed=est is None, errors=None if est is None else errors(est, gt_doorway(meta, name)))
             if est:
                 row["source"] = est["source"]
+                row["open_angle_deg"] = est["open_angle_deg"]
+            row["clipped"] = bool(box) and clipped(box, depth.shape)
             if box is None:
                 row["missed"] = True
             rows.append(row)
@@ -225,7 +254,8 @@ def _stats(rows, key):
 def summary(rows):
     """Short text table: median / 90th percentile centre (m) and normal (deg) error, overall and split."""
     groups = [("all", lambda r: True), ("glass", lambda r: r["glass"]), ("solid", lambda r: not r["glass"]),
-              ("open", lambda r: r["state"] == "open"), ("closed", lambda r: r["state"] == "closed")]
+              ("open", lambda r: r["state"] == "open"), ("closed", lambda r: r["state"] == "closed"),
+              ("in view", lambda r: r.get("clipped") is False), ("clipped", lambda r: r.get("clipped") is True)]
     groups += [(f"{a}-{a + 1} m", lambda r, a=a: r["errors"] and a <= r["errors"]["distance_m"] < a + 1) for a in range(4)]
     out = [f"{'group':10} {'n':>5} {'failed':>7}  centre m (med / p90)  normal deg (med / p90)"]
     for name, f in groups:
