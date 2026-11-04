@@ -156,6 +156,36 @@ def score(found, gt, cam_pos):
     return rows
 
 
+OCCLUDE_M = 0.3             # a doorway is hidden when the patch depth at it is more than this nearer than the doorway
+PATCH_PX = 3                # half-size of the depth patch around the projected doorway centre (px), capped by the projected half-width
+
+
+def in_view(door_gt, camera, K, depth):
+    """Could the radar see this doorway: its centre projects inside the image (z > 0) and the depth patch around it is no
+    return (see-through) or at least z - OCCLUDE_M (the doorway itself or the room behind), not something in front."""
+    from doorsim.frames import world_to_cam
+    x, y, z = world_to_cam(door_gt["center"], camera, True)
+    if z <= 0:
+        return False
+    depth = np.asarray(depth, dtype=float)
+    H, W = depth.shape
+    u, v = K[0] * x / z + K[2], K[4] * y / z + K[5]
+    if not (0 <= u < W and 0 <= v < H):
+        return False
+    r = int(max(1, min(PATCH_PX, K[0] * door_gt["width"] / 2 / z)))
+    ui, vi = int(u), int(v)
+    patch = depth[max(0, vi - r):vi + r + 1, max(0, ui - r):ui + r + 1]
+    patch = np.where(np.isfinite(patch), patch, 0.0)
+    med = float(np.median(patch))
+    return med <= 0 or med >= z - OCCLUDE_M
+
+
+def _mark_in_view(rows, gt, camera, K, depth):
+    for r in rows:
+        if r["door"] is not None:
+            r["in_view"] = bool(in_view(gt[r["door"]], camera, K, depth))
+
+
 def view_windows(metas, ns):
     """{n: [(target_frame, [frames of the n views ending at the target, in view order])]}. Groups = (world, scene, side):
     a robot looking around stays in its own room (a scene has views from both sides of the wall; mixing them would put the
@@ -197,6 +227,11 @@ def summarize(rows_by_model, n_frames_by_model):
     for model, rows in rows_by_model.items():
         fp = sum(1 for r in rows if r["door"] is None)
         print(f"\n== {model}: {_stats(rows)}; false positives/frame={fp / max(1, n_frames_by_model[model]):.2f}")
+        iv = [r for r in rows if r["door"] is not None and r.get("in_view")]
+        ivo = [r for r in iv if str(r["state"]) == "open"]
+        def _nf(x):
+            return f"n={len(x)} found={100 * sum(1 for r in x if r['found']) / len(x):.0f}%" if x else "n=0 found=-"
+        print(f"   in view: {_nf(iv)}  (open: {_nf(ivo)})")
         for lo, hi in BINS:
             sel = [r for r in rows if r["door"] is not None and lo <= r["distance_m"] < hi]
             if sel:
@@ -206,15 +241,16 @@ def summarize(rows_by_model, n_frames_by_model):
             print(f"   state {st:>7}: {_stats(sel)}")
 
 
-def view_table(rows_by_model, models, ns):
+def view_table(rows_by_model, models, ns, in_view_only=False):
     """Compact table: rows = model, columns = views, cells = open-door found rate / median centre error."""
     def cell(rows):
-        doors = [r for r in rows if r["door"] is not None and str(r["state"]) == "open"]
+        doors = [r for r in rows if r["door"] is not None and str(r["state"]) == "open" and (not in_view_only or r.get("in_view"))]
         if not doors:
             return "-"
         e = [r["center_m"] for r in doors if r["found"]]
         return f"{100 * len(e) / len(doors):.0f}% / " + (f"{np.median(e):.2f} m" if e else "-") + f" (n={len(doors)})"
-    print("\nOpen doors: found rate / median centre error, by number of views")
+    print("\nOpen doors in view: found rate / median centre error, by number of views" if in_view_only
+          else "\nOpen doors: found rate / median centre error, by number of views")
     w = 24
     print(f"{'model':<10}" + "".join(f"{n:>{w}}" for n in ns))
     for m in models:
@@ -272,11 +308,13 @@ def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
         used += 1
         cam_pos = metas[target]["camera"]["world_position"]
         gt = ground_truth(metas[target])
+        tdepth = effects.depth_m(root / "frames" / target / "radar_depth.png")
         for m in models:
             for n in ns:
                 fr = windows[n][k][1]
                 pts = np.vstack([points(f, m) for f in fr])
                 rows = score(find(pts, cam_pos), gt, cam_pos)
+                _mark_in_view(rows, gt, metas[target]["camera"], K, tdepth)
                 key = f"{m}@{n}"
                 nfr[key] += 1
                 rows_by_model[key] += rows
@@ -290,6 +328,7 @@ def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
     print(f"{used}/{len(targets)} target windows complete (all views rendered)")
     summarize(rows_by_model, nfr)
     view_table(rows_by_model, models, ns)
+    view_table(rows_by_model, models, ns, in_view_only=True)
 
 
 def main():
@@ -352,6 +391,7 @@ def main():
                 res = radar.simulate(depth, seg, noglass, K, cam, radar.MODELS[m], mats_cache[wf], rng)
                 pts = res["points"] if isinstance(res, dict) else res
             rows = score(find(pts, cam["world_position"]), gt, cam["world_position"])
+            _mark_in_view(rows, gt, cam, K, depth)
             nfr[m] += 1
             rows_by_model[m] += rows
             if out:
