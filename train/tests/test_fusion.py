@@ -53,3 +53,9 @@ def test_fuse_runs_over_all_images():
     assert set(out) == {0, 1, 2}
     assert out[0]["scores"][0] == pytest.approx(0.7) and out[2]["scores"][0] == pytest.approx(0.25)
     assert len(out[1]["scores"]) == 0
+
+
+def test_low_score_duplicates_do_not_drag_the_score_down():
+    # DETR-style output: one confident query per object plus low-score duplicates around it
+    out = fusion.wbf([p([[0, 0, 10, 10], [0, 0, 10, 10.5], [0, 0, 10.5, 10]], [0.9, 0.02, 0.02], [0, 0, 0]), p([[0, 0, 10, 10]], [0.9], [0])])
+    assert len(out["scores"]) == 1 and out["scores"][0] == pytest.approx(0.9)
