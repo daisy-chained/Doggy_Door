@@ -91,3 +91,32 @@ def test_replay_plan_groups_frames_by_world_and_scene():
     assert set(first["clutter"]) == {p["name"] for p in clutter.POOL}
     assert all(not v["in_scene"] for n, v in first["clutter"].items() if n != "box_1")
     assert plan[1]["clutter"]["box_1"]["in_scene"] is False
+
+
+# --- temperature image from a label render (Claude 2026-11-04, research-based: the Gazebo thermal camera output is
+# 8-bit, ~2.6 K steps at 0.01 K resolution, which flattens the room scenario; every model has one flat temperature
+# anyway, so a seg render + lookup gives the same picture without the quantisation) ---
+def test_inject_labels_the_structure_models():
+    root = ET.fromstring(thermal.inject(WORLD.read_text(), {"door_a": 300.0}).encode())
+    models = {m.get("name"): m for m in root.find("world").findall("model")}
+    for name, i in thermal.STRUCT_IDS.items():
+        for v in models[name].findall(".//visual"):
+            p = v.find("plugin[@name='gz::sim::systems::Label']")
+            assert p is not None and int(p.find("label").text) == i
+    assert len(set(thermal.STRUCT_IDS.values())) == 3 and all(0 < i < 10 for i in thermal.STRUCT_IDS.values())
+
+
+def test_temps_by_id():
+    attrs = json.loads((WORLD.parent / "door_room_v4_000.attributes.json").read_text())
+    temps = {"air": 293.0, "layer": None, "models": {"door_a": 300.0, "floor": 291.0, "box_1": 295.0}}
+    by_id = thermal.temps_by_id(temps, attrs)
+    assert by_id[attrs["objects"]["door_a"]["id"]] == 300.0 and by_id[thermal.STRUCT_IDS["floor"]] == 291.0
+    assert by_id[attrs["objects"]["box_1"]["id"]] == 295.0
+
+
+def test_kelvin_from_seg_area_average_in_radiance():
+    seg = np.array([[1, 1, 2, 2], [1, 1, 2, 3], [1, 1, 2, 2], [1, 1, 2, 2]], np.uint16)
+    out = thermal.kelvin_from_seg(seg, {1: 290.0, 2: 300.0}, default=280.0, size=(2, 2))  # size = (width, height)
+    assert out.shape == (2, 2)
+    assert out[0, 0] == pytest.approx(290.0) and out[1, 1] == pytest.approx(300.0)
+    assert out[0, 1] == pytest.approx(((3 * 300.0 ** 4 + 280.0 ** 4) / 4) ** 0.25)  # unknown id 3 -> default (the air)
