@@ -15,9 +15,11 @@ DEFAULTS = {
     "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door", "tags": {}},
     "eval_every": 1, "score_threshold": 0.01,
     "test_eval": True,  # score the test split once at the end (the search turns this off)
+    "input": "rgb",  # detector input: rgb | depth (plain depth) | dha (depth, height above floor, normal angle to gravity)
     "select_metric": "map",  # val metric that picks the best epoch
 }
 METRICS = (*STATS, "ap_door", "ap_handle")
+INPUTS = ("rgb", "depth", "dha")
 NESTED = ("model", "mlflow")
 
 
@@ -36,6 +38,8 @@ def resolve(d):
             cfg[k] = v
     if cfg["select_metric"] not in METRICS:
         raise ValueError(f"unknown select_metric {cfg['select_metric']!r}; available: {', '.join(METRICS)}")
+    if cfg["input"] not in INPUTS:
+        raise ValueError(f"unknown input {cfg['input']!r}; available: {', '.join(INPUTS)}")
     if not cfg["export"]:
         raise ValueError("config key 'export' is required")
     if cfg["device"] is None:

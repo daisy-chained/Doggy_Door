@@ -20,7 +20,7 @@ def predict_run(run_dir, export_dir, split="test", device=None):
     run_dir, export_dir = pathlib.Path(run_dir), pathlib.Path(export_dir)
     cfg = json.loads((run_dir / "config.json").read_text())
     use = {**cfg, "model": {**cfg["model"], "checkpoint": str(run_dir / "best")}, "export": str(export_dir)}
-    ds = CocoDetection(export_dir, split)
+    ds = CocoDetection(export_dir, split, input=cfg.get("input", "rgb"))
     adapter = adapters.get(cfg["model"]["family"])(use, ds.id2label)
     device = torch.device(device or use["device"] or ("cuda" if torch.cuda.is_available() else "cpu"))
     adapter.model.to(device)

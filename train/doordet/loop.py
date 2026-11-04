@@ -56,7 +56,7 @@ def train(cfg, run_name=None, on_eval=None):
     out = pathlib.Path(cfg["out"]) / run_name
     out.mkdir(parents=True, exist_ok=True)
 
-    sets = {s: CocoDetection(export, s) for s in ("train", "val", "test")}
+    sets = {s: CocoDetection(export, s, cfg["input"]) for s in ("train", "val", "test")}
     adapter = adapters.get(cfg["model"]["family"])(cfg, sets["train"].id2label)
     adapter.model.to(device)
     gen = torch.Generator().manual_seed(seed)
