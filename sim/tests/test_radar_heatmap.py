@@ -55,3 +55,11 @@ def test_bev_box_of_a_doorway():
     assert (x0 + x1) / 2 == pytest.approx(80, abs=1) and (x1 - x0) == pytest.approx(0.9 / 0.05, abs=2)
     assert 160 - (y0 + y1) / 2 == pytest.approx(3.0 / 0.05, abs=2)
     assert rh.bev_box(dict(door, center=[-3.0, 0.0, 1.0]), CAM, size_m=8.0, res=0.05) is None  # behind the robot
+
+
+def test_bev_pixel_back_to_world():
+    door = {"center": [3.0, 0.5, 1.0], "width": 0.9, "normal": [-1, 0, 0]}
+    cam = {"world_position": [0.5, -0.2, 1.0], "world_rpy": [0, 0, 0.3]}
+    x0, y0, x1, y1 = rh.bev_box(door, cam, size_m=8.0, res=0.05)
+    w = rh.bev_to_world((x0 + x1) / 2, (y0 + y1) / 2, cam, size_m=8.0, res=0.05)
+    assert w[:2] == pytest.approx([3.0, 0.5], abs=0.05)
