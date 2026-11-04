@@ -162,3 +162,27 @@ def test_summary_splits_clipped_boxes():
     rows = [{"glass": False, "state": "closed", "failed": False, "errors": e, "clipped": c} for c in (True, False)]
     s = door3d.summary(rows)
     assert "in view" in s and "clipped" in s
+
+
+def test_doorway_box_class_fits_from_the_opening(tmp_path):
+    """Wide-open panel = thin sliver box; the doorway box still gives the wall's pose (Madelief 2026-11-04)."""
+    import yaml
+    from PIL import Image
+    from doorsim import glass
+    w = doors.sample_world(np.random.default_rng(0), yaml.safe_load((SIM / "configs" / "worlds_v4.yaml").read_text()))
+    attrs = doors.attributes(w, "t")
+    meta = frames.build_frame(attrs, [], [], None, {"world_position": [0.0, -1.0, 1.0], "world_rpy": [0.0, 0.0, 0.0]}, {"side": "front"})
+    fdir = tmp_path / "ds" / "frames" / "000000"
+    fdir.mkdir(parents=True)
+    Image.fromarray(glass.to_png16(np.full((H, W), 2.95, np.float32))).save(fdir / "depth.png")
+    m = json.loads(json.dumps(meta))
+    m["objects"]["door_a"]["box"] = {"x_min": 150, "y_min": 15, "x_max": 153, "y_max": 204}
+    m.update(scene=0, view=0, glass_depth_mode=None)
+    (fdir / "meta.json").write_text(json.dumps(m))
+    (tmp_path / "ds" / "dataset.json").write_text(json.dumps({"camera_intrinsics": {"width": W, "height": H, "K": K}}))
+    dw = {r["door"]: r for r in door3d.score_dataset(tmp_path / "ds", box_class="doorway")}["door_a"]
+    assert dw["box_class"] == "doorway" and not dw["failed"]
+    assert dw["errors"]["center_m"] < 0.05 and dw["errors"]["normal_deg"] < 2
+    dr = {r["door"]: r for r in door3d.score_dataset(tmp_path / "ds")}["door_a"]
+    assert dr["box_class"] == "door"
+    assert dr["failed"] or dr["errors"]["center_m"] > dw["errors"]["center_m"]

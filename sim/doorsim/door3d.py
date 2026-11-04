@@ -12,7 +12,7 @@ import argparse, json, math, pathlib, sys
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from doorsim import frames
+from doorsim import doorway, frames
 
 SHRINK = 0.1        # skip the frame edges: this fraction of the box size off each side
 RING = 0.15         # ring margin around the box, as a fraction of the box size
@@ -203,11 +203,16 @@ def _from_xyxy(b):
     return {"x_min": int(math.floor(b[0])), "y_min": int(math.floor(b[1])), "x_max": int(math.ceil(b[2])) - 1, "y_max": int(math.ceil(b[3])) - 1}
 
 
-def score_dataset(dataset_dir, boxes="gt", preds=None, iou=0.5, door_label=None):
+def score_dataset(dataset_dir, boxes="gt", preds=None, iou=0.5, door_label=None, box_class="door"):
     """One row per door per frame that has a 2D box: frame, door, side, state, glass, glass_depth_mode, visible_fraction,
     smoke_transmission (when present), "failed", and "errors" (None when failed). boxes="gt": the meta's boxes. preds
     ({frame: {"boxes" xyxy, "scores", "labels"}}): predicted boxes matched to GT doors by IoU >= `iou` (greedy, best score
-    first, one box per door; `door_label` keeps only that label); a GT door with no match is failed with "missed": True."""
+    first, one box per door; `door_label` keeps only that label); a GT door with no match is failed with "missed": True.
+    box_class="door" (default): the box is the door's panel box. "doorway": the box is the doorway's (doorway.box, from
+    depth_gt.png if present else depth.png, and seg.png if present); doors without a doorway box are skipped. The fit always
+    uses the frame's depth.png (what the robot sees). Rows carry "box_class"."""
+    if box_class not in ("door", "doorway"):
+        raise ValueError(f"box_class must be door or doorway, not {box_class!r}")
     root = pathlib.Path(dataset_dir)
     ds = json.loads((root / "dataset.json").read_text())
     K = ds["camera_intrinsics"]["K"]
@@ -215,22 +220,39 @@ def score_dataset(dataset_dir, boxes="gt", preds=None, iou=0.5, door_label=None)
     rows = []
     for fdir in sorted((root / "frames").iterdir()):
         meta = json.loads((fdir / "meta.json").read_text())
-        doors = {n: o for n, o in meta["objects"].items() if o.get("class") == 1 and o.get("box") and "approach" in o}
+        if box_class == "door":
+            doors = {n: o for n, o in meta["objects"].items() if o.get("class") == 1 and o.get("box") and "approach" in o}
+        else:
+            doors = {n: o for n, o in meta["objects"].items() if o.get("class") == 1 and "approach" in o}
         if not doors:
             continue
         depth = np.asarray(Image.open(fdir / "depth.png"), dtype=np.float64) / 1000.0
+        if box_class == "doorway":
+            gt_png = fdir / "depth_gt.png" if (fdir / "depth_gt.png").exists() else fdir / "depth.png"
+            depth_gt = np.asarray(Image.open(gt_png), dtype=np.float64) / 1000.0
+            seg = np.asarray(Image.open(fdir / "seg.png")) if (fdir / "seg.png").exists() else None
+            gt_boxes = {}
+            for n in doors:
+                got = doorway.box(meta, n, K, depth_gt, seg)
+                if got:
+                    gt_boxes[n] = got["box"]
+            doors = {n: o for n, o in doors.items() if n in gt_boxes}
+            if not doors:
+                continue
+        else:
+            gt_boxes = {n: o["box"] for n, o in doors.items()}
         used = {}
         if preds is not None:
             p = preds.get(fdir.name, {"boxes": [], "scores": [], "labels": []})
             order = sorted((i for i in range(len(p["boxes"])) if door_label is None or p["labels"][i] == door_label), key=lambda i: -p["scores"][i])
             for i in order:
-                cand = [(_iou(p["boxes"][i], _xyxy(o["box"])), n) for n, o in doors.items() if n not in used]
+                cand = [(_iou(p["boxes"][i], _xyxy(gt_boxes[n])), n) for n in doors if n not in used]
                 if cand and max(cand)[0] >= iou:
                     used[max(cand)[1]] = _from_xyxy(p["boxes"][i])
         for name, o in doors.items():
-            box = o["box"] if preds is None else used.get(name)
+            box = gt_boxes[name] if preds is None else used.get(name)
             row = {"frame": fdir.name, "door": name, "side": meta.get("side"), "state": o.get("state"), "glass": o.get("glass"),
-                   "glass_depth_mode": meta.get("glass_depth_mode")}
+                   "glass_depth_mode": meta.get("glass_depth_mode"), "box_class": box_class}
             for k in ("visible_fraction", "smoke_transmission"):
                 if k in o:
                     row[k] = o[k]
@@ -268,9 +290,10 @@ def summary(rows):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dataset")
+    ap.add_argument("--box", choices=["door", "doorway"], default="door", help="which GT box to fit from (default: the door panel)")
     ap.add_argument("--out", help="write the per-door rows here as JSON lines")
     a = ap.parse_args()
-    rows = score_dataset(a.dataset)
+    rows = score_dataset(a.dataset, box_class=a.box)
     if a.out:
         pathlib.Path(a.out).write_text("".join(json.dumps(r) + "\n" for r in rows))
     print(summary(rows))
