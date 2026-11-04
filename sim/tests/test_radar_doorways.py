@@ -109,3 +109,23 @@ def test_a_few_stray_points_do_not_close_a_dense_gap():
 def test_sparse_single_frame_still_works_with_density_gaps():
     got = rd.find(wall_points(step=0.15, seed=3), CAM)  # ~7 points per metre, like one cheap radar frame
     assert len(got) == 1
+
+
+# --- which doors the radar could see at all (Claude 2026-11-04: rates over in-view doors, next to all doors) ---
+def test_in_view():
+    import math
+    from doorsim import radar
+    W, H = 240, 50
+    K = radar.camera_K(W, H, math.radians(120))
+    cam = {"world_position": CAM, "world_rpy": [0, 0, 0]}  # looking +x
+    depth = np.full((H, W), 3.0)
+    door = {"center": [3.0, 0.0, 1.0], "width": 0.9, "normal": [-1, 0, 0]}
+    assert rd.in_view(door, cam, K, depth)
+    assert not rd.in_view(dict(door, center=[-3.0, 0.0, 1.0]), cam, K, depth)  # behind the radar
+    assert not rd.in_view(dict(door, center=[1.0, 3.0, 1.0]), cam, K, depth)   # 72 deg to the side: outside the 120 deg view
+    blocked = depth.copy()
+    blocked[:, W // 2 - 10: W // 2 + 10] = 1.5  # a cabinet in front of the doorway
+    assert not rd.in_view(door, cam, K, blocked)
+    holes = depth.copy()
+    holes[:, W // 2 - 10: W // 2 + 10] = 0.0  # no return through the open doorway
+    assert rd.in_view(door, cam, K, holes)
