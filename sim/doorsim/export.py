@@ -1,7 +1,7 @@
 """Training export: one generator dataset folder -> YOLO + COCO, split by scene (never by frame).
 
 usage:
-  python3 sim/doorsim/export.py datasets/<name> [--out DIR] [--seed N] [--ratios 0.7 0.15 0.15]
+  python3 sim/doorsim/export.py datasets/<name> [--out DIR] [--seed N] [--ratios 0.7 0.15 0.15] [--doorway]
 
 Output (default exports/<name> in the repo; refuses to overwrite an existing export):
   images/<split>/000000.png    symlink to the source rgb.png (RGB only, no copies)
@@ -15,9 +15,18 @@ Output (default exports/<name> in the repo; refuses to overwrite an existing exp
 train / val COCO files (--ignore-splits) and no YOLO row. Madelief 2026-11-03: doors that have nearly vanished in smoke
 should neither teach the model to hallucinate doors nor punish it; test sets keep counting them (the visibility curve).
 Objects without a smoke_transmission are never ignored.
+
+--doorway: adds class 3 "doorway" (YOLO 2) = the frame opening of every door in view (it has a box) and an "approach" entry (doorsim/doorway.py),
+cut to the part the frame's depth shows (depth_gt.png if present, else depth.png). Its smoke_transmission is the door's, so
+--ignore-below treats it like the door.
 """
 import argparse, json, pathlib, sys
 import numpy as np
+from PIL import Image
+
+SIM = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SIM))
+from doorsim import doorway as dw
 
 SPLITS = ("train", "val", "test")
 DROP = {"id", "class", "box", "joint", "seen_from", "approach", "keep_out"}  # seen_from etc: v4 helpers, the frame has the side already
@@ -31,7 +40,7 @@ def split_scenes(scenes, ratios, seed):
     return {"train": order[n_val + n_test:], "val": order[:n_val], "test": order[n_val:n_val + n_test]}
 
 
-def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore_splits=("train", "val")):
+def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore_splits=("train", "val"), doorway=False):
     src, out = pathlib.Path(src).resolve(), pathlib.Path(out).resolve()
     if (out / "export.json").exists():
         raise FileExistsError(f"{out} already has an export; pick another --out")
@@ -47,6 +56,9 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
     if missing:
         raise ValueError(f"scenes {missing} are not in the dataset's split_scenes")
     scenes = {sp: sorted(s for s, v in split_of.items() if v == sp) for sp in SPLITS}
+    if doorway:
+        names[3] = "doorway"
+        K = ds["camera_intrinsics"]["K"]
     coco = {sp: {"images": [], "categories": [{"id": i, "name": n} for i, n in names.items()], "annotations": []} for sp in SPLITS}
     counts = {sp: {"images": 0, **{n: 0 for n in names.values()}} for sp in SPLITS}
     for sp in SPLITS:
@@ -60,23 +72,32 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
         coco[sp]["images"].append(image)
         counts[sp]["images"] += 1
         rows = []
-        for name, o in meta["objects"].items():
-            b = o.get("box")
+        items = [(name, o, o.get("box"), None) for name, o in meta["objects"].items()]
+        if doorway:
+            f = src / "frames" / frame
+            depth = np.asarray(Image.open(f / ("depth_gt.png" if (f / "depth_gt.png").exists() else "depth.png")), np.float32) / 1000.0
+            for name, o in meta["objects"].items():
+                r = dw.box(meta, name, K, depth) if o.get("class") == 1 and "approach" in o else None
+                if r:
+                    items.append((f"{name}_doorway", o, r["box"], {"door": name, "visible_fraction": r["visible_fraction"]}))
+        for name, o, b, extra in items:
             if o.get("class") is None or b is None:
                 continue
+            cls, oid = (3, o["id"] + 1000) if extra else (o["class"], o["id"])
             w, h = b["x_max"] - b["x_min"] + 1, b["y_max"] - b["y_min"] + 1  # Gazebo boxes = inclusive pixel indices
             t = o.get("smoke_transmission")
             ignored = ignore_below is not None and sp in ignore_splits and t is not None and t < ignore_below
             if not ignored:
-                rows.append(f"{o['class'] - 1} {(b['x_min'] + w / 2) / W:.6f} {(b['y_min'] + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
+                rows.append(f"{cls - 1} {(b['x_min'] + w / 2) / W:.6f} {(b['y_min'] + h / 2) / H:.6f} {w / W:.6f} {h / H:.6f}")
             coco[sp]["annotations"].append({
-                "id": len(coco[sp]["annotations"]) + 1, "image_id": image["id"], "category_id": o["class"],
+                "id": len(coco[sp]["annotations"]) + 1, "image_id": image["id"], "category_id": cls,
                 "bbox": [b["x_min"], b["y_min"], w, h], "area": w * h, "iscrowd": int(ignored), "segmentation": [],
-                "object": name, "object_id": o["id"], "size_px": [w, h],
+                "object": name, "object_id": oid, "size_px": [w, h],
                 "truncated": b["x_min"] <= 0 or b["y_min"] <= 0 or b["x_max"] >= W - 1 or b["y_max"] >= H - 1,
-                "attributes": {**{k: v for k, v in o.items() if k not in DROP and not k.endswith(("_world", "_topic"))},
+                "attributes": {**(extra if extra else {k: v for k, v in o.items() if k not in DROP and not k.endswith(("_world", "_topic"))}),
+                               **({"smoke_transmission": t} if extra and t is not None else {}),
                                **({"ignored": True} if ignored else {})}})
-            counts[sp][names[o["class"]]] += 1
+            counts[sp][names[cls]] += 1
         (out / "labels" / sp / f"{frame}.txt").write_text("".join(r + "\n" for r in rows))
     for sp in SPLITS:
         (out / "coco" / f"{sp}.json").write_text(json.dumps(coco[sp]) + "\n")
@@ -84,7 +105,7 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
                                    + "".join(f"  {i - 1}: {n}\n" for i, n in sorted(names.items())))
     info = {"source": {"path": str(src), "git": ds.get("git"), "seed": ds.get("seed"), "world": ds.get("world"), "frames": ds.get("frames"),
                        "effects": ds.get("effects"), "lighting": ds.get("lighting")},
-            "seed": seed, "ratios": list(ratios), "scenes": scenes, "counts": counts}
+            "seed": seed, "ratios": list(ratios), "scenes": scenes, "counts": counts, "doorway": doorway}
     if ignore_below is not None:
         info["ignore"] = {"below": ignore_below, "splits": list(ignore_splits)}
     (out / "export.json").write_text(json.dumps(info, indent=2) + "\n")
@@ -99,11 +120,12 @@ def main():
     ap.add_argument("--ratios", type=float, nargs=3, default=(0.7, 0.15, 0.15), metavar=("TRAIN", "VAL", "TEST"))
     ap.add_argument("--ignore-below", type=float, help="ignore objects with smoke_transmission below this (see above)")
     ap.add_argument("--ignore-splits", nargs="+", default=["train", "val"], choices=SPLITS)
+    ap.add_argument("--doorway", action="store_true", help="add the doorway class (see above)")
     args = ap.parse_args()
     src = pathlib.Path(args.dataset).resolve()
     out = pathlib.Path(args.out) if args.out else pathlib.Path(__file__).resolve().parents[2] / "exports" / src.name
     try:
-        info = export(src, out, args.seed, tuple(args.ratios), args.ignore_below, tuple(args.ignore_splits))
+        info = export(src, out, args.seed, tuple(args.ratios), args.ignore_below, tuple(args.ignore_splits), args.doorway)
     except FileExistsError as e:
         sys.exit(str(e))
     print(f"done: {sum(c['images'] for c in info['counts'].values())} images in {out}")

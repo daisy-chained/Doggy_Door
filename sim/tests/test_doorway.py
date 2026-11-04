@@ -103,7 +103,9 @@ def test_export_adds_doorway_class(tmp_path):
     assert dw[0]["attributes"]["smoke_transmission"] == 0.02  # the door's own value (same place, same smoke)
     assert dw[0]["iscrowd"] == 0  # test split keeps counting it
     train = json.loads((out / "coco" / "train.json").read_text())
-    assert all(a["iscrowd"] == 1 for a in train["annotations"] if a["category_id"] == 3)  # ignored like its door
+    assert all(a["iscrowd"] == 1 for a in train["annotations"] if a["object"] == "door_a_doorway")  # ignored like its door
+    # door_b's panel has no box (not in view) but part of its doorway is: still a doorway, never ignored (no transmission)
+    assert any(a["object"] == "door_b_doorway" and a["iscrowd"] == 0 for a in train["annotations"])
     labels = (out / "labels" / "test").glob("*.txt")
     assert any(l.split()[0] == "2" for f in labels for l in f.read_text().splitlines())  # YOLO class 2 = doorway
     assert "  2: doorway" in (out / "data.yaml").read_text()
