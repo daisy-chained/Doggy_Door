@@ -203,6 +203,8 @@ def main():
         out = open(args.out, "w")
     for k, name in enumerate(names):
         meta, fd = metas[name], root / "frames" / name
+        if not (fd / "radar_depth_noglass.png").exists():  # not rendered (yet)
+            continue
         gt = ground_truth(meta)
         cam = meta["camera"]
         depth = effects.depth_m(fd / "radar_depth.png")
