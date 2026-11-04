@@ -95,3 +95,17 @@ def test_stacked_points_fill_the_wall():
     stacked = np.vstack([wall_points(drop=0.8, seed=s) for s in range(1, 11)])
     assert rd.find(one, CAM) == [] or len(rd.find(stacked, CAM)) == 1
     assert len(rd.find(stacked, CAM)) == 1
+
+
+def test_a_few_stray_points_do_not_close_a_dense_gap():
+    # stacked views: thousands of wall points, plus a handful of noise / door-edge points inside the doorway
+    stacked = np.vstack([wall_points(noise=0.02, seed=s) for s in range(10)])
+    stray = np.array([[3.0, -0.2, 1.0], [3.02, 0.1, 1.2], [2.98, 0.3, 0.8]])
+    got = rd.find(np.vstack([stacked, stray]), CAM)
+    assert len(got) == 1 and np.linalg.norm(np.array(got[0]["center"][:2]) - [3.0, 0.0]) < 0.15
+    assert got[0]["width"] == pytest.approx(0.9, abs=0.2)
+
+
+def test_sparse_single_frame_still_works_with_density_gaps():
+    got = rd.find(wall_points(step=0.15, seed=3), CAM)  # ~7 points per metre, like one cheap radar frame
+    assert len(got) == 1
