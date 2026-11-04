@@ -71,3 +71,24 @@ def test_ground_truth_and_score():
     assert miss[0]["found"] is False and miss[0]["center_m"] is None
     far = rd.score([{"center": [3.0, 2.0, 1.0], "width": 0.9, "normal": [-1, 0, 0]}], gt, CAM)
     assert far[0]["found"] is False  # a doorway 2 m off is not this door (match radius rd.MATCH_M)
+
+
+# --- stacked views (Madelief 2026-11-04): the finder on the radar points of the last n views of the same scene ---
+def test_view_windows_same_targets_for_every_n():
+    metas = {f"{i:06d}": {"world": "w0", "scene": i // 12, "view": i % 12} for i in range(24)}
+    metas["000030"] = {"world": "w0", "scene": 9, "view": 0}  # a scene with one view only
+    win = rd.view_windows(metas, [1, 3, 10])
+    assert set(win) == {1, 3, 10}
+    targets = [t for t, _ in win[10]]
+    assert [t for t, _ in win[1]] == targets == [t for t, _ in win[3]]  # all n scored on the same frames
+    assert targets == [f"{i:06d}" for i in list(range(9, 12)) + list(range(21, 24))]  # need 9 earlier views of the scene
+    t, frames = win[3][0]
+    assert t == "000009" and frames == ["000007", "000008", "000009"]  # the n views ending at the target, in view order
+    assert win[1][0][1] == ["000009"]
+
+
+def test_stacked_points_fill_the_wall():
+    one = wall_points(drop=0.8, seed=1)
+    stacked = np.vstack([wall_points(drop=0.8, seed=s) for s in range(1, 11)])
+    assert rd.find(one, CAM) == [] or len(rd.find(stacked, CAM)) == 1
+    assert len(rd.find(stacked, CAM)) == 1
