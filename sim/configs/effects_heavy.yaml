@@ -1,0 +1,30 @@
+# HEAVY variant (2026-11-04, beat-smoke option B): more smoky frames (80 %) and thicker smoke (V 1-8 m), to put more
+# training examples in the weak-signal band (transmission 0.05-0.3) where the detectors still have headroom.
+# Image effects on a generated dataset (sim/doorsim/effects.py): layered room smoke from depth, matching depth
+# effects, camera noise with auto-gain. Random mode (training sets); --visibility V gives a fixed-level test set.
+#   python3 sim/doorsim/effects.py datasets/door_room_v3_2k --config sim/configs/effects_train.yaml
+#   python3 sim/doorsim/effects.py datasets/door_room_v3_2k --config sim/configs/effects_train.yaml --visibility 2 --split test
+seed: 0
+smoke:
+  p: 0.8                      # share of frames with smoke (random mode); the rest get camera noise only
+  visibility_m: [1.0, 8.0]    # visibility of the lower air (contrast drops to 5 %), log-uniform; beta = 3 / V
+  layer:                      # hot smoke layer under the ceiling (two-zone fire model): denser above `height`
+    p: 0.8                    # share of smoky frames with a layer (the rest: same density everywhere)
+    height: [1.0, 2.6]        # m, where the layer starts (the room is 2.7 m high)
+    factor: [2.0, 8.0]        # layer density / lower-air density
+    width: 0.15               # m, how soft the layer edge is
+  patch: [0.0, 0.4]           # density varies +- this much through the room (smooth 3D noise)
+  patch_scale: 1.5            # m, size of the denser / thinner regions
+  colour: [0.75, 0.75, 0.75]  # smoke albedo (linear): share of the lamps' light it scatters
+  scatter_gain: 0.25          # Gazebo lights surfaces as albedo x light (no 1/pi); smoke scattering evenly in all directions
+                              # gets 1/(4 pi) -> on Gazebo's scale that is x pi / (4 pi) = 1/4
+  samples: 24                 # steps along each pixel's line of sight
+  far: 12.0                   # m, distance for pixels without depth (camera far clip)
+depth:
+  t_lost: 0.3                 # below this transmission a depth pixel is more and more likely lost
+  p_false: 0.3                # share of lost pixels that return a false close reading (a smoke hit) instead of 0
+noise:                        # camera: shot noise (Poisson) + read noise (Gaussian), auto-gain up to max_gain
+  full_well: 1000             # electrons at full brightness
+  read_noise: 3.0             # electrons
+  target_mean: 0.18           # auto-exposure aims for this mean linear brightness
+  max_gain: 16                # cap (like a max ISO): darker scenes stay dark
