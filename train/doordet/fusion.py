@@ -1,0 +1,56 @@
+"""Late fusion of detectors (Madelief 2026-11-04: RGB detector + depth detector): weighted box fusion, Solovyev et al. 2021
+(arXiv 1910.13302). Own ~40 lines instead of a dependency. Boxes of all models are clustered per label by IoU; a cluster becomes one
+box (coordinates averaged with the weighted scores) and its score is scaled by how much of the model weight found it, so a box that
+only one model sees is scored down. Predictions: {"boxes" (N,4) xyxy, "scores" (N,), "labels" (N,)}."""
+import numpy as np
+
+
+def _ious(f, b):
+    """IoU of box b with every row of f (K, 4)."""
+    w, h = np.minimum(f[:, 2], b[2]) - np.maximum(f[:, 0], b[0]), np.minimum(f[:, 3], b[3]) - np.maximum(f[:, 1], b[1])
+    inter = np.clip(w, 0, None) * np.clip(h, 0, None)
+    return inter / ((f[:, 2] - f[:, 0]) * (f[:, 3] - f[:, 1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-9)
+
+
+def empty():
+    return {"boxes": np.zeros((0, 4)), "scores": np.zeros(0), "labels": np.zeros(0, int)}
+
+
+def wbf(preds, weights=None, iou=0.55, skip=0.0):
+    """preds: one prediction dict per model -> fused prediction dict. Score = sum(w*s)/sum(w) over the cluster's boxes, times the
+    weight share of the distinct models in the cluster."""
+    w = np.ones(len(preds)) if weights is None else np.asarray(weights, float)
+    items = [(int(l), m, float(s), np.asarray(b, float)) for m, p in enumerate(preds)
+             for b, s, l in zip(p["boxes"], p["scores"], p["labels"]) if s >= skip]
+    out = []
+    for label in sorted({i[0] for i in items}):
+        boxes = sorted((i for i in items if i[0] == label), key=lambda i: -i[2] * w[i[1]])
+        clusters, fused = [], np.zeros((0, 4))  # each cluster: {"m": [(model, score)], "b": [boxes]}; fused[k] = its box
+        for _, m, s, b in boxes:
+            hit = np.nonzero(_ious(fused, b) > iou)[0]  # all clusters at once: detectors give ~300 boxes per image
+            if len(hit):
+                k = hit[0]
+            else:
+                k = len(clusters)
+                clusters.append({"m": [], "b": []})
+                fused = np.vstack([fused, b])
+            c = clusters[k]
+            c["m"].append((m, s)); c["b"].append(b)
+            ws = np.array([s_ * w[m_] for m_, s_ in c["m"]])
+            fused[k] = (np.array(c["b"]) * ws[:, None]).sum(0) / max(ws.sum(), 1e-9)
+        for c, f in zip(clusters, fused):
+            c["fused"] = f
+        for c in clusters:
+            ms, ss = np.array([m for m, _ in c["m"]]), np.array([s for _, s in c["m"]])
+            score = (w[ms] * ss).sum() / w[ms].sum() * w[np.unique(ms)].sum() / w.sum()
+            out.append((c["fused"], score, label))
+    if not out:
+        return empty()
+    out.sort(key=lambda o: -o[1])
+    return {"boxes": np.array([o[0] for o in out]), "scores": np.array([o[1] for o in out]), "labels": np.array([o[2] for o in out], int)}
+
+
+def fuse_runs(runs, weights=None, **kw):
+    """runs: one {image_id: prediction dict} per model -> {image_id: fused prediction dict} over the union of image ids."""
+    ids = sorted({i for r in runs for i in r})
+    return {i: wbf([r.get(i, empty()) for r in runs], weights, **kw) for i in ids}
