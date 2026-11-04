@@ -12,7 +12,10 @@ cd "$R"
 HEAVY_PID=${HEAVY_PID:-}
 
 # 1. temperature images (both scenarios) for every frame of the base dataset (label render + lookup)
-step render python3 sim/doorsim/thermal_render.py datasets/door_room_v4_2k --workers 4 || exit 1
+for try in 1 2 3; do  # resumable; a Gazebo start can time out under load
+  step render_$try python3 sim/doorsim/thermal_render.py datasets/door_room_v4_2k --workers 4 && break
+  [ $try = 3 ] && exit 1
+done
 
 # 2. thermal datasets: training mix (from the training smoke set) + test sets that reuse the RGB sets' smoke frame for frame
 step fx_train python3 sim/doorsim/thermal_fx.py datasets/door_room_v4_2k_fx --out datasets/door_room_v4_2k_fx_th_mix --scenario mix --k 0.1 --workers 8 || exit 1
