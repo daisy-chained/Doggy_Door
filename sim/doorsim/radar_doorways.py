@@ -27,8 +27,10 @@ RANSAC_MAX_PTS = 3000       # fit on a subsample (inliers are counted on all poi
 MIN_WALL_PTS = 25           # a wall needs at least this many inliers ...
 MIN_WALL_LEN = 1.5          # ... and this length (m)
 MAX_WALLS = 3               # walls tried per frame (the scenes have one door wall; the others rarely give gaps)
-SUPPORT_M = 0.5             # wall support wanted within this distance on each side of a gap
-MIN_SUPPORT = 5             # inliers needed in each support zone
+SUPPORT_M = 0.5             # wall support wanted within this distance on each side of a gap ...
+MIN_SUPPORT_FRAC = 0.3      # ... = this fraction of the bins there must be wall bins (relative to the wall's own density)
+BIN_M = 0.05                # bin size along the wall line for the density step (m); sparse walls use the median point spacing if larger
+WALL_FRAC = 0.2             # a bin is wall when its count >= this fraction of the median count over occupied bins
 DOOR_Z = 1.0                # z of a found doorway centre (guess: elevation is not measured well)
 
 
@@ -60,6 +62,31 @@ def _fit_line(xy, rng):
     return p, d, mask
 
 
+def _density_gaps(t):
+    """Gaps (a, b) along sorted wall positions t (m) found by density, not by the distance between neighbouring points.
+    Histogram in bins of max(BIN_M, median point spacing) (so a sparse single-frame wall with 0.15 m spacing is not full of
+    gaps). A bin is wall when its count >= WALL_FRAC * the median count over occupied bins (a few stray points inside a
+    doorway in a dense stack stay below that; for a sparse wall, median ~1, any point counts). A gap is a run of non-wall bins
+    between wall bins with width in [MIN_W, MAX_W]; it needs wall density on both sides: >= MIN_SUPPORT_FRAC of the bins
+    within SUPPORT_M are wall bins (relative to the wall's own density, not a fixed point count)."""
+    sp = np.diff(t)
+    bw = max(BIN_M, float(np.median(sp)) if len(sp) else BIN_M)
+    nb = int(np.ceil((t[-1] - t[0]) / bw)) + 1
+    cnt = np.bincount(np.minimum(((t - t[0]) / bw).astype(int), nb - 1), minlength=nb)
+    wall = cnt >= max(WALL_FRAC * np.median(cnt[cnt > 0]), 1e-9)
+    sup = max(1, int(round(SUPPORT_M / bw)))
+    idx = np.nonzero(wall)[0]
+    out = []
+    for i, j in zip(idx[:-1], idx[1:]):
+        w = (j - i - 1) * bw
+        if j - i < 2 or not (MIN_W <= w <= MAX_W):
+            continue
+        if wall[max(0, i - sup + 1):i + 1].mean() < MIN_SUPPORT_FRAC or wall[j:j + sup].mean() < MIN_SUPPORT_FRAC:
+            continue
+        out.append((t[0] + (i + 1) * bw, t[0] + j * bw))
+    return out
+
+
 def find(points, cam_pos):
     """Doorways in world points (N, 3) -> [{"center": [x, y, z], "width", "normal": [nx, ny, 0]}], normal towards cam_pos.
     z of the centre is DOOR_Z (not measured). Points behind a gap are not wall inliers, so they cannot close it."""
@@ -83,10 +110,7 @@ def find(points, cam_pos):
         t.sort()
         if t[-1] - t[0] >= MIN_WALL_LEN:
             nrm = np.array([-d[1], d[0]])
-            for k in np.nonzero((np.diff(t) >= MIN_W) & (np.diff(t) <= MAX_W))[0]:
-                a, b = t[k], t[k + 1]
-                if ((t >= a - SUPPORT_M) & (t <= a)).sum() < MIN_SUPPORT or ((t >= b) & (t <= b + SUPPORT_M)).sum() < MIN_SUPPORT:
-                    continue
+            for a, b in _density_gaps(t):
                 c = p + d * (a + b) / 2
                 n = nrm if (cam[:2] - c) @ nrm >= 0 else -nrm
                 out.append({"center": [float(c[0]), float(c[1]), DOOR_Z], "width": float(b - a), "normal": [float(n[0]), float(n[1]), 0.0]})
