@@ -3,7 +3,7 @@
 Ignore boxes (iscrowd 1, from the exporter's --ignore-below) are ignore in scoring (pycocotools reads them from the gt json)
 and left out of the training targets, like DETR's COCO loader. A true ignore in D-FINE's loss (matched but unpunished)
 would need a custom loss: its denoising queries are built from every target box."""
-import json, math, pathlib
+import json, math, os, pathlib
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
@@ -46,6 +46,25 @@ def encode_depth(depth_mm, K, camera, kind):
     return np.nan_to_num(np.where(ok[..., None], out, 0)).round().astype(np.uint8)
 
 
+def encode_thermal(kelvin):
+    """Thermal frame (K) -> uint8 like a camera's automatic gain control: clip to the 1st-99th percentile of the frame, stretch to 0-255."""
+    k = np.asarray(kelvin, float)
+    lo, hi = np.percentile(k, [1, 99])
+    if not hi > lo:
+        return np.full(k.shape, 128, np.uint8)
+    return ((np.clip(k, lo, hi) - lo) / (hi - lo) * 255).round().astype(np.uint8)
+
+
+def frame_dir(path):
+    """Folder of the dataset that made an export image: the first symlink target's folder (thermal datasets symlink rgb.png to the base
+    frame, so path.resolve().parent would land in the base dataset)."""
+    path = pathlib.Path(path)
+    if not path.is_symlink():
+        return path.parent
+    target = pathlib.Path(os.readlink(path))
+    return (target if target.is_absolute() else path.parent / target).parent
+
+
 class CocoDetection(Dataset):
     def __init__(self, export_dir, split, input="rgb"):
         self.input, self._K = input, {}
@@ -75,8 +94,13 @@ class CocoDetection(Dataset):
         path = self.root / im["file_name"]
         if self.input == "rgb":
             img = Image.open(path).convert("RGB")
+        elif self.input == "thermal":
+            rgb = Image.open(path)
+            k = np.asarray(Image.open(frame_dir(path) / "thermal.png"), float) / 100  # uint16, 0.01 K
+            t = Image.fromarray(encode_thermal(k)).resize(rgb.size, Image.BILINEAR)
+            img = Image.fromarray(np.asarray(t)[..., None].repeat(3, axis=2))
         else:
-            frame = path.resolve().parent  # the export's image is a symlink to <dataset>/frames/<frame>/rgb.png
+            frame = frame_dir(path)  # the export's image is a symlink to <dataset>/frames/<frame>/rgb.png
             img = Image.fromarray(encode_depth(np.asarray(Image.open(frame / "depth.png")), self.K(frame.parent.parent),
                                                json.loads((frame / "meta.json").read_text())["camera"], self.input))
         return img, {"image_id": im["id"], "annotations": self.anns[im["id"]]}

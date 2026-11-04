@@ -88,4 +88,4 @@ def test_config_input_key(tmp_path):
     assert config.load(p)["input"] == "rgb"
     assert config.load(p, ["input=dha"])["input"] == "dha"
     with pytest.raises(ValueError):
-        config.load(p, ["input=thermal"])
+        config.load(p, ["input=bogus"])

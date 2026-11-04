@@ -15,11 +15,11 @@ DEFAULTS = {
     "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door", "tags": {}},
     "eval_every": 1, "score_threshold": 0.01,
     "test_eval": True,  # score the test split once at the end (the search turns this off)
-    "input": "rgb",  # detector input: rgb | depth (plain depth) | dha (depth, height above floor, normal angle to gravity)
+    "input": "rgb",  # detector input: rgb | depth (plain depth) | dha (depth, height above floor, normal angle to gravity) | thermal (AGC-stretched thermal frame)
     "select_metric": "map",  # val metric that picks the best epoch
 }
 METRICS = (*STATS, "ap_door", "ap_handle")
-INPUTS = ("rgb", "depth", "dha")
+INPUTS = ("rgb", "depth", "dha", "thermal")
 NESTED = ("model", "mlflow")
 
 
