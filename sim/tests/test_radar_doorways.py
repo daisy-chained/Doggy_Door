@@ -85,6 +85,9 @@ def test_view_windows_same_targets_for_every_n():
     t, frames = win[3][0]
     assert t == "000009" and frames == ["000007", "000008", "000009"]  # the n views ending at the target, in view order
     assert win[1][0][1] == ["000009"]
+    sided = {f: dict(m, side="front" if int(f) % 2 else "back") for f, m in metas.items()}  # alternate wall sides
+    for t, frames in rd.view_windows(sided, [1, 3])[3]:
+        assert len({sided[f]["side"] for f in frames}) == 1 and sided[t]["side"] == sided[frames[0]]["side"]  # own room only
 
 
 def test_stacked_points_fill_the_wall():

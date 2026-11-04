@@ -132,6 +132,24 @@ def score(found, gt, cam_pos):
     return rows
 
 
+def view_windows(metas, ns):
+    """{n: [(target_frame, [frames of the n views ending at the target, in view order])]}. Groups = (world, scene, side):
+    a robot looking around stays in its own room (a scene has views from both sides of the wall; mixing them would put the
+    other room's walls in the doorway). Views ordered by meta["view"]. Targets = frames with at least max(ns) - 1 earlier
+    views in their group, so every n is scored on exactly the same target frames."""
+    scenes = {}
+    for f, m in metas.items():
+        scenes.setdefault((m.get("world"), m.get("scene"), m.get("side")), []).append(f)
+    need = max(ns) - 1
+    out = {n: [] for n in ns}
+    for key in sorted(scenes, key=str):
+        fr = sorted(scenes[key], key=lambda f: (metas[f]["view"], f))
+        for i in range(need, len(fr)):
+            for n in ns:
+                out[n].append((fr[i], fr[i - n + 1:i + 1]))
+    return out
+
+
 # --- CLI ---
 BINS = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 1e9)]
 
@@ -164,9 +182,90 @@ def summarize(rows_by_model, n_frames_by_model):
             print(f"   state {st:>7}: {_stats(sel)}")
 
 
+def view_table(rows_by_model, models, ns):
+    """Compact table: rows = model, columns = views, cells = open-door found rate / median centre error."""
+    def cell(rows):
+        doors = [r for r in rows if r["door"] is not None and str(r["state"]) == "open"]
+        if not doors:
+            return "-"
+        e = [r["center_m"] for r in doors if r["found"]]
+        return f"{100 * len(e) / len(doors):.0f}% / " + (f"{np.median(e):.2f} m" if e else "-") + f" (n={len(doors)})"
+    print("\nOpen doors: found rate / median centre error, by number of views")
+    w = 24
+    print(f"{'model':<10}" + "".join(f"{n:>{w}}" for n in ns))
+    for m in models:
+        print(f"{m:<10}" + "".join(f"{cell(rows_by_model.get(f'{m}@{n}', [])):>{w}}" for n in ns))
+
+
 def _camera_K(root):
     k = json.loads((root / "radar" / "camera.json").read_text())
     return k["K"] if isinstance(k, dict) else k
+
+
+def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
+    from PIL import Image
+    from doorsim import effects
+    ns = sorted(set(args.views))
+    windows = view_windows({n: metas[n] for n in names}, ns)
+    cache = {}  # (frame, model) -> points; each frame's points are computed once per model
+
+    def points(name, m):
+        if (name, m) in cache:
+            return cache[name, m]
+        meta, fd = metas[name], root / "frames" / name
+        cam = meta["camera"]
+        depth = effects.depth_m(fd / "radar_depth.png")
+        if m == "clean":
+            pts = effects.world_points(depth, K, cam)[::4, ::4].reshape(-1, 3)
+            pts = pts[np.isfinite(pts).all(1)]
+        else:
+            seg = np.asarray(Image.open(fd / "radar_seg.png"))
+            noglass = effects.depth_m(fd / "radar_depth_noglass.png")
+            wf = effects.world_file(ds, meta)
+            if wf not in mats_cache:
+                mats_cache[wf] = radar.materials(json.loads((wf.parent / f"{wf.stem}.attributes.json").read_text()))
+            rng = np.random.default_rng(zlib.crc32(f"{name}".encode()))
+            res = radar.simulate(depth, seg, noglass, K, cam, radar.MODELS[m], mats_cache[wf], rng)
+            pts = res["points"] if isinstance(res, dict) else res
+        cache[name, m] = pts
+        return pts
+
+    def rendered(name):
+        return (root / "frames" / name / "radar_depth_noglass.png").exists()
+
+    keys = [f"{m}@{n}" for m in models for n in ns]
+    rows_by_model = {k: [] for k in keys}
+    nfr = {k: 0 for k in keys}
+    out = None
+    if args.out:
+        pathlib.Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        out = open(args.out, "w")
+    targets = [t for t, _ in windows[ns[0]]]
+    used = 0
+    for k, target in enumerate(targets):
+        if not all(rendered(f) for n in ns for tt, fr in [windows[n][k]] for f in fr):
+            continue  # a window frame is not rendered (yet): skip the target for every n, so all n stay on the same targets
+        used += 1
+        cam_pos = metas[target]["camera"]["world_position"]
+        gt = ground_truth(metas[target])
+        for m in models:
+            for n in ns:
+                fr = windows[n][k][1]
+                pts = np.vstack([points(f, m) for f in fr])
+                rows = score(find(pts, cam_pos), gt, cam_pos)
+                key = f"{m}@{n}"
+                nfr[key] += 1
+                rows_by_model[key] += rows
+                if out:
+                    for r in rows:
+                        out.write(json.dumps({"frame": target, "model": m, "views": n, **r}) + "\n")
+        if (k + 1) % 100 == 0:
+            print(f"{k + 1}/{len(targets)} targets", flush=True)
+    if out:
+        out.close()
+    print(f"{used}/{len(targets)} target windows complete (all views rendered)")
+    summarize(rows_by_model, nfr)
+    view_table(rows_by_model, models, ns)
 
 
 def main():
@@ -178,6 +277,9 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--clean", action="store_true", help="also/only the clean upper bound: every 4th pixel's world points, no radar")
     ap.add_argument("--export-seed", type=int, default=0)
+    ap.add_argument("--views", nargs="+", type=int, default=None,
+                    help="also stack the points of the last n views of the same scene (world coordinates), e.g. 1 3 10; "
+                         "all n are scored on the same target frames; models are reported as name@n")
     args = ap.parse_args()
 
     from PIL import Image
@@ -195,6 +297,9 @@ def main():
     if args.clean:
         models.append("clean")
     mats_cache = {}
+    if args.views:
+        _run_views(args, ds, root, metas, names, K, models, radar, mats_cache)
+        return
     rows_by_model = {m: [] for m in models}
     nfr = {m: 0 for m in models}
     out = None
