@@ -78,15 +78,43 @@ def _thermal_plugin(k):
     return p
 
 
-def inject(sdf_text, temps, t_range=(MIN_K, MAX_K)):
+STRUCT_IDS = {"floor": 1, "back_wall": 2, "room_shell": 3}  # seg labels for the structure (unlabelled in the dataset: seg 0)
+
+
+def temps_by_id(temps, attrs):
+    """{seg id: K} for the attrs objects that have an id and a temperature, plus the labelled structure."""
+    by_id = {o["id"]: temps["models"][n] for n, o in attrs["objects"].items() if "id" in o and n in temps["models"]}
+    by_id.update({i: temps["models"][n] for n, i in STRUCT_IDS.items() if n in temps["models"]})
+    return by_id
+
+
+def kelvin_from_seg(seg, by_id, default, size):
+    """Temperature image (K, shape (h, w) of size=(w, h)) from a label image: lookup per pixel (unknown ids / 0 -> default,
+    the air), then area-average of T^4 (radiance) over the integer blocks that make up each output pixel."""
+    lut = np.full(max(int(seg.max()), max(by_id, default=0)) + 1, float(default))
+    for i, k in by_id.items():
+        lut[i] = k
+    t4 = lut[np.asarray(seg, int)] ** 4
+    w, h = size
+    bh, bw = seg.shape[0] // h, seg.shape[1] // w
+    return t4.reshape(h, bh, w, bw).mean(axis=(1, 3)) ** 0.25
+
+
+def inject(sdf_text, temps, t_range=(MIN_K, MAX_K), thermal=True):
     """World SDF text with a Thermal plugin in every visual of each model in temps (per visual: gz-sim8 ignores it on the
     model) and a thermal camera next to the rig's rgbd camera (same FOV, clip, rate; 320 x 240 L16 on topic "thermal")."""
     root = ET.fromstring(sdf_text.encode())
     world = root.find("world")
     for m in world.findall("model"):
-        if m.get("name") in temps:
-            for v in m.iter("visual"):
+        for v in m.iter("visual"):
+            if m.get("name") in STRUCT_IDS:  # label the structure so a seg render can tell it apart
+                lab = ET.SubElement(ET.SubElement(v, "plugin", filename="gz-sim-label-system", name="gz::sim::systems::Label"), "label")
+                lab.text = str(STRUCT_IDS[m.get("name")])
+            if thermal and m.get("name") in temps:
                 v.append(_thermal_plugin(temps[m.get("name")]))
+    if not thermal:  # labels only: no thermal plugins / sensor (the temperature image comes from the label render)
+        ET.indent(root)
+        return ET.tostring(root, encoding="unicode", xml_declaration=True)
     rig = next(m for m in world.findall("model") if m.get("name") == "rig")
     for link in rig.iter("link"):
         rgbd = next((s for s in link.findall("sensor") if s.get("type") == "rgbd_camera"), None)
