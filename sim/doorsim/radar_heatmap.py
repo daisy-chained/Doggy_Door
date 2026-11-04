@@ -141,3 +141,13 @@ def bev_box(door_gt, dst_camera, size_m=8.0, res=0.05, thick=0.3):
     if x1 - x0 < 3 or y1 - y0 < 3:
         return None
     return [x0, y0, x1, y1]
+
+
+def bev_to_world(px, py, dst_camera, size_m=8.0, res=0.05):
+    """[x, y, z] world point of a BEV pixel position (x = column, y = row, float; pixel edges as in bev_box). Exact inverse of
+    the mapping of bev / bev_box: yaw only, z = the camera's z."""
+    n = int(round(size_m / res))
+    fwd, left = (n - py) * res, (n / 2 - px) * res
+    o, yaw = _xy_yaw(dst_camera)
+    c, s = math.cos(yaw), math.sin(yaw)
+    return [float(o[0] + fwd * c - left * s), float(o[1] + fwd * s + left * c), float(dst_camera["world_position"][2])]
