@@ -148,15 +148,16 @@ def _returns(depth, wp, incidence, solid, db, cam_pos, valid):
     return r, p
 
 
-def simulate(depth, seg, depth_noglass, K, camera, model, mats, rng):
-    """Radar detections from one wide render. depth / depth_noglass: planar z-depth in m (0 / NaN = no return),
-    seg: label image, camera: {"world_position", "world_rpy"}, model: MODELS[...], mats: materials(attrs).
-    Returns {"points": (N, 3) world xyz, "power": (N,)} (power in NOISE_FLOOR units: beam-filling power of the bin)."""
+def pixel_returns(depth, seg, depth_noglass, K, camera, mats):
+    """The radar's per-pixel returns before any binning or thresholding: (world points (N, 3), range from the radar (N,) in m,
+    power (N,)) for every valid pixel of the surface layer, then of the layer behind glass (two-way pass-through loss,
+    reflecting like a wall), concatenated. Power = reflect gain x lobe / r^4 x pixel solid angle (linear; zero = no return).
+    depth / depth_noglass: planar z-depth in m (0 / NaN = no return), seg: label image, camera: {"world_position", "world_rpy"},
+    mats: materials(attrs). Shared by simulate (detections) and radar_heatmap (raw range x azimuth power map)."""
     depth = np.asarray(depth, float)
     depth_noglass = np.asarray(depth_noglass, float)
     seg = np.asarray(seg)
     cam_pos = np.array(camera["world_position"], float)
-    R = np.array(effects.frames.rot(*camera["world_rpy"]))
     solid = _pixel_solid_angle(depth.shape, K)
 
     names = np.empty(seg.shape, object)
@@ -179,9 +180,17 @@ def simulate(depth, seg, depth_noglass, K, camera, model, mats, rng):
         inc = _incidence(wp, depth_noglass, cam_pos)
         r, p = _returns(depth_noglass, wp, inc, solid, REFLECT_DB["wall"] + 2 * GLASS_PASS_DB, cam_pos, valid)
         layers.append((wp[valid], r[valid], p[valid]))
-    pts = np.concatenate([l[0] for l in layers])
-    rng_m = np.concatenate([l[1] for l in layers])
-    pw = np.concatenate([l[2] for l in layers])
+    return (np.concatenate([l[0] for l in layers]), np.concatenate([l[1] for l in layers]),
+            np.concatenate([l[2] for l in layers]))
+
+
+def simulate(depth, seg, depth_noglass, K, camera, model, mats, rng):
+    """Radar detections from one wide render. depth / depth_noglass: planar z-depth in m (0 / NaN = no return),
+    seg: label image, camera: {"world_position", "world_rpy"}, model: MODELS[...], mats: materials(attrs).
+    Returns {"points": (N, 3) world xyz, "power": (N,)} (power in NOISE_FLOOR units: beam-filling power of the bin)."""
+    cam_pos = np.array(camera["world_position"], float)
+    R = np.array(effects.frames.rot(*camera["world_rpy"]))
+    pts, rng_m, pw = pixel_returns(depth, seg, depth_noglass, K, camera, mats)
 
     empty = {"points": np.zeros((0, 3)), "power": np.zeros(0)}
     keep = (pw > 0) & (rng_m < MAX_RANGE)

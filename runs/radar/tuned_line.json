@@ -1,0 +1,71 @@
+{
+ "clean": {
+  "1": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.3,
+   "MIN_W": 0.6,
+   "MAX_W": 1.3
+  },
+  "3": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.3,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.5,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  }
+ },
+ "imaging": {
+  "1": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.15,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  },
+  "3": {
+   "INLIER_TOL": 0.15,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.5,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.5,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  }
+ },
+ "single": {
+  "1": {
+   "INLIER_TOL": 0.15,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.15,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  },
+  "3": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.3,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.15,
+   "MIN_W": 0.5,
+   "MAX_W": 1.5
+  }
+ }
+}

@@ -6,6 +6,7 @@ is horizontal only (radar elevation is coarse).
 
 usage:
   python3 sim/doorsim/radar_doorways.py DS [--models single imaging] [--split test] [--out runs/radar/<name>.jsonl]
+         [--finder line|grid] [--tune] [--params runs/radar/tuned_<finder>.json]
          [--limit N] [--clean]
 Reads per frame DS/frames/<f>/radar_depth.png, radar_seg.png, radar_depth_noglass.png and DS/radar/camera.json (written
 by radar_render), runs doorsim.radar.simulate per model, finds + scores. --clean skips the radar and uses every 4th
@@ -34,88 +35,142 @@ WALL_FRAC = 0.2             # a bin is wall when its count >= this fraction of t
 DOOR_Z = 1.0                # z of a found doorway centre (guess: elevation is not measured well)
 
 
-def _fit_line(xy, rng):
+def _cfg(params=None):
+    """Module constants (upper-case numbers) overridden by params (name -> value) for ONE call; nothing global is changed.
+    Unknown names pass through (radar_grid adds its own)."""
+    c = {k: v for k, v in globals().items() if k.isupper() and isinstance(v, (int, float))}
+    c.update(params or {})
+    return c
+
+
+def _fit_line(xy, rng, c=None):
     """RANSAC dominant line -> (point, unit direction, inlier mask). Deterministic via rng."""
-    sub = xy if len(xy) <= RANSAC_MAX_PTS else xy[rng.choice(len(xy), RANSAC_MAX_PTS, replace=False)]
+    c = c or _cfg()
+    tol = c["INLIER_TOL"]
+    sub = xy if len(xy) <= c["RANSAC_MAX_PTS"] else xy[rng.choice(len(xy), int(c["RANSAC_MAX_PTS"]), replace=False)]
     best, best_n = None, 0
-    for _ in range(RANSAC_ITERS):
+    for _ in range(int(c["RANSAC_ITERS"])):
         i, j = rng.choice(len(sub), 2, replace=False)
         d = sub[j] - sub[i]
         L = np.hypot(*d)
         if L < 0.3:
             continue
         d = d / L
-        n = int((np.abs((sub - sub[i]) @ np.array([-d[1], d[0]])) < INLIER_TOL).sum())
+        n = int((np.abs((sub - sub[i]) @ np.array([-d[1], d[0]])) < tol).sum())
         if n > best_n:
             best, best_n = (sub[i], d), n
     if best is None:
         return None
     p, d = best
     nrm = np.array([-d[1], d[0]])
-    mask = np.abs((xy - p) @ nrm) < INLIER_TOL
+    mask = np.abs((xy - p) @ nrm) < tol
     if mask.sum() >= 2:  # refit by PCA on the inliers
         q = xy[mask]
-        c = q.mean(0)
-        d = np.linalg.svd(q - c, full_matrices=False)[2][0]
-        p, nrm = c, np.array([-d[1], d[0]])
-        mask = np.abs((xy - p) @ nrm) < INLIER_TOL
+        cc = q.mean(0)
+        d = np.linalg.svd(q - cc, full_matrices=False)[2][0]
+        p, nrm = cc, np.array([-d[1], d[0]])
+        mask = np.abs((xy - p) @ nrm) < tol
     return p, d, mask
 
 
-def _density_gaps(t):
-    """Gaps (a, b) along sorted wall positions t (m) found by density, not by the distance between neighbouring points.
-    Histogram in bins of max(BIN_M, median point spacing) (so a sparse single-frame wall with 0.15 m spacing is not full of
-    gaps). A bin is wall when its count >= WALL_FRAC * the median count over occupied bins (a few stray points inside a
-    doorway in a dense stack stay below that; for a sparse wall, median ~1, any point counts). A gap is a run of non-wall bins
-    between wall bins with width in [MIN_W, MAX_W]; it needs wall density on both sides: >= MIN_SUPPORT_FRAC of the bins
-    within SUPPORT_M are wall bins (relative to the wall's own density, not a fixed point count)."""
-    sp = np.diff(t)
-    bw = max(BIN_M, float(np.median(sp)) if len(sp) else BIN_M)
-    nb = int(np.ceil((t[-1] - t[0]) / bw)) + 1
-    cnt = np.bincount(np.minimum(((t - t[0]) / bw).astype(int), nb - 1), minlength=nb)
-    wall = cnt >= max(WALL_FRAC * np.median(cnt[cnt > 0]), 1e-9)
-    sup = max(1, int(round(SUPPORT_M / bw)))
+def _runs_to_gaps(wall, t0, bw, c):
+    """Gaps (a, b) = runs of non-wall bins between wall bins, width in [MIN_W, MAX_W], with wall support on both sides:
+    >= MIN_SUPPORT_FRAC of the bins within SUPPORT_M are wall bins. Also returns the bin index range (i+1, j) of each."""
+    sup = max(1, int(round(c["SUPPORT_M"] / bw)))
     idx = np.nonzero(wall)[0]
     out = []
     for i, j in zip(idx[:-1], idx[1:]):
         w = (j - i - 1) * bw
-        if j - i < 2 or not (MIN_W <= w <= MAX_W):
+        if j - i < 2 or not (c["MIN_W"] <= w <= c["MAX_W"]):
             continue
-        if wall[max(0, i - sup + 1):i + 1].mean() < MIN_SUPPORT_FRAC or wall[j:j + sup].mean() < MIN_SUPPORT_FRAC:
+        if wall[max(0, i - sup + 1):i + 1].mean() < c["MIN_SUPPORT_FRAC"] or wall[j:j + sup].mean() < c["MIN_SUPPORT_FRAC"]:
             continue
-        out.append((t[0] + (i + 1) * bw, t[0] + j * bw))
+        out.append((t0 + (i + 1) * bw, t0 + j * bw, i + 1, j))
     return out
 
 
-def find(points, cam_pos):
-    """Doorways in world points (N, 3) -> [{"center": [x, y, z], "width", "normal": [nx, ny, 0]}], normal towards cam_pos.
-    z of the centre is DOOR_Z (not measured). Points behind a gap are not wall inliers, so they cannot close it."""
+def _density_gaps(t, c=None):
+    """Gaps (a, b) along sorted wall positions t (m) found by density, not by the distance between neighbouring points.
+    Histogram in bins of max(BIN_M, median point spacing) (so a sparse single-frame wall with 0.15 m spacing is not full of
+    gaps). A bin is wall when its count >= WALL_FRAC * the median count over occupied bins (a few stray points inside a
+    doorway in a dense stack stay below that; for a sparse wall, median ~1, any point counts). A gap is a run of non-wall bins
+    between wall bins with width in [MIN_W, MAX_W]; it needs wall density on both sides (see _runs_to_gaps)."""
+    c = c or _cfg()
+    sp = np.diff(t)
+    bw = max(c["BIN_M"], float(np.median(sp)) if len(sp) else c["BIN_M"])
+    nb = int(np.ceil((t[-1] - t[0]) / bw)) + 1
+    cnt = np.bincount(np.minimum(((t - t[0]) / bw).astype(int), nb - 1), minlength=nb)
+    wall = cnt >= max(c["WALL_FRAC"] * np.median(cnt[cnt > 0]), 1e-9)
+    return [(a, b) for a, b, _, _ in _runs_to_gaps(wall, t[0], bw, c)]
+
+
+def prepare(points, sensors, params=None):
+    """Points in the height band -> top-down xy (the line finder ignores the sensors)."""
+    c = _cfg(params)
     pts = np.asarray(points, dtype=float).reshape(-1, 3)
     pts = pts[np.isfinite(pts).all(1)]
-    pts = pts[(pts[:, 2] >= Z_MIN) & (pts[:, 2] <= Z_MAX)]
-    xy = pts[:, :2]
-    cam = np.asarray(cam_pos, dtype=float)
+    return pts[(pts[:, 2] >= c["Z_MIN"]) & (pts[:, 2] <= c["Z_MAX"])][:, :2]
+
+
+def fit_walls(xy, params=None):
+    """Up to MAX_WALLS dominant lines (depends on INLIER_TOL, RANSAC settings, MIN_WALL_*, not on the gap thresholds):
+    [{"p", "d", "t" (sorted inlier positions along d)}]."""
+    c = _cfg(params)
     rng = np.random.default_rng(0)
     out = []
-    for _ in range(MAX_WALLS):
-        if len(xy) < MIN_WALL_PTS:
+    for _ in range(int(c["MAX_WALLS"])):
+        if len(xy) < c["MIN_WALL_PTS"]:
             break
-        fit = _fit_line(xy, rng)
+        fit = _fit_line(xy, rng, c)
         if fit is None:
             break
         p, d, mask = fit
-        if mask.sum() < MIN_WALL_PTS:
+        if mask.sum() < c["MIN_WALL_PTS"]:
             break
         t = (xy[mask] - p) @ d
         t.sort()
-        if t[-1] - t[0] >= MIN_WALL_LEN:
-            nrm = np.array([-d[1], d[0]])
-            for a, b in _density_gaps(t):
-                c = p + d * (a + b) / 2
-                n = nrm if (cam[:2] - c) @ nrm >= 0 else -nrm
-                out.append({"center": [float(c[0]), float(c[1]), DOOR_Z], "width": float(b - a), "normal": [float(n[0]), float(n[1]), 0.0]})
+        if t[-1] - t[0] >= c["MIN_WALL_LEN"]:
+            out.append({"p": p, "d": d, "t": t})
         xy = xy[~mask]
     return out
+
+
+def doorways(walls, cam_pos, params=None):
+    """Gaps of the fitted walls -> [{"center", "width", "normal"}] (normal towards cam_pos)."""
+    c = _cfg(params)
+    cam = np.asarray(cam_pos, dtype=float)
+    out = []
+    for w in walls:
+        p, d = w["p"], w["d"]
+        nrm = np.array([-d[1], d[0]])
+        for a, b in _density_gaps(w["t"], c):
+            ctr = p + d * (a + b) / 2
+            n = nrm if (cam[:2] - ctr) @ nrm >= 0 else -nrm
+            out.append({"center": [float(ctr[0]), float(ctr[1]), c["DOOR_Z"]], "width": float(b - a), "normal": [float(n[0]), float(n[1]), 0.0]})
+    return out
+
+
+def find(points, cam_pos, params=None):
+    """Doorways in world points (N, 3) -> [{"center": [x, y, z], "width", "normal": [nx, ny, 0]}], normal towards cam_pos.
+    z of the centre is DOOR_Z (not measured). Points behind a gap are not wall inliers, so they cannot close it.
+    params: dict overriding the module constants by name (MIN_W, INLIER_TOL, ...) for this call only."""
+    return doorways(fit_walls(prepare(points, None, params), params), cam_pos, params)
+
+
+def detection_metrics(rows):
+    """Recall / precision / F1 from score() rows. Recall over GT door rows that are open and in view (in_view missing = in
+    view). precision = found GT rows of ANY door / (those + false positives): a found closed or out-of-view door is no
+    false positive."""
+    gt = [r for r in rows if r.get("door") is not None]
+    want = [r for r in gt if str(r.get("state")) == "open" and r.get("in_view", True)]
+    tp = sum(1 for r in want if r["found"])
+    fn = len(want) - tp
+    fp = sum(1 for r in rows if r.get("false_positive"))
+    found_any = sum(1 for r in gt if r["found"])
+    rec = tp / len(want) if want else 0.0
+    prec = found_any / (found_any + fp) if found_any + fp else 0.0
+    f1 = 2 * rec * prec / (rec + prec) if rec + prec else 0.0
+    return {"recall": rec, "precision": prec, "f1": f1, "tp": tp, "fp": fp, "fn": fn}
 
 
 def ground_truth(meta):
@@ -262,12 +317,69 @@ def _camera_K(root):
     return k["K"] if isinstance(k, dict) else k
 
 
+TUNE_GRIDS = {  # --tune: small grids over the main thresholds (defaults first-ish: ties keep the defaults)
+    "line": {"INLIER_TOL": [0.1, 0.15], "WALL_FRAC": [0.2, 0.1, 0.4], "MIN_SUPPORT_FRAC": [0.3, 0.15, 0.5],
+             "_width": [{"MIN_W": 0.6, "MAX_W": 1.3}, {"MIN_W": 0.5, "MAX_W": 1.5}]},                      # 36 combos
+    "grid": {"INLIER_TOL": [0.1, 0.15], "LAMBDA": [0.3, 0.1, 1.0], "WALL_FRAC": [0.2, 0.1, 0.4],
+             "MIN_SUPPORT_FRAC": [0.3, 0.15, 0.5]},                                                          # 54 combos
+}
+
+
+def _combos(finder):
+    import itertools
+    g = TUNE_GRIDS[finder]
+    keys = list(g)
+    out = []
+    for vals in itertools.product(*[g[k] for k in keys]):
+        d = {}
+        for k, v in zip(keys, vals):
+            d.update(v if k == "_width" else {k: v})
+        out.append(d)
+    return out
+
+
+class _Finder:
+    """The two finders behind one interface: prepare (points, sensors) -> data, walls (depends on INLIER_TOL), doorways."""
+    def __init__(self, name):
+        self.name = name
+        if name == "grid":
+            from doorsim import radar_grid as m
+            self.prepare, self.walls, self.doorways = m.prepare, m.fit_walls, m.doorways
+        else:
+            self.prepare, self.walls, self.doorways = prepare, fit_walls, doorways
+
+    def find(self, pts, sens, cam_pos, params=None):
+        return self.doorways(self.walls(self.prepare(pts, sens, params), params), cam_pos, params)
+
+
+def _sens(pts, cam):
+    return np.tile(np.asarray(cam["world_position"], float), (len(pts), 1))
+
+
+def _tuned(path, model, n):
+    if not path:
+        return None
+    return json.loads(pathlib.Path(path).read_text()).get(model, {}).get(str(n))
+
+
+def _tune_report(tuned, fin, results):
+    """results {(model, n): [(params, metrics)]}; keep the best F1 (first = defaults wins ties)."""
+    print(f"\n== tuning {fin} on this split: best F1 per model x views (defaults: first combo)")
+    print(f"{'model':<8}{'views':>6}{'F1 def':>8}{'F1 best':>9}{'recall':>8}{'prec':>7}  best params")
+    for (m, n), lst in sorted(results.items()):
+        base = lst[0][1]
+        best = max(lst, key=lambda x: x[1]["f1"] + (1e-9 if x is lst[0] else 0))
+        tuned.setdefault(m, {})[str(n)] = best[0]
+        print(f"{m:<8}{n:>6}{base['f1']:>8.3f}{best[1]['f1']:>9.3f}{best[1]['recall']:>8.2f}{best[1]['precision']:>7.2f}  {best[0]}")
+
+
 def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
     from PIL import Image
     from doorsim import effects
     ns = sorted(set(args.views))
     windows = view_windows({n: metas[n] for n in names}, ns)
     cache = {}  # (frame, model) -> points; each frame's points are computed once per model
+    fin = _Finder(args.finder)
 
     def points(name, m):
         if (name, m) in cache:
@@ -296,6 +408,8 @@ def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
     keys = [f"{m}@{n}" for m in models for n in ns]
     rows_by_model = {k: [] for k in keys}
     nfr = {k: 0 for k in keys}
+    combos = _combos(args.finder) if args.tune else None
+    tune_rows = {(m, n): [[] for _ in combos] for m in models for n in ns} if combos else None
     out = None
     if args.out:
         pathlib.Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -309,26 +423,57 @@ def _run_views(args, ds, root, metas, names, K, models, radar, mats_cache):
         cam_pos = metas[target]["camera"]["world_position"]
         gt = ground_truth(metas[target])
         tdepth = effects.depth_m(root / "frames" / target / "radar_depth.png")
+        iv = {name: bool(in_view(g, metas[target]["camera"], K, tdepth)) for name, g in gt.items()}
         for m in models:
             for n in ns:
                 fr = windows[n][k][1]
                 pts = np.vstack([points(f, m) for f in fr])
-                rows = score(find(pts, cam_pos), gt, cam_pos)
-                _mark_in_view(rows, gt, metas[target]["camera"], K, tdepth)
+                sens = np.vstack([_sens(points(f, m), metas[f]["camera"]) for f in fr])
+                if combos:
+                    cache_w = {}
+                    data = fin.prepare(pts, sens, None)
+                    for ci, prm in enumerate(combos):
+                        tk = prm.get("INLIER_TOL")
+                        if tk not in cache_w:
+                            cache_w[tk] = fin.walls(data, {"INLIER_TOL": tk} if tk else None)
+                        rows = score(fin.doorways(cache_w[tk], cam_pos, prm), gt, cam_pos)
+                        for r in rows:
+                            if r["door"] is not None:
+                                r["in_view"] = iv[r["door"]]
+                        tune_rows[m, n][ci] += rows
+                    continue
+                prm = _tuned(args.params, m, n)
+                rows = score(fin.find(pts, sens, cam_pos, prm), gt, cam_pos)
+                for r in rows:
+                    if r["door"] is not None:
+                        r["in_view"] = iv[r["door"]]
                 key = f"{m}@{n}"
                 nfr[key] += 1
                 rows_by_model[key] += rows
                 if out:
                     for r in rows:
-                        out.write(json.dumps({"frame": target, "model": m, "views": n, **r}) + "\n")
-        if (k + 1) % 100 == 0:
+                        out.write(json.dumps({"frame": target, "model": m, "views": n, "finder": args.finder, **r}) + "\n")
+        if (k + 1) % 50 == 0:
             print(f"{k + 1}/{len(targets)} targets", flush=True)
     if out:
         out.close()
     print(f"{used}/{len(targets)} target windows complete (all views rendered)")
+    if combos:
+        results = {key: [(prm, detection_metrics(rows)) for prm, rows in zip(combos, lst)] for key, lst in tune_rows.items()}
+        tuned = {}
+        _tune_report(tuned, args.finder, results)
+        path = pathlib.Path(args.tune_out or f"runs/radar/tuned_{args.finder}.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(tuned, indent=1))
+        print(f"wrote {path}")
+        return
     summarize(rows_by_model, nfr)
     view_table(rows_by_model, models, ns)
     view_table(rows_by_model, models, ns, in_view_only=True)
+    print("\nprecision / F1 (open in view; precision counts false positives):")
+    for key, rows in rows_by_model.items():
+        d = detection_metrics(rows)
+        print(f"  {key:<12} recall={d['recall']:.2f} precision={d['precision']:.2f} f1={d['f1']:.2f} (tp={d['tp']} fp={d['fp']} fn={d['fn']})")
 
 
 def main():
@@ -343,7 +488,16 @@ def main():
     ap.add_argument("--views", nargs="+", type=int, default=None,
                     help="also stack the points of the last n views of the same scene (world coordinates), e.g. 1 3 10; "
                          "all n are scored on the same target frames; models are reported as name@n")
+    ap.add_argument("--finder", choices=["line", "grid"], default="line", help="line = RANSAC wall + density gaps; grid = occupancy grid (radar_grid)")
+    ap.add_argument("--tune", action="store_true", help="grid search of the main thresholds (use with --split val), best F1 per model x views "
+                                                      "-> runs/radar/tuned_<finder>.json")
+    ap.add_argument("--tune-out", default=None)
+    ap.add_argument("--params", default=None, help="JSON {model: {views: params}} from --tune; missing -> defaults")
     args = ap.parse_args()
+    if args.tune and not args.views:
+        args.views = [1]
+    if args.tune and args.split not in ("val", "validation"):
+        print("warning: --tune should run on the val split (never tune on test)", file=sys.stderr)
 
     from PIL import Image
     from doorsim import effects
@@ -363,6 +517,7 @@ def main():
     if args.views:
         _run_views(args, ds, root, metas, names, K, models, radar, mats_cache)
         return
+    fin = _Finder(args.finder)
     rows_by_model = {m: [] for m in models}
     nfr = {m: 0 for m in models}
     out = None
@@ -390,13 +545,13 @@ def main():
                 rng = np.random.default_rng(zlib.crc32(f"{name}".encode()))
                 res = radar.simulate(depth, seg, noglass, K, cam, radar.MODELS[m], mats_cache[wf], rng)
                 pts = res["points"] if isinstance(res, dict) else res
-            rows = score(find(pts, cam["world_position"]), gt, cam["world_position"])
+            rows = score(fin.find(pts, _sens(pts, cam), cam["world_position"], _tuned(args.params, m, 1)), gt, cam["world_position"])
             _mark_in_view(rows, gt, cam, K, depth)
             nfr[m] += 1
             rows_by_model[m] += rows
             if out:
                 for r in rows:
-                    out.write(json.dumps({"frame": name, "model": m, **r}) + "\n")
+                    out.write(json.dumps({"frame": name, "model": m, "finder": args.finder, **r}) + "\n")
         if (k + 1) % 100 == 0:
             print(f"{k + 1}/{len(names)} frames", flush=True)
     if out:

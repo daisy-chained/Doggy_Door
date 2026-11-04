@@ -1,0 +1,62 @@
+{
+ "clean": {
+  "1": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 0.3,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.15
+  },
+  "3": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.1,
+   "MIN_SUPPORT_FRAC": 0.3
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 0.3,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.5
+  }
+ },
+ "imaging": {
+  "1": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.15
+  },
+  "3": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.3
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.4,
+   "MIN_SUPPORT_FRAC": 0.5
+  }
+ },
+ "single": {
+  "1": {
+   "INLIER_TOL": 0.15,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.3
+  },
+  "3": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.15
+  },
+  "10": {
+   "INLIER_TOL": 0.1,
+   "LAMBDA": 1.0,
+   "WALL_FRAC": 0.2,
+   "MIN_SUPPORT_FRAC": 0.5
+  }
+ }
+}
