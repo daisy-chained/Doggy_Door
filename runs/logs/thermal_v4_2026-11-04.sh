@@ -7,6 +7,7 @@ R=$HOME/git/Doggy_Door; L=$R/runs/logs/thermal_v4_2026-11-04; PY=$R/train/.venv/
 mkdir -p "$L" $S
 log() { echo "$(date +%H:%M:%S) $*" | tee -a "$L/steps.txt"; }
 step() { local name=$1; shift; log "START $name"; if "$@" > "$L/$name.log" 2>&1; then log "OK    $name"; else log "FAIL  $name (see $name.log)"; return 1; fi; }
+set +u; source /opt/ros/jazzy/setup.bash; set -u   # gz Python bindings
 cd "$R"
 HEAVY_PID=${HEAVY_PID:-}
 
