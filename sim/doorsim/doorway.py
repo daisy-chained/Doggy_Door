@@ -14,8 +14,16 @@ NEAR = 0.05    # m: points closer than this to the camera plane are not projecte
 N_ALONG, N_UP = 41, 81
 
 
-def box(meta, door, K, depth):
-    """-> {"box": {x_min, y_min, x_max, y_max} inclusive pixel indices, "visible_fraction"} or None when not visible."""
+def own_ids(meta, door):
+    """Segmentation ids of the door itself: its panel, parts (glass) and handles. They never hide its own doorway."""
+    objs = meta["objects"]
+    return [objs[door]["id"]] + [o["id"] for o in objs.values() if o.get("part_of") == door or o.get("door") == door]
+
+
+def box(meta, door, K, depth, seg=None):
+    """-> {"box": {x_min, y_min, x_max, y_max} inclusive pixel indices, "visible_fraction"} or None when not visible.
+    seg (optional, same size): pixels of the door's own panel / glass / handles count as visible (a sliding panel hung on
+    the camera's face sits in front of the wall face but is still in its doorway)."""
     o = meta["objects"][door]
     a = o["approach"][meta["side"]]
     p, d = np.array(a["point"], float), np.array(a["direction"], float)
@@ -38,6 +46,8 @@ def box(meta, door, K, depth):
     u, v, zc, inside = np.clip(uf, 0, W - 1)[ok].astype(int), np.clip(vf, 0, H - 1)[ok].astype(int), zc[ok], inside[ok]
     dv = depth[v, u]
     vis = ~np.isfinite(dv) | (dv <= 0) | (dv >= zc - TOL)
+    if seg is not None:
+        vis |= np.isin(seg[v, u], own_ids(meta, door))
     if not (vis & inside).any():
         return None
     u, v = u[vis], v[vis]

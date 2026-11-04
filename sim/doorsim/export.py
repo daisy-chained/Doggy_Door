@@ -76,8 +76,9 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
         if doorway:
             f = src / "frames" / frame
             depth = np.asarray(Image.open(f / ("depth_gt.png" if (f / "depth_gt.png").exists() else "depth.png")), np.float32) / 1000.0
+            seg = np.asarray(Image.open(f / "seg.png")) if (f / "seg.png").exists() else None
             for name, o in meta["objects"].items():
-                r = dw.box(meta, name, K, depth) if o.get("class") == 1 and "approach" in o else None
+                r = dw.box(meta, name, K, depth, seg) if o.get("class") == 1 and "approach" in o else None
                 if r:
                     items.append((f"{name}_doorway", o, r["box"], {"door": name, "visible_fraction": r["visible_fraction"]}))
         for name, o, b, extra in items:

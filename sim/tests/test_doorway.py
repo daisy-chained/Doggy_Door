@@ -117,3 +117,15 @@ def test_export_without_doorway_is_unchanged(tmp_path):
     export.export(src, tmp_path / "ex")
     coco = json.loads((tmp_path / "ex" / "coco" / "test.json").read_text())
     assert all(c["id"] != 3 for c in coco["categories"])
+
+
+def test_own_panel_does_not_hide_the_doorway():
+    """A sliding panel hung on the camera's face sits in front of the wall face: with the segmentation it still counts."""
+    meta, _ = v4_meta()
+    depth = np.full((H, W), 2.85, np.float32)  # panel 10 cm in front of the wall face over the whole view
+    assert doorway.box(meta, "door_a", K, depth) is None  # without seg: hidden
+    seg = np.full((H, W), meta["objects"]["door_a"]["id"], np.uint16)
+    got = doorway.box(meta, "door_a", K, depth, seg)
+    assert got["visible_fraction"] == pytest.approx(1.0, abs=0.02)
+    other = np.full((H, W), meta["objects"]["door_b"]["id"], np.uint16)  # someone else's panel still hides it
+    assert doorway.box(meta, "door_a", K, depth, other) is None
