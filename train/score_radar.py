@@ -1,7 +1,8 @@
-"""usage: train/.venv/bin/python train/score_radar.py <run> <radar export dir> [--split test] [--thr-split val] [--out radar.json]
+"""usage: train/.venv/bin/python train/score_radar.py <run> <radar export dir> [--split test] [--thr-split val] [--select f1|f1_strict] [--out radar.json]
 Scores a doorway detector trained on a radar BEV export (sim/doorsim/radar_export.py) the way the geometric finders are scored
 (radar_doorways): predicted boxes -> doorway centres in world metres (radar_heatmap.bev_to_world), matched to the open/closed doorway
-truth of the target frame. The score threshold maximises F1 on --thr-split, then applies to --split. Also COCO mAP on --split."""
+truth of the target frame. The score threshold maximises F1 (or --select f1_strict: a found closed door counts as wrong) on --thr-split,
+then applies to --split. Also COCO mAP on --split."""
 import argparse, json, pathlib, sys
 import numpy as np
 HERE = pathlib.Path(__file__).resolve().parent
@@ -47,6 +48,7 @@ def main():
     ap.add_argument("export")
     ap.add_argument("--split", default="test")
     ap.add_argument("--thr-split", default="val")
+    ap.add_argument("--select", default="f1", choices=("f1", "f1_strict"))
     ap.add_argument("--out")
     a = ap.parse_args()
     from doordet import evaluate, score
@@ -56,15 +58,16 @@ def main():
     K = rd._camera_K(src)
     ds_v, pv, _ = score.predict_run(a.run, a.export, a.thr_split)
     sweep = {float(t): metrics(rows_for(ds_v, pv, float(t), info, src, K)) for t in GRID}
-    thr = max(sweep, key=lambda t: (sweep[t]["f1"], -t))  # ties: the lower threshold
+    thr = max(sweep, key=lambda t: (sweep[t][a.select], -t))  # ties: the lower threshold
     ds, preds, _ = score.predict_run(a.run, a.export, a.split)
     m = metrics(rows_for(ds, preds, thr, info, src, K))
     coco = evaluate.coco_metrics(ds.gt_path, preds)
     res = {"run": a.run, "export": a.export, "model": info["model"], "views": info["views"], "split": a.split, "thr_split": a.thr_split,
-           "threshold": thr, "images": len(ds), "metrics": m, "coco": coco, "f1_by_threshold": {str(t): s["f1"] for t, s in sweep.items()}}
+           "threshold": thr, "select": a.select, "images": len(ds), "metrics": m, "coco": coco, "f1_by_threshold": {str(t): s["f1"] for t, s in sweep.items()}}
     print(f"{pathlib.Path(a.run.rstrip('/')).name} on {a.split} ({info['model']}, {info['views']} views), threshold {thr:.2f} (best F1 on {a.thr_split})")
     print(f"  open doors in view: recall={m['recall']:.2f} precision={m['precision']:.2f} F1={m['f1']:.2f} (tp={m['tp']} fp={m['fp']} fn={m['fn']})")
     err = m["centre_err_median_m"]
+    print(f"  strict (found closed door = wrong): precision={m['precision_strict']:.2f} F1={m['f1_strict']:.2f} closed doors found={m['closed_found']}")
     print(f"  centre error median: {'-' if err is None else f'{err:.2f} m'} (n={m['centre_err_n']})")
     print(f"  COCO map={coco['map']:.3f} map_50={coco.get('map_50', float('nan')):.3f}")
     if a.out:

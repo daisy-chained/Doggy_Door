@@ -170,7 +170,12 @@ def detection_metrics(rows):
     rec = tp / len(want) if want else 0.0
     prec = found_any / (found_any + fp) if found_any + fp else 0.0
     f1 = 2 * rec * prec / (rec + prec) if rec + prec else 0.0
-    return {"recall": rec, "precision": prec, "f1": f1, "tp": tp, "fp": fp, "fn": fn}
+    # strict (2026-11-06): a found closed door is wrong too (a radar that calls a closed door an opening misleads the robot)
+    found_open = sum(1 for r in gt if r["found"] and str(r.get("state")) == "open")
+    closed = sum(1 for r in gt if r["found"] and str(r.get("state")) != "open")
+    ps = found_open / (found_any + fp) if found_any + fp else 0.0
+    fs = 2 * rec * ps / (rec + ps) if rec + ps else 0.0
+    return {"recall": rec, "precision": prec, "f1": f1, "tp": tp, "fp": fp, "fn": fn, "precision_strict": ps, "f1_strict": fs, "closed_found": closed}
 
 
 def ground_truth(meta):

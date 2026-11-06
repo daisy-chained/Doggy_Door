@@ -89,6 +89,34 @@ def process(task):
     return task, anns
 
 
+def closed_as_negatives(coco):
+    """Copy of a radar COCO dict where closed doors in view have no box (background: punished if detected) instead of an ignore
+    box. Out-of-view / hidden doors stay ignore. (2026-11-06 sanity check, Claude: with closed = ignore the learned detector
+    also "found" 32-67 % of closed doors.)"""
+    out = dict(coco)
+    out["annotations"] = [dict(a) for a in coco["annotations"]
+                          if not (a["attributes"].get("state") != "open" and a["attributes"].get("in_view"))]
+    return out
+
+
+def relabel_closed(src, out):
+    """Radar export -> new export with closed_as_negatives labels; images are a symlink to the source's (no re-render)."""
+    src, out = pathlib.Path(src).resolve(), pathlib.Path(out).resolve()
+    if (out / "export.json").exists():
+        raise FileExistsError(f"{out} already has an export; pick another --out")
+    (out / "coco").mkdir(parents=True, exist_ok=True)
+    if not (out / "images").exists():
+        (out / "images").symlink_to(src / "images")
+    for f in sorted((src / "coco").glob("*.json")):
+        (out / "coco" / f.name).write_text(json.dumps(closed_as_negatives(json.loads(f.read_text()))))
+    info = json.loads((src / "export.json").read_text())
+    info.setdefault("labels", {})["closed"] = "negative"
+    info["labels"]["closed_note"] = "closed doors in view have no box (background); out-of-view / hidden stay ignore (sanity check 2026-11-06)"
+    info["relabelled_from"] = str(src)
+    (out / "export.json").write_text(json.dumps(info, indent=2) + "\n")
+    return out
+
+
 def export_radar(src, out, model, views, size_m=8.0, res=0.05, workers=None, limit=None):
     from doorsim import radar_doorways as rd
     src, out = pathlib.Path(src).resolve(), pathlib.Path(out).resolve()
