@@ -1,4 +1,5 @@
-"""Door property + handle type classifier on box crops: shared backbone, one linear head per property, temperature-scaled confidence."""
+"""Door property + handle type classifier on box crops: shared backbone, one linear head per property, temperature-scaled confidence.
+Input: the rgb crop, the depth-derived dha crop (depth / height / normal angle, data.encode_depth) or both stacked (rgb_dha, 6 channels)."""
 import datetime, json, math, pathlib, random
 import numpy as np
 import torch
@@ -8,16 +9,20 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from .config import REPO
+from .data import load_input
 from .loop import flatten, git_info
 
 HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "right", "none"], "glass": ["no", "yes"]},
          "handle": {"handle_type": ["lever", "knob", "flush_pull"]}}
 CATEGORY = {"door": 1, "handle": 2}
 MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
+DHA_MEAN, DHA_STD = 0.5, 0.25  # dha channels are 0..255 maps, not photos
+CHANNELS = {"rgb": 3, "dha": 3, "rgb_dha": 6}
 BACKBONES = ("resnet18", "resnet34", "mobilenet_v3_small", "mobilenet_v3_large", "efficientnet_b0")
 PER_CROP = {"imgsz": {"door": 224, "handle": 96}, "margin": {"door": 0.1, "handle": 0.5}, "min_px": {"door": 16, "handle": 6}}
 DEFAULTS = {
     "export": None, "crop": None,  # required: exporter output folder, "door" or "handle"
+    "input": "rgb",  # rgb | dha | rgb_dha (dha: depth, height above floor, normal angle)
     "heads": None,  # None -> all heads of the crop
     "backbone": "resnet18", "pretrained": True, "imgsz": None, "margin": None, "min_px": None,  # None -> per-crop default
     "jitter": {"shift": 0.1, "scale": 0.15},  # train-time crop shift / scale, fractions of the long box side
@@ -46,6 +51,8 @@ def resolve(d):
         raise ValueError("config key 'export' is required")
     if cfg["crop"] not in HEADS:
         raise ValueError(f"config key 'crop' must be one of {', '.join(HEADS)}")
+    if cfg["input"] not in CHANNELS:
+        raise ValueError(f"unknown input {cfg['input']!r}; available: {', '.join(CHANNELS)}")
     if cfg["backbone"] not in BACKBONES:
         raise ValueError(f"unknown backbone {cfg['backbone']!r}; available: {', '.join(BACKBONES)}")
     avail = list(HEADS[cfg["crop"]])
@@ -78,19 +85,29 @@ def crop_box(bbox, margin, rng, jitter):
     return cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2
 
 
-def crop_tensor(img, box, imgsz):
+def crop_tensor(img, box, imgsz, mean=MEAN, std=STD):
     """Crop box (x0, y0, x1, y1) of a PIL image -> normalised 3 x imgsz x imgsz tensor."""
     # transform maps output pixels to source coordinates, so outside the image the crop is zero padded
     s = (box[2] - box[0]) / imgsz
     crop = img.transform((imgsz, imgsz), Image.AFFINE, (s, 0, box[0], 0, s, box[1]), Image.BILINEAR, fillcolor=(0, 0, 0))
-    x = (np.asarray(crop, np.float32) / 255 - MEAN) / STD
+    x = (np.asarray(crop, np.float32) / 255 - mean) / std
     return torch.from_numpy(x).permute(2, 0, 1).contiguous()
 
 
+def input_tensor(path, box, imgsz, input, K_cache=None):
+    """Export image path -> crop tensor of the run's input: rgb (ImageNet norm), dha (DHA_MEAN / DHA_STD) or both stacked."""
+    parts = []
+    if input in ("rgb", "rgb_dha"):
+        parts.append(crop_tensor(load_input(path, "rgb"), box, imgsz))
+    if input in ("dha", "rgb_dha"):
+        parts.append(crop_tensor(load_input(path, "dha", K_cache), box, imgsz, DHA_MEAN, DHA_STD))
+    return torch.cat(parts)
+
+
 class CropDataset(Dataset):
-    """Crops of door or handle boxes from a COCO export; item = (normalised 3 x imgsz x imgsz tensor, {head: class index})."""
-    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0):
-        self.root, self.imgsz, self.margin, self.jitter = pathlib.Path(export_dir), imgsz, margin, jitter
+    """Crops of door or handle boxes from a COCO export; item = (normalised C x imgsz x imgsz tensor, {head: class index}), C = CHANNELS[input]."""
+    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb"):
+        self.root, self.imgsz, self.margin, self.jitter, self.input, self._K = pathlib.Path(export_dir), imgsz, margin, jitter, input, {}
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
         files = {im["id"]: im["file_name"] for im in coco["images"]}
@@ -110,8 +127,8 @@ class CropDataset(Dataset):
 
     def __getitem__(self, i):
         fn, bbox, y = self.items[i]
-        box = crop_box(bbox, self.margin, self.rng, self.jitter)
-        return crop_tensor(Image.open(self.root / fn).convert("RGB"), box, self.imgsz), y
+        box = crop_box(bbox, self.margin, self.rng, self.jitter)  # one box for every image of the input
+        return input_tensor(self.root / fn, box, self.imgsz, self.input, self._K), y
 
 
 def reseed_worker(worker_id):
@@ -121,16 +138,31 @@ def reseed_worker(worker_id):
     info.dataset.rng = np.random.default_rng(torch.initial_seed() % 2**32)
 
 
+def widen_stem(conv, in_ch):
+    """First conv with in_ch inputs: the rgb weights are kept, extra channels start as the mean of the rgb weights (the usual way to add depth channels to a pretrained net)."""
+    if in_ch == conv.in_channels:
+        return conv
+    new = nn.Conv2d(in_ch, conv.out_channels, conv.kernel_size, conv.stride, conv.padding, conv.dilation, conv.groups, conv.bias is not None)
+    with torch.no_grad():
+        new.weight[:, :conv.in_channels] = conv.weight
+        new.weight[:, conv.in_channels:] = conv.weight.mean(1, keepdim=True)
+        if conv.bias is not None:
+            new.bias.copy_(conv.bias)
+    return new
+
+
 class Model(nn.Module):
     """torchvision backbone (classifier removed, global pool) + one linear layer per head."""
-    def __init__(self, backbone, heads, pretrained):
+    def __init__(self, backbone, heads, pretrained, in_ch=3):
         super().__init__()
         import torchvision.models as tvm
         net = getattr(tvm, backbone)(weights="DEFAULT" if pretrained else None)
         if backbone.startswith("resnet"):
+            net.conv1 = widen_stem(net.conv1, in_ch)
             dim, net.fc = net.fc.in_features, nn.Identity()
         else:
-            dim = next(m for m in reversed(net.classifier) if isinstance(m, nn.Linear)).in_features
+            net.features[0][0] = widen_stem(net.features[0][0], in_ch)
+            dim = next(m for m in net.classifier if isinstance(m, nn.Linear)).in_features  # the first Linear sees the pooled features
             net.classifier = nn.Identity()
         self.backbone = net
         self.heads = nn.ModuleDict({h: nn.Linear(dim, len(c)) for h, c in heads.items()})
@@ -188,14 +220,14 @@ def train(cfg, run_name=None):
     out = pathlib.Path(cfg["out"]) / run_name
     out.mkdir(parents=True, exist_ok=True)
 
-    kw = {k: cfg[k] for k in ("imgsz", "margin", "min_px")}
+    kw = {k: cfg[k] for k in ("imgsz", "margin", "min_px", "input")}
     sets = {s: CropDataset(export, s, crop, jitter=cfg["jitter"] if s == "train" else None, seed=seed, **kw) for s in ("train", "val", "test")}
     gen = torch.Generator().manual_seed(seed)
     mk = lambda s, shuffle: DataLoader(sets[s], batch_size=cfg["batch"], shuffle=shuffle, num_workers=cfg["workers"], generator=gen if shuffle else None,
                                        worker_init_fn=reseed_worker)
     loaders = {s: mk(s, s == "train") for s in sets}
     classes = {h: HEADS[crop][h] for h in heads}
-    model = Model(cfg["backbone"], classes, cfg["pretrained"]).to(device)
+    model = Model(cfg["backbone"], classes, cfg["pretrained"], CHANNELS[cfg["input"]]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     total = max(cfg["epochs"] * len(loaders["train"]), 1)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
@@ -206,7 +238,7 @@ def train(cfg, run_name=None):
     export_info = json.loads((export / "export.json").read_text()) if (export / "export.json").exists() else {}
     src = export_info.get("source") or {}
     best = {"value": -1.0, "epoch": None, "state": None}
-    meta = lambda temps: {"heads": classes, "backbone": cfg["backbone"], "imgsz": cfg["imgsz"], "crop": crop, "margin": cfg["margin"], "temperature": temps}
+    meta = lambda temps: {"heads": classes, "backbone": cfg["backbone"], "imgsz": cfg["imgsz"], "crop": crop, "margin": cfg["margin"], "input": cfg["input"], "temperature": temps}
     (out / "best").mkdir(exist_ok=True)
     with mlflow.start_run(run_name=run_name) as run:
         params = dict(flatten(cfg))
@@ -271,11 +303,12 @@ def train(cfg, run_name=None):
 
 
 def load(run_dir, device="cpu"):
-    """Trained props run -> (model in eval mode, heads.json meta: heads, backbone, imgsz, crop, margin, temperature; config.json keys min_px)."""
+    """Trained props run -> (model in eval mode, heads.json meta: heads, backbone, imgsz, crop, margin, input, temperature; config.json keys min_px)."""
     run_dir = pathlib.Path(run_dir)
     meta = json.loads((run_dir / "best" / "heads.json").read_text())
     meta["min_px"] = json.loads((run_dir / "config.json").read_text())["min_px"]
-    model = Model(meta["backbone"], meta["heads"], pretrained=False)
+    meta["input"] = meta.get("input", "rgb")  # runs from before the input option
+    model = Model(meta["backbone"], meta["heads"], pretrained=False, in_ch=CHANNELS[meta["input"]])
     model.load_state_dict(torch.load(run_dir / "best" / "model.pt", map_location="cpu"))
     return model.to(device).eval(), meta
 
@@ -288,7 +321,7 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
     from .evaluate import match
     model, meta = load(run_dir, "cpu")
     crop, heads, imgsz = meta["crop"], list(meta["heads"]), meta["imgsz"]
-    ds = CropDataset(export_dir, split, crop, imgsz, meta["margin"], meta["min_px"])
+    ds = CropDataset(export_dir, split, crop, imgsz, meta["margin"], meta["min_px"], input=meta["input"])
     by_image = {}
     for i, image_id in enumerate(ds.image_ids):
         by_image.setdefault(image_id, []).append(i)
@@ -303,9 +336,9 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
         false += len(keep) - len(hit)
         if not hit:
             continue
-        img = Image.open(ds.root / ds.items[items[0]][0]).convert("RGB")
+        path = ds.root / ds.items[items[0]][0]
         for g, j in hit.items():
-            xs.append(crop_tensor(img, crop_box(xywh[j], meta["margin"], None, None), imgsz))
+            xs.append(input_tensor(path, crop_box(xywh[j], meta["margin"], None, None), imgsz, meta["input"], ds._K))
             ys.append(ds.items[items[g]][2])
             matched += 1
     out = {"crops": len(ds), "matched": matched, "missed": len(ds) - matched, "false": false}

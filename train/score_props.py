@@ -9,7 +9,7 @@ def true_box_acc(run, export, split):
     """Accuracy per head on the GT boxes (the dataset the run was trained with, no jitter)."""
     from torch.utils.data import DataLoader
     model, meta = props.load(run, "cpu")
-    ds = props.CropDataset(export, split, meta["crop"], meta["imgsz"], meta["margin"], meta["min_px"])
+    ds = props.CropDataset(export, split, meta["crop"], meta["imgsz"], meta["margin"], meta["min_px"], input=meta["input"])
     pr = props.predict(model, DataLoader(ds, batch_size=32), "cpu", list(meta["heads"]))
     return {f"acc_{h}": (lg.argmax(1) == lb).float().mean().item() for h, (lg, lb) in pr.items()}
 

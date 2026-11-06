@@ -65,6 +65,25 @@ def frame_dir(path):
     return (target if target.is_absolute() else path.parent / target).parent
 
 
+def load_input(path, kind, _K_cache=None):
+    """Export image path -> PIL RGB image of the input kind (rgb, depth, dha, thermal); intrinsics K from <dataset>/dataset.json, cached in _K_cache."""
+    path = pathlib.Path(path)
+    if kind == "rgb":
+        return Image.open(path).convert("RGB")
+    if kind == "thermal":
+        rgb = Image.open(path)
+        k = np.asarray(Image.open(frame_dir(path) / "thermal.png"), float) / 100  # uint16, 0.01 K
+        t = Image.fromarray(encode_thermal(k)).resize(rgb.size, Image.BILINEAR)
+        return Image.fromarray(np.asarray(t)[..., None].repeat(3, axis=2))
+    frame = frame_dir(path)  # the export's image is a symlink to <dataset>/frames/<frame>/rgb.png
+    ds = frame.parent.parent
+    cache = {} if _K_cache is None else _K_cache
+    if ds not in cache:
+        cache[ds] = json.loads((ds / "dataset.json").read_text())["camera_intrinsics"]["K"]
+    return Image.fromarray(encode_depth(np.asarray(Image.open(frame / "depth.png")), cache[ds],
+                                        json.loads((frame / "meta.json").read_text())["camera"], kind))
+
+
 class CocoDetection(Dataset):
     def __init__(self, export_dir, split, input="rgb"):
         self.input, self._K = input, {}
@@ -80,27 +99,11 @@ class CocoDetection(Dataset):
             self.anns[a["image_id"]].append({"bbox": list(a["bbox"]), "category_id": a["category_id"] - 1,
                                              "area": a["area"], "iscrowd": 0})
 
-    def K(self, dataset):
-        """Camera intrinsics K (9 floats) of a dataset folder, cached."""
-        if dataset not in self._K:
-            self._K[dataset] = json.loads((dataset / "dataset.json").read_text())["camera_intrinsics"]["K"]
-        return self._K[dataset]
-
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, i):
         im = self.images[i]
         path = self.root / im["file_name"]
-        if self.input == "rgb":
-            img = Image.open(path).convert("RGB")
-        elif self.input == "thermal":
-            rgb = Image.open(path)
-            k = np.asarray(Image.open(frame_dir(path) / "thermal.png"), float) / 100  # uint16, 0.01 K
-            t = Image.fromarray(encode_thermal(k)).resize(rgb.size, Image.BILINEAR)
-            img = Image.fromarray(np.asarray(t)[..., None].repeat(3, axis=2))
-        else:
-            frame = frame_dir(path)  # the export's image is a symlink to <dataset>/frames/<frame>/rgb.png
-            img = Image.fromarray(encode_depth(np.asarray(Image.open(frame / "depth.png")), self.K(frame.parent.parent),
-                                               json.loads((frame / "meta.json").read_text())["camera"], self.input))
+        img = load_input(path, self.input, self._K)
         return img, {"image_id": im["id"], "annotations": self.anns[im["id"]]}

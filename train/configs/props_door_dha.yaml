@@ -1,0 +1,7 @@
+# Property classifier on door crops with the depth-derived dha image next to the RGB crop, more margin so frame and wall are in view
+# (Madelief 2026-11-06, option A).
+#   train/.venv/bin/python train/train_props.py train/configs/props_door_dha.yaml [key=value ...]
+export: exports/door_room_v4_2k_fx_ign
+crop: door
+input: rgb_dha
+margin: 0.3
