@@ -1,7 +1,7 @@
 """Late fusion of detectors (Madelief 2026-11-04: RGB detector + depth detector): weighted box fusion, Solovyev et al. 2021
 (arXiv 1910.13302). Own ~40 lines instead of a dependency. Boxes of all models are clustered per label by IoU; a cluster becomes one
 box (coordinates averaged with the weighted scores) and its score = weighted mean over all models of each model's best score in it (absent = 0),
-so a box that only one model sees is scored down. Predictions: {"boxes" (N,4) xyxy, "scores" (N,), "labels" (N,)}."""
+so a box that only one model sees is scored down. fuse_runs can also take per-image model weights (adaptive fusion, quality.py). Predictions: {"boxes" (N,4) xyxy, "scores" (N,), "labels" (N,)}."""
 import numpy as np
 
 
@@ -37,7 +37,7 @@ def wbf(preds, weights=None, iou=0.55, skip=0.0):
             c = clusters[k]
             c["m"].append((m, s)); c["b"].append(b)
             ws = np.array([s_ * w[m_] for m_, s_ in c["m"]])
-            fused[k] = (np.array(c["b"]) * ws[:, None]).sum(0) / max(ws.sum(), 1e-9)
+            fused[k] = (np.array(c["b"]) * (ws / max(ws.sum(), 1e-9))[:, None]).sum(0)  # normalise first: a lone box stays exact
         for c, f in zip(clusters, fused):
             c["fused"] = f
         for c in clusters:
@@ -51,7 +51,10 @@ def wbf(preds, weights=None, iou=0.55, skip=0.0):
     return {"boxes": np.array([o[0] for o in out]), "scores": np.array([o[1] for o in out]), "labels": np.array([o[2] for o in out], int)}
 
 
-def fuse_runs(runs, weights=None, **kw):
-    """runs: one {image_id: prediction dict} per model -> {image_id: fused prediction dict} over the union of image ids."""
+def fuse_runs(runs, weights=None, image_weights=None, **kw):
+    """runs: one {image_id: prediction dict} per model -> {image_id: fused prediction dict} over the union of image ids.
+    image_weights: {image_id: [weight per model]}, multiplied with the model weights; images missing from it use the model weights only."""
     ids = sorted({i for r in runs for i in r})
-    return {i: wbf([r.get(i, empty()) for r in runs], weights, **kw) for i in ids}
+    w = np.ones(len(runs)) if weights is None else np.asarray(weights, float)
+    return {i: wbf([r.get(i, empty()) for r in runs], w * np.asarray(image_weights[i], float) if image_weights and i in image_weights else w, **kw)
+            for i in ids}

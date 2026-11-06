@@ -88,7 +88,8 @@ def test_scores_accept_pil_and_grey():
     from PIL import Image
     a = quality.scores(Image.fromarray(scene()), "rgb")
     b = quality.scores(scene()[..., 0], "rgb")
-    assert a == pytest.approx(quality.scores(scene(), "rgb")) == pytest.approx(b)
+    ref = quality.scores(scene(), "rgb")
+    assert a == pytest.approx(ref) and b == pytest.approx(ref)
 
 
 def test_unknown_kind():
