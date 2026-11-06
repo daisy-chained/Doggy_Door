@@ -80,7 +80,7 @@ def overconfident(n=400, seed=0):
     rng = np.random.default_rng(seed)
     s = rng.uniform(0.3, 0.99, n)
     size = rng.uniform(0.02, 0.6, n)
-    p_true = 1 / (1 + np.exp(-(1.5 * np.log(s / (1 - s)) - 1.0 + 4 * (size - 0.3))))
+    p_true = 1 / (1 + np.exp(-(0.4 * np.log(s / (1 - s)) + 4 * (size - 0.3))))  # too sharp scores (fixable by T) + size effect
     return [{"label": 0, "score": float(a), "correct": int(rng.random() < b), "cx": 0.5, "cy": 0.5, "w": float(z), "h": float(z)}
             for a, b, z in zip(s, p_true, size)]
 

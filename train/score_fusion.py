@@ -30,21 +30,13 @@ def parse(argv):
 
 def main():
     args = parse(sys.argv[1:])
-    import numpy as np
     from doordet import evaluate, fusion, score
     outs = [score.predict_run(r, args.export, args.split) for r in args.runs]
     ds, preds = outs[0][0], [o[1] for o in outs]
     iw, mean_w = None, [1.0] * len(args.runs)
     if args.adaptive:
         from doordet import quality
-        per_run = []  # per run: {image_id: weight}
-        for r in args.runs:
-            kind = json.loads((pathlib.Path(r) / "config.json").read_text()).get("input", "rgb")
-            ref, raw = quality.run_reference(r), quality.run_scores(r, args.export, args.split)
-            per_run.append({i: quality.weight(s, ref, kind, args.floor, args.power) for i, s in raw.items()})
-        ids = set.intersection(*(set(w) for w in per_run))
-        iw = {i: [w[i] for w in per_run] for i in ids}
-        mean_w = [float(np.mean([iw[i][m] for i in iw])) for m in range(len(args.runs))]
+        iw, mean_w = quality.adaptive_weights(args.runs, args.export, args.split, args.floor, args.power)
     fused = fusion.fuse_runs(preds, args.weights, image_weights=iw, iou=args.iou)
     names = [pathlib.Path(r.rstrip("/")).name for r in args.runs]
     res = {n: evaluate.coco_metrics(ds.gt_path, p) for n, p in (*zip(names, preds), ("fused", fused))}

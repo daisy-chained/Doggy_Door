@@ -52,3 +52,15 @@ def run_reference(run_dir, split="val"):
     """Reference of a run: computed on its training export's val images."""
     cfg = json.loads((pathlib.Path(run_dir) / "config.json").read_text())
     return reference(list(run_scores(run_dir, cfg["export"], split).values()))
+
+
+def adaptive_weights(runs, export_dir, split, floor=0.05, power=1.0):
+    """Per-image fusion weights of several runs -> ({image_id: [weight per run]} over images all runs have, mean weight per run)."""
+    per_run = []
+    for r in runs:
+        kind = json.loads((pathlib.Path(r) / "config.json").read_text()).get("input", "rgb")
+        ref, raw = run_reference(r), run_scores(r, export_dir, split)
+        per_run.append({i: weight(s, ref, kind, floor, power) for i, s in raw.items()})
+    ids = set.intersection(*(set(w) for w in per_run))
+    iw = {i: [w[i] for w in per_run] for i in ids}
+    return iw, [float(np.mean([iw[i][m] for i in iw])) for m in range(len(runs))]
