@@ -126,3 +126,70 @@ def test_cli_writes_json(tmp_path, monkeypatch):
     d = json.loads(out.read_text())
     assert {"true_boxes", "detector_boxes", "door_run", "handle_run", "type_run"} <= set(d)
     assert d["true_boxes"]["doors"] == 8
+
+
+# --- step B: hinges as their own detector class (Madelief 2026-11-07, "A then B") ---
+# Hinge boxes (class 3) are visible-only, so a hinge box at the door means the camera is on the pull side. Per hinged door:
+#   hinges seen (a hinge box whose centre lies in the door box widened by 10 % of its width per side) -> opening "pull"
+#   (opening_source "hinges"), and the hinge side from where they are (left of the door centre -> "left"), before the handle rule;
+#   no hinges seen -> the push / pull classifier (absence is ambiguous: out of view, occluded, smoke) and the handle rule as in A.
+# Scores add: hinges_seen (share of true-hinged doors called hinged with hinges seen), acc_pull_when_hinges_seen,
+# acc_push_pull_hinged_strict (no hinges seen -> push, the plain "hinges on my side?" rule).
+def test_hinges_near_the_door():
+    door = [100, 50, 80, 200]                               # x 100..180, widened by 8 px per side
+    assert cascade.hinges_near(door, [[95, 60, 3, 12], [178, 60, 3, 12], [300, 60, 3, 12]]) == [0, 1]
+    assert cascade.hinges_near(door, [[90, 60, 3, 12]]) == []    # centre x 91.5 < 92
+    assert cascade.hinges_near(door, []) == []
+    assert props.CATEGORY["hinge"] == 3
+
+
+def test_decide_with_hinges():
+    d = cascade.decide(0.2, "lever", (0.9, 0.1), "right", (0.5, 0.5), hinge_xs=[105.0], door_cx=140.0)
+    assert d["opening"] == "pull" and d["opening_source"] == "hinges"
+    assert d["hinge_side"] == "left" and d["hinge_source"] == "hinges"     # hinges before the handle rule
+    assert d["hinges_seen"] is True
+    d = cascade.decide(0.2, "lever", (0.9, 0.1), "right", (0.5, 0.5), hinge_xs=[], door_cx=140.0)
+    assert d["opening"] == "push" and d["opening_source"] == "classifier"
+    assert d["hinge_side"] == "right" and d["hinge_source"] == "rule" and d["hinges_seen"] is False
+    d = cascade.decide(0.9, None, (0.9, 0.1), None, (0.5, 0.5), hinge_xs=[105.0], door_cx=140.0)
+    assert d["door_type"] == "sliding" and d["opening"] == "slide"           # type first: hinges don't overrule it
+    # without hinge_xs (step A) the answer has no step-B keys
+    assert "hinges_seen" not in cascade.decide(0.2, None, (0.6, 0.4), None, (0.3, 0.7))
+
+
+def test_scores_with_hinges():
+    truth = [{"opening": "pull", "hinge_side": "left"}, {"opening": "push", "hinge_side": "left"},
+             {"opening": "pull", "hinge_side": "right"}, {"opening": "slide", "hinge_side": "none"}]
+    mk = lambda o, seen: {"door_type": "hinged", "type_source": "handle", "opening": o, "hinge_side": "left",
+                          "hinge_source": "hinges" if seen else "rule", "opening_source": "hinges" if seen else "classifier", "hinges_seen": seen}
+    dec = [mk("pull", True), mk("pull", False), mk("pull", False),
+           {"door_type": "sliding", "type_source": "handle", "opening": "slide", "hinge_side": "none", "hinge_source": None,
+            "opening_source": None, "hinges_seen": None}]
+    s = cascade.scores(dec, truth)
+    assert s["hinges_seen"] == pytest.approx(1 / 3)
+    assert s["acc_pull_when_hinges_seen"] == pytest.approx(1.0)
+    assert s["acc_push_pull_hinged"] == pytest.approx(2 / 3)
+    assert s["acc_push_pull_hinged_strict"] == pytest.approx(2 / 3)   # pull (seen) ok, push ok, pull-not-seen -> push wrong
+    assert "hinges_seen" not in cascade.scores(dec[:0], [])          # step A keys only without hinge decisions
+
+
+def test_score_with_hinges_on_true_and_detector_boxes(tmp_path):
+    root = make_export(tmp_path / "export")
+    for split in ("train", "val", "test"):                       # door_a's hinge (pull side seen) in the test images
+        p = root / "coco" / f"{split}.json"
+        coco = json.loads(p.read_text())
+        coco["categories"].append({"id": 3, "name": "hinge"})
+        for im in coco["images"]:
+            coco["annotations"].append({"id": len(coco["annotations"]) + 1, "image_id": im["id"], "category_id": 3,
+                                        "bbox": [11, 20, 2, 9], "area": 18, "iscrowd": 0, "object": "hinge_a_0",
+                                        "attributes": {"door": "door_a"}})
+        p.write_text(json.dumps(coco))
+    door_run, handle_run, _ = _runs(tmp_path, root)
+    t = cascade.score(door_run, handle_run, root, "test", hinges=True)
+    assert "hinges_seen" in t and 0.0 <= t["acc_push_pull_hinged_strict"] <= 1.0
+    preds = {i: {"boxes": np.array([[10, 10, 60, 110], [90, 10, 140, 110], [50, 60, 56, 63], [92, 60, 95, 68], [11, 20, 13, 29]], float),
+                 "scores": np.array([0.9, 0.9, 0.8, 0.8, 0.7]), "labels": np.array([0, 0, 1, 1, 2])} for i in range(4)}
+    d = cascade.score(door_run, handle_run, root, "test", preds=preds, hinges=True)
+    assert d["matched"] == 8 and "hinges_seen" in d
+    a = cascade.score(door_run, handle_run, root, "test")             # step A unchanged
+    assert "hinges_seen" not in a
