@@ -42,6 +42,8 @@ def kind(name):
         return "shell"
     if name in ("floor", "back_wall"):
         return "wall"
+    if name.startswith("hinge_"):  # hinge knuckles are metal like handles
+        return "handle"
     for k in ("door", "glass", "handle"):
         if name.startswith(k + "_"):
             return k

@@ -172,13 +172,19 @@ def attributes(world, name):
         for suffix, face, hid in (("", "front", 10 * k + 2), ("_back", "back", 10 * k + 4)):
             objs[f"handle_{slot}{suffix}"] = {"id": hid, "class": 2, "handle_type": spec["handle_type"], "door": f"door_{slot}",
                                               "face": face, "heldout": held}
+        if _has_hinges(spec):
+            for i in range(3):
+                objs[f"hinge_{slot}_{i}"] = {"id": 10 * k + 5 + i, "class": 3, "door": f"door_{slot}", "heldout": held}
         if spec["glass"]:
             objs[f"glass_{slot}"] = {"id": 10 * k + 3, "class": None, "part": "glass_pane", "part_of": f"door_{slot}",
                                      "detach_topic": f"/glass_{slot}/detach", "attach_topic": f"/glass_{slot}/attach"}
     for p in clutter.POOL:
         objs[p["name"]] = {"id": p["id"], "class": None, "role": p["role"], "kind": p["kind"], "place": p["place"], "size": p["size"]}
+    classes = {"1": "door", "2": "handle"}
+    if any(o.get("class") == 3 for o in objs.values()):
+        classes["3"] = "hinge"
     return {"_note": f"Ground truth per object for {name} (door room v4: two random doors in one wall, see sim/doorsim/doors.py). "
-                     "'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle. World frame: "
+                     "'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle, 3 = hinge (door room v5 only: three knuckles per hinged door, hinge_<slot>_<i>). World frame: "
                      "x toward the wall, y left, z up (metres). 'front' = camera at x < 3 looking +x, 'back' = camera at x > 3 looking -x. "
                      "Push / pull, hinge side and slide direction depend on the camera side: seen_from has both, the keys on the object "
                      "itself are the front view and the generator sets them per frame. Each door has a handle on each face "
@@ -186,7 +192,7 @@ def attributes(world, name):
                      "approach = where viewpoints are placed per side, keep_out = floor areas clutter stays off. hinge_world / slide_world = "
                      "a point + direction from the joints in the world file; 'joint' = how to open the door (open = command). Objects with "
                      "class null are parts of another object (part_of), e.g. a glass pane, or the clutter pool (ids 100-254, no box).",
-            "classes": {"1": "door", "2": "handle"},
+            "classes": classes,
             "camera": {"world_position": [0, 0, 1.2], "world_rpy": [0, 0, 0], "frame": "ROS optical: x right, y down, z forward"},
             "objects": objs}
 
@@ -260,16 +266,32 @@ def _panel_visuals(spec, g):
             _vis("rail_top", (0, 0, ph / 2 - 0.05), _box(t, pw - 0.2, 0.1), f, spec_f), _vis("rail_bottom", (0, 0, -(ph / 2 - 0.07)), _box(t, pw - 0.2, 0.14), f, spec_f)]
 
 
+def _has_hinges(spec):
+    return spec["door_type"] == "hinged" and bool(spec.get("door_stop"))
+
+
+def _hinge_model(slot, k, spec, g, i):
+    """One hinge knuckle (door_stop worlds): a metal cylinder on the hinge axis at the hinge edge, own label 10 k + 5 + i, held on the panel."""
+    z = (0.25, g["h"] / 2, g["h"] - 0.25)[i]
+    x, y = g["xc"] + 0.02 * spec["swing_x"], g["y"] + spec["hinge_y"] * (g["pw"] / 2 + 0.005)
+    return f"""    <model name="hinge_{slot}_{i}">
+      <pose>{_pose(x, y, z)} 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        {_inertial(0.05, 0.02, 0.02, 0.09)}
+        {_vis("knuckle", (0, 0, 0), "<geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry>", METAL_RGB)}
+      </link>
+      {_label(10 * k + 5 + i)}
+    </model>
+"""
+
+
 def _door_model(slot, k, spec, g):
     hinged = spec["door_type"] == "hinged"
     pw, ph = g["pw"], g["ph"]
     vis = _panel_visuals(spec, g)
     if hinged:
         inertial = _inertial(25, 0.04, pw, ph)
-        if spec.get("door_stop"):  # hinge knuckles on the axis (the swing face), at the hinge edge; they turn with the panel
-            for i, z in enumerate((0.25, g["h"] / 2, g["h"] - 0.25)):
-                vis.append(_vis(f"knuckle_{i}", (0.02 * spec["swing_x"], spec["hinge_y"] * (pw / 2 + 0.005), z - g["zc"]),
-                                "<geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry>", METAL_RGB))
         joint = (f'<joint name="hinge" type="revolute"><parent>frame_anchor</parent><child>panel</child>'
                  f'<pose>{_pose(0.02 * spec["swing_x"], spec["hinge_y"] * pw / 2, 0)} 0 0 0</pose><axis><xyz>0 0 1</xyz>'
                  f'<limit><lower>{g["range"][0]}</lower><upper>{g["range"][1]}</upper></limit><dynamics><damping>2.0</damping></dynamics></axis></joint>')
@@ -282,6 +304,7 @@ def _door_model(slot, k, spec, g):
                  f'<limit><lower>0</lower><upper>{g["travel"]}</upper></limit><dynamics><damping>20.0</damping></dynamics></axis></joint>')
         ctrl, gains, jname = "slide", "<p_gain>200</p_gain><i_gain>0.5</i_gain><d_gain>40</d_gain>", "slide"
     children = [_detach(f"handle_{slot}"), _detach(f"handle_{slot}_back")] + ([_detach(f"glass_{slot}", topics=True)] if spec["glass"] else [])
+    children += [_detach(f"hinge_{slot}_{i}") for i in range(3) if _has_hinges(spec)]  # knuckles: own models so they get own labels
     body = "\n".join("        " + v for v in vis)
     # the order of links / joints follows door_room_v3: anchor link fixed to the world, panel link on the joint
     return f"""    <model name="door_{slot}">
@@ -439,4 +462,6 @@ def world_sdf(world, name):
         if spec["glass"]:
             parts.append(_glass_model(slot, k, g))
         parts += [_handle_model(slot, k, spec, g, "front"), _handle_model(slot, k, spec, g, "back")]
+        if _has_hinges(spec):
+            parts += [_hinge_model(slot, k, spec, g, i) for i in range(3)]
     return "".join(parts) + "\n" + rig_and_pool + _room_shell() + "  </world>\n</sdf>\n"

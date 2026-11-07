@@ -97,7 +97,7 @@ def materials(attrs):
             m = "glass"
         elif o.get("class") == 1:
             m = "wood"
-        elif o.get("class") == 2:
+        elif o.get("class") in (2, 3):  # handles, hinges
             m = "metal"
         elif name.startswith("box_stack") or name.startswith(("cabinet", "wardrobe", "drawers", "bookcase", "table", "chair")):
             m = "wood"
@@ -318,7 +318,7 @@ def inject(sdf_text):
     """World SDF text with a wide depth camera (topic "radar/depth") and a wide segmentation camera ("radar/seg") next to the
     rig's rgbd camera (same link + pose, same update rate), plus the structure labels (floor / back wall / room shell).
     Also the hidden-wall lidar "radar_behind" (gpu_lidar, topic "radar/behind", one ray per wide pixel column / row,
-    <visibility_mask>1</visibility_mask>) and <visibility_flags>2 on every visual of the back wall, doors, handles and glass,
+    <visibility_mask>1</visibility_mask>) and <visibility_flags>2 on every visual of the back wall, doors, handles, hinges and glass,
     so only the lidar sees through them. Gazebo's depth camera ignores visibility masks (tested 2026-11-07), the gpu_lidar
     honours them."""
     sdf_text = thermal.inject(sdf_text, {}, thermal=False)  # labels only
@@ -370,7 +370,7 @@ def inject(sdf_text):
     else:
         raise ValueError("rig has no rgbd_camera sensor")
     for m in root.find("world").findall("model"):
-        if m.get("name") == "back_wall" or m.get("name").startswith(("door_", "handle_", "glass_")):
+        if m.get("name") == "back_wall" or m.get("name").startswith(("door_", "handle_", "hinge_", "glass_")):
             for vis in m.iter("visual"):
                 if vis.find("visibility_flags") is None:  # glass already has it
                     ET.SubElement(vis, "visibility_flags").text = "2"

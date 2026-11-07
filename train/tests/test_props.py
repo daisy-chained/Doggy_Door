@@ -92,7 +92,7 @@ def test_dataset_jitter_only_when_training(export_dir):
 def test_model_one_head_per_property_and_subset():
     m = props.Model("resnet18", props.HEADS["door"], pretrained=False)
     out = m(torch.zeros(2, 3, 64, 64))
-    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2)}
+    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2), "door_type": (2, 2)}
     one = props.Model("resnet18", {"glass": props.HEADS["door"]["glass"]}, pretrained=False)
     assert set(one(torch.zeros(1, 3, 64, 64))) == {"glass"}        # a single head = a separate model
 
@@ -124,7 +124,7 @@ def test_train_cpu_logs_per_head_accuracy_and_calibration(tmp_path, export_dir):
                          "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
     r = props.train(cfg, run_name="unit")
     run = mlflow.get_run(r["run_id"])
-    for h in props.HEADS["door"]:
+    for h in props.DEFAULT_HEADS["door"]:
         assert f"val_acc_{h}" in run.data.metrics and f"test_acc_{h}" in run.data.metrics
         assert f"test_ece_{h}" in run.data.metrics and h in r["temperature"]
     assert (pathlib.Path(r["out"]) / "best" / "model.pt").exists() and (pathlib.Path(r["out"]) / "best" / "heads.json").exists()
@@ -134,7 +134,7 @@ def test_train_cpu_logs_per_head_accuracy_and_calibration(tmp_path, export_dir):
 def test_resolve_defaults_per_crop():
     d = props.resolve({"export": "x", "crop": "door"})
     h = props.resolve({"export": "x", "crop": "handle"})
-    assert d["heads"] == list(props.HEADS["door"]) and h["heads"] == ["handle_type"]
+    assert d["heads"] == props.DEFAULT_HEADS["door"] and h["heads"] == ["handle_type"]
     assert h["margin"] > d["margin"] and d["jitter"] == {"shift": 0.1, "scale": 0.15}
     assert props.resolve({"export": "x", "crop": "door", "heads": ["glass"]})["heads"] == ["glass"]
     with pytest.raises(ValueError):
@@ -161,7 +161,7 @@ def test_train_reports_seen_and_unseen_combos_on_test(tmp_path):
                          "imgsz": 64, "epochs": 1, "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
                          "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
     r = props.train(cfg, run_name="unit")
-    for h in props.HEADS["door"]:
+    for h in props.DEFAULT_HEADS["door"]:
         assert f"test_acc_seen_{h}" in r["test"] and f"test_acc_unseen_{h}" in r["test"]
         # 4 seen (door_a) + 4 unseen (door_b) crops: the overall accuracy is their mean
         assert r["test"][f"test_acc_{h}"] == pytest.approx((r["test"][f"test_acc_seen_{h}"] + r["test"][f"test_acc_unseen_{h}"]) / 2)
@@ -192,7 +192,7 @@ def test_score_on_detector_boxes(tmp_path):
         preds[i] = {"boxes": np.array(boxes, float), "scores": np.array(scores), "labels": np.array(labels)}
     s = props.score_on_boxes(r["out"], root, "test", preds, score_min=0.3, iou=0.5)
     assert s["crops"] == 8 and s["matched"] == 7 and s["missed"] == 1 and s["false"] == 4
-    for h in props.HEADS["door"]:
+    for h in props.DEFAULT_HEADS["door"]:
         assert 0.0 <= s[f"acc_{h}"] <= 1.0
     # against the true-box accuracy the same keys exist, so the two can be compared side by side
-    assert set(k for k in s if k.startswith("acc_") and not k.endswith(("_rule", "_combined"))) == {f"acc_{h}" for h in props.HEADS["door"]}
+    assert set(k for k in s if k.startswith("acc_") and not k.endswith(("_rule", "_combined"))) == {f"acc_{h}" for h in props.DEFAULT_HEADS["door"]}

@@ -40,6 +40,11 @@ def split_scenes(scenes, ratios, seed):
     return {"train": order[n_val + n_test:], "val": order[:n_val], "test": order[n_val:n_val + n_test]}
 
 
+def doorway_id(names):
+    """Class id of the doorway class: the next free one (3 on datasets without hinges, 4 with)."""
+    return max(names) + 1
+
+
 def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore_splits=("train", "val"), doorway=False):
     src, out = pathlib.Path(src).resolve(), pathlib.Path(out).resolve()
     if (out / "export.json").exists():
@@ -56,8 +61,9 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
     if missing:
         raise ValueError(f"scenes {missing} are not in the dataset's split_scenes")
     scenes = {sp: sorted(s for s, v in split_of.items() if v == sp) for sp in SPLITS}
+    dw_id = doorway_id(names)
     if doorway:
-        names[3] = "doorway"
+        names[dw_id] = "doorway"
         K = ds["camera_intrinsics"]["K"]
     coco = {sp: {"images": [], "categories": [{"id": i, "name": n} for i, n in names.items()], "annotations": []} for sp in SPLITS}
     counts = {sp: {"images": 0, **{n: 0 for n in names.values()}} for sp in SPLITS}
@@ -84,7 +90,7 @@ def export(src, out, seed=0, ratios=(0.7, 0.15, 0.15), ignore_below=None, ignore
         for name, o, b, extra in items:
             if o.get("class") is None or b is None:
                 continue
-            cls, oid = (3, o["id"] + 1000) if extra else (o["class"], o["id"])
+            cls, oid = (dw_id, o["id"] + 1000) if extra else (o["class"], o["id"])
             w, h = b["x_max"] - b["x_min"] + 1, b["y_max"] - b["y_min"] + 1  # Gazebo boxes = inclusive pixel indices
             t = o.get("smoke_transmission")
             ignored = ignore_below is not None and sp in ignore_splits and t is not None and t < ignore_below

@@ -12,8 +12,10 @@ from .config import REPO
 from .data import load_input
 from .loop import flatten, git_info
 
-HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "right", "none"], "glass": ["no", "yes"]},
+HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "right", "none"], "glass": ["no", "yes"],
+                  "door_type": ["hinged", "sliding"]},  # door_type: opt-in head (cascade step A), not in the default heads
          "handle": {"handle_type": ["lever", "knob", "flush_pull"]}}
+DEFAULT_HEADS = {"door": ["opening", "hinge_side", "glass"]}  # crops not listed: all their heads
 CATEGORY = {"door": 1, "handle": 2}
 MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
 DHA_MEAN, DHA_STD = 0.5, 0.25  # dha channels are 0..255 maps, not photos
@@ -23,7 +25,7 @@ PER_CROP = {"imgsz": {"door": 224, "handle": 96}, "margin": {"door": 0.1, "handl
 DEFAULTS = {
     "export": None, "crop": None,  # required: exporter output folder, "door" or "handle"
     "input": "rgb",  # rgb | dha | rgb_dha (dha: depth, height above floor, normal angle)
-    "heads": None,  # None -> all heads of the crop
+    "heads": None,  # None -> the crop's default heads (all, except the opt-in door_type)
     "backbone": "resnet18", "pretrained": True, "imgsz": None, "margin": None, "min_px": None,  # None -> per-crop default
     "jitter": {"shift": 0.1, "scale": 0.15},  # train-time crop shift / scale, fractions of the long box side
     "epochs": 20, "batch": 32, "lr": 3e-4, "weight_decay": 1e-4, "amp": False, "workers": 4, "seed": 0, "device": "cuda",
@@ -56,7 +58,7 @@ def resolve(d):
     if cfg["backbone"] not in BACKBONES:
         raise ValueError(f"unknown backbone {cfg['backbone']!r}; available: {', '.join(BACKBONES)}")
     avail = list(HEADS[cfg["crop"]])
-    cfg["heads"] = avail if cfg["heads"] is None else list(cfg["heads"])
+    cfg["heads"] = list(DEFAULT_HEADS.get(cfg["crop"], avail)) if cfg["heads"] is None else list(cfg["heads"])
     bad = [h for h in cfg["heads"] if h not in avail]
     if bad:
         raise ValueError(f"heads {bad} do not belong to crop {cfg['crop']!r}; available: {', '.join(avail)}")
@@ -70,7 +72,8 @@ def labels(attrs, crop):
     """COCO attributes -> {head: class name}."""
     if crop == "handle":
         return {"handle_type": attrs.get("handle_type")}
-    return {"opening": attrs.get("opening"), "hinge_side": attrs.get("hinge_side") or "none", "glass": "yes" if attrs.get("glass") else "no"}
+    return {"opening": attrs.get("opening"), "hinge_side": attrs.get("hinge_side") or "none", "glass": "yes" if attrs.get("glass") else "no",
+            "door_type": attrs.get("door_type") or ("sliding" if attrs.get("opening") == "slide" else "hinged")}
 
 
 def crop_box(bbox, margin, rng, jitter):
@@ -131,14 +134,21 @@ class CropDataset(Dataset):
         return input_tensor(self.root / fn, box, self.imgsz, self.input, self._K), y
 
 
+def largest_handle_inside(door_xywh, handle_xywhs):
+    """Index of the largest handle box whose centre lies inside the door box (None if there is none); shared by the hinge rule and the cascade."""
+    x, y, w, h = door_xywh
+    inside = [i for i, b in enumerate(handle_xywhs) if x <= b[0] + b[2] / 2 <= x + w and y <= b[1] + b[3] / 2 <= y + h]
+    return max(inside, key=lambda i: handle_xywhs[i][2] * handle_xywhs[i][3]) if inside else None
+
+
 def hinge_from_handle(door_xywh, handle_xywhs):
     """Hinge side from the handle position (Madelief 2026-11-07: the hinge is opposite the handle, which sits on the lock edge).
     The largest handle box whose centre lies inside the door box decides: handle left of the door centre -> "right", else "left"; none inside -> None."""
     x, y, w, h = door_xywh
-    inside = [b for b in handle_xywhs if x <= b[0] + b[2] / 2 <= x + w and y <= b[1] + b[3] / 2 <= y + h]
-    if not inside:
+    i = largest_handle_inside(door_xywh, handle_xywhs)
+    if i is None:
         return None
-    b = max(inside, key=lambda b: b[2] * b[3])
+    b = handle_xywhs[i]
     return "right" if b[0] + b[2] / 2 < x + w / 2 else "left"
 
 

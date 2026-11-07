@@ -85,7 +85,8 @@ def test_scores_from_decisions():
 # --- end to end on the tiny export ---
 def _runs(tmp_path, root):
     def run(crop, name, **kw):
-        cfg = props.resolve({"export": str(root), "crop": crop, "backbone": "resnet18", "pretrained": False, "imgsz": 64, "epochs": 1,
+        extra = {"min_px": 2} if crop == "handle" else {}  # fixture handles are 3-6 px
+        cfg = props.resolve({"export": str(root), "crop": crop, "backbone": "resnet18", "pretrained": False, "imgsz": 64, "epochs": 1, **extra,
                              "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
                              "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}, **kw})
         return props.train(cfg, run_name=name)["out"]
