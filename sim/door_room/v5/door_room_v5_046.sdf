@@ -82,9 +82,6 @@
         <inertial><mass>25</mass><inertia><ixx>12.481427</ixx><iyy>10.729085</iyy><izz>1.7590083</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
         <collision name="c"><geometry><box><size>0.04 0.918 2.269</size></box></geometry></collision>
         <visual name="v"><pose>0 0 0 0 0 0</pose><geometry><box><size>0.04 0.918 2.269</size></box></geometry><material><ambient>0.665 0.331 0.398 1</ambient><diffuse>0.665 0.331 0.398 1</diffuse></material></visual>
-        <visual name="knuckle_0"><pose>-0.02 0.464 -0.8945 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
-        <visual name="knuckle_1"><pose>-0.02 0.464 0 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
-        <visual name="knuckle_2"><pose>-0.02 0.464 0.8945 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
       </link>
       <joint name="hinge" type="revolute"><parent>frame_anchor</parent><child>panel</child><pose>-0.02 0.459 0 0 0 0</pose><axis><xyz>0 0 1</xyz><limit><lower>-1.6</lower><upper>0.0</upper></limit><dynamics><damping>2.0</damping></dynamics></axis></joint>
       <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
@@ -92,6 +89,9 @@
       </plugin>
       <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint"><parent_link>panel</parent_link><child_model>handle_a</child_model><child_link>link</child_link></plugin>
       <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint"><parent_link>panel</parent_link><child_model>handle_a_back</child_model><child_link>link</child_link></plugin>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint"><parent_link>panel</parent_link><child_model>hinge_a_0</child_model><child_link>link</child_link></plugin>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint"><parent_link>panel</parent_link><child_model>hinge_a_1</child_model><child_link>link</child_link></plugin>
+      <plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint"><parent_link>panel</parent_link><child_model>hinge_a_2</child_model><child_link>link</child_link></plugin>
       <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
       <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>11</label></plugin>
     </model>
@@ -116,6 +116,33 @@
         <visual name="lever"><pose>-0.035 -0.05 0 0 0 0</pose><geometry><box><size>0.02 0.13 0.02</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.75 0.75 0.78 1</diffuse><specular>0.6 0.6 0.6 1</specular></material></visual>
       </link>
       <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>14</label></plugin>
+    </model>
+    <model name="hinge_a_0">
+      <pose>2.95 -0.536 0.25 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        <inertial><mass>0.05</mass><inertia><ixx>3.5416667e-05</ixx><iyy>3.5416667e-05</iyy><izz>3.3333333e-06</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+        <visual name="knuckle"><pose>0 0 0 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>15</label></plugin>
+    </model>
+    <model name="hinge_a_1">
+      <pose>2.95 -0.536 1.1445 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        <inertial><mass>0.05</mass><inertia><ixx>3.5416667e-05</ixx><iyy>3.5416667e-05</iyy><izz>3.3333333e-06</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+        <visual name="knuckle"><pose>0 0 0 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>16</label></plugin>
+    </model>
+    <model name="hinge_a_2">
+      <pose>2.95 -0.536 2.039 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        <inertial><mass>0.05</mass><inertia><ixx>3.5416667e-05</ixx><iyy>3.5416667e-05</iyy><izz>3.3333333e-06</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>
+        <visual name="knuckle"><pose>0 0 0 0 0 0</pose><geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry><material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>17</label></plugin>
     </model>
 
     <model name="door_b">
