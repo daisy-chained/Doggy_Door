@@ -69,7 +69,7 @@ def test_without_door_stop_v4_geometry_unchanged():
     assert g["xc"] == pytest.approx(WX)
     assert g["hinge"][0] == pytest.approx(WX + 0.02 * w["doors"]["a"]["swing_x"])
     text = doors.world_sdf(w, "t")
-    assert "stop_a" not in text and "knuckle" not in text
+    assert "stop_a" not in text and "knuckle" not in text and "hinge_a_" not in text
     # an old spec without the key behaves as door_stop false
     old = copy.deepcopy(w)
     for spec in old["doors"].values():
@@ -110,26 +110,7 @@ def test_door_stop_on_the_push_side_against_the_panel(swing):
     assert any(n.startswith("stop_b_") for n in vis) == (w["doors"]["b"]["door_type"] == "hinged")
 
 
-def test_hinge_knuckles_on_the_axis_on_the_panel():
-    w = world()
-    spec = w["doors"]["a"]
-    g = doors._layout(spec, "a")
-    panel = next(l for l in models(w)["door_a"].iter("link") if l.get("name") == "panel")
-    kn = [v for v in panel.iter("visual") if v.get("name", "").startswith("knuckle")]
-    assert len(kn) == 3
-    zs = []
-    for v in kn:
-        assert v.find("geometry/cylinder") is not None
-        r = float(v.find("geometry/cylinder/radius").text)
-        assert 0.005 <= r <= 0.012
-        x, y, z = pose(v)[:3]  # panel link frame: origin at the panel centre (model xc, y, zc)
-        assert x == pytest.approx(0.02 * spec["swing_x"], abs=1e-6)             # on the swing face (the axis)
-        assert abs(y) >= g["pw"] / 2 and spec["hinge_y"] * y > 0                 # at the hinge edge
-        zs.append(z + g["zc"])
-        diffuse = [float(c) for c in v.find("material/diffuse").text.split()[:3]]
-        assert diffuse == pytest.approx(list(doors.METAL_RGB), abs=1e-3)
-    zs.sort()
-    assert zs[0] == pytest.approx(0.25, abs=0.02) and zs[-1] == pytest.approx(spec["height"] - 0.25, abs=0.02)
+# the hinge knuckles moved into their own labelled models (B, 2026-11-07): tested in test_hinge_labels.py
 
 
 def test_sliding_doors_get_no_stop_or_knuckles():
@@ -140,7 +121,7 @@ def test_sliding_doors_get_no_stop_or_knuckles():
     ms = models(w)
     names = [v.get("name") for v in ms["back_wall"].iter("visual")]
     assert not any(n.startswith("stop_b_") for n in names)
-    assert not any(v.get("name", "").startswith("knuckle") for v in ms["door_b"].iter("visual"))
+    assert not any(n.startswith("hinge_b_") for n in ms)
     assert doors._layout(w["doors"]["b"], "b")["xc"] == pytest.approx(doors._layout({**w["doors"]["b"], "door_stop": False}, "b")["xc"])
 
 
