@@ -9,15 +9,16 @@ door centre lands on the door's pos. Local +x = the normal from connects[0] (fro
 as connects[0] and the east room as connects[1].
 Open doors: the door's joint controller gets <initial_position> = open_frac * the v5 open value (hinged: 1.2 rad about the hinge,
 sliding: 0.9 of the travel); closed doors stay at 0. Label ids: door id i uses base = 10 * i; base + 1 panel, + 2 handle (front),
-+ 3 glass, + 4 handle (back), + 5..7 hinge knuckles (as v5 with k = i), so ids stay < 256 for i <= MAX_DOORS. The v3 clutter pool
-(ids 100+) is left out. Randomness: numpy Generator."""
++ 3 glass, + 4 handle (back), + 5..7 hinge knuckles (as v5 with k = i), so door ids stay < 200 for i <= MAX_DOORS (10 * 19 + 7 = 197).
+Clutter (cfg "clutter", optional): items of clutter.POOL, label 200 + (pool id - 100) = 200..247; floor items stand in the spaces
+(occupied in the map), wall items hang flat on a wall face. Randomness: numpy Generator."""
 import json, math, pathlib, re
 import numpy as np
 
-from doorsim import doors
+from doorsim import clutter, doors
 
 WALL_T = 0.1
-MAX_DOORS = 24  # base 10 * id + 7 < 256 -> id <= 24
+MAX_DOORS = 19  # base 10 * id + 7 < 200 (clutter labels start at 200) -> id <= 19
 SLOT = "a"      # every door is built in the v5 slot "a" frame (door centre at y = SLOT_Y["a"])
 
 
@@ -168,15 +169,15 @@ def place_doors(rng, layout, cfg, split="train"):
 
 
 # --- approach poses ---
-def approach_poses(layout, doors_, cfg):
+def approach_poses(layout, doors_, cfg, clutter=None):
     """One pose per door side and distance in cfg approach.distances: on the door's normal line, `dist` from the door centre into
     that space (clamped to stay robot_radius + WALL_T / 2 inside it), facing the door centre; reachable = space reachable from the
     corridor through open doors. clear = no occupied map cell (occupancy() at cfg map_resolution) within robot_radius: a blocked pose
-    (e.g. on an open door panel) is moved further back along the normal in 0.1 m steps (staying inside the space), then closer down to
+    (e.g. on an open door panel or floor clutter) is moved further back along the normal in 0.1 m steps (staying inside the space), then closer down to
     0.5 m; dist = the distance used; clear False only if nothing fits."""
     sp, m = _spaces(layout), cfg["robot_radius"] + WALL_T / 2
     res = float(cfg.get("map_resolution", 0.05))
-    grid, origin = occupancy(layout, doors_, res)
+    grid, origin = occupancy(layout, doors_, res, clutter)
     rc = int(math.ceil(cfg["robot_radius"] / res))
 
     def free(x, y):
@@ -279,11 +280,15 @@ def _wall_boxes(layout, doors_):
     return boxes
 
 
+_POOL = {p["name"]: p for p in clutter.POOL}
+
+
 # --- occupancy map ---
-def occupancy(layout, doors_, res):
+def occupancy(layout, doors_, res, clutter=None):
     """(grid uint8 H x W, origin [x, y]): 0 = occupied, 254 = free, row 0 = north edge, origin = world xy of the bottom-left cell.
     Free = inside a space; occupied = outside, the walls, the doorway of a closed door and the panel of an open one where it stands
-    (hinged: the panel's centre line turned by open_frac * the v5 open angle about its hinge; sliding: shifted along its path)."""
+    (hinged: the panel's centre line turned by open_frac * the v5 open angle about its hinge; sliding: shifted along its path)
+    and the footprints of the floor items in `clutter` (b["clutter"])."""
     bx, pad = layout["bounds"], 0.3
     ox, oy = bx[0] - pad, bx[1] - pad
     w, h = int(math.ceil((bx[2] - bx[0] + 2 * pad) / res)), int(math.ceil((bx[3] - bx[1] + 2 * pad) / res))
@@ -322,8 +327,168 @@ def occupancy(layout, doors_, res):
             for t in np.linspace(-g["pw"] / 2, g["pw"] / 2, int(g["pw"] / res * 2) + 2):
                 for dx in (-0.02, 0.0, 0.02):
                     mark(*_world(d, g["xc"] + dx, g["y"] + s * (t + shift)))
+    for c in clutter or []:
+        if c["place"] != "floor":
+            continue
+        p, (x, y) = _POOL[c["item"]], c["position"][:2]
+        co, si = math.cos(c["yaw"]), math.sin(c["yaw"])
+        dx, dy = cx[None, :] - x, cy[:, None] - y
+        lx, ly = co * dx + si * dy, -si * dx + co * dy
+        free[(np.abs(lx) <= p["size"][0] / 2 + 1e-9) & (np.abs(ly) <= p["size"][1] / 2 + 1e-9)] = False
+        mark(x, y)
     grid = np.where(free, 254, 0).astype(np.uint8)
     return grid, [float(ox), float(oy)]
+
+
+# --- clutter ---
+_EPS = 1e-4
+_WALL_YAW = {"x0": math.pi, "x1": 0.0, "y0": -math.pi / 2, "y1": math.pi / 2}  # item back (local +x) on that wall of the space
+
+
+def _door_line_span(d, margin):
+    """(wall axis "x" | "y", wall line coord, lo, hi) of a door's opening + trim (+ slide path, both directions) grown by margin."""
+    lo, hi = _extent(d["spec"], 1)
+    lo, hi = min(lo, -hi) - margin, max(hi, -lo) + margin
+    if abs(math.cos(d["yaw"])) > 0.5:
+        return "y", d["pos"][0], d["pos"][1] + lo, d["pos"][1] + hi
+    return "x", d["pos"][1], d["pos"][0] + lo, d["pos"][0] + hi
+
+
+def _keep_outs(ds, space, rect, cfg):
+    """Keep-out strips [x0, y0, x1, y1] inside the space for every door touching it: along the wall the door's span grown by
+    robot_radius, into the space max(approach distances) + robot_radius from the wall centre line."""
+    deep, out = max(cfg["approach"]["distances"]) + cfg["robot_radius"], []
+    for d in ds:
+        if space not in d["connects"]:
+            continue
+        axis, line, lo, hi = _door_line_span(d, cfg["robot_radius"])
+        if axis == "x":
+            out.append([lo, line, hi, line + deep] if rect[1] >= line - 1e-6 else [lo, line - deep, hi, line])
+        else:
+            out.append([line, lo, line + deep, hi] if rect[0] >= line - 1e-6 else [line - deep, lo, line, hi])
+    return out
+
+
+def _box_hit(a, b, grow=0.0):
+    """True if the [x0, y0, x1, y1] boxes a (grown by `grow`) and b overlap."""
+    return min(a[2] + grow, b[2]) - max(a[0] - grow, b[0]) > 1e-6 and min(a[3] + grow, b[3]) - max(a[1] - grow, b[1]) > 1e-6
+
+
+def _floor_spot(rng, p, rect, keeps, taken, gap, against, tries=50):
+    """(x, y, yaw) of a floor item inside the rect (shrunk by WALL_T / 2), off the keep-out strips and `taken` boxes (gap), or None."""
+    e = WALL_T / 2 + _EPS
+    for _ in range(tries):
+        if rng.random() < against:
+            side = ("x0", "x1", "y0", "y1")[int(rng.integers(4))]
+            yaw = _WALL_YAW[side]
+        else:
+            side, yaw = None, float(rng.uniform(-math.pi, math.pi))
+        c, s = abs(math.cos(yaw)), abs(math.sin(yaw))
+        hx, hy = c * p["size"][0] / 2 + s * p["size"][1] / 2, s * p["size"][0] / 2 + c * p["size"][1] / 2
+        xr, yr = (rect[0] + e + hx, rect[2] - e - hx), (rect[1] + e + hy, rect[3] - e - hy)
+        if xr[1] < xr[0] or yr[1] < yr[0]:
+            continue
+        x, y = float(rng.uniform(*xr)), float(rng.uniform(*yr))
+        if side:
+            x = {"x0": xr[0], "x1": xr[1]}.get(side, x)
+            y = {"y0": yr[0], "y1": yr[1]}.get(side, y)
+        bb = [x - hx, y - hy, x + hx, y + hy]
+        if any(_box_hit(bb, k) for k in keeps) or any(_box_hit(bb, t, gap) for t in taken):
+            continue
+        return x, y, yaw
+    return None
+
+
+def _wall_spot(rng, p, rect, ds, space, taken, cc, tries=50):
+    """(x, y, z, yaw, wall) of a wall item hanging flat on a wall face of the space: inside wall_z and the wall segment, off the
+    door spans (grown by door_margin) on that wall line and the other wall items there (`taken`: {wall: [(lo, hi)]}), or None."""
+    d, wd, h = p["size"]
+    z0, z1 = cc["wall_z"]
+    if h > z1 - z0:
+        return None
+    for _ in range(tries):
+        side = ("x0", "x1", "y0", "y1")[int(rng.integers(4))]
+        axis = "y" if side[0] == "x" else "x"        # the wall runs along this axis
+        line = {"x0": rect[0], "x1": rect[2], "y0": rect[1], "y1": rect[3]}[side]
+        lo, hi = (rect[1], rect[3]) if axis == "y" else (rect[0], rect[2])
+        lo, hi = lo + WALL_T / 2, hi - WALL_T / 2              # off the corner walls
+        if hi - lo < wd:
+            continue
+        a, z = float(rng.uniform(lo + wd / 2, hi - wd / 2)), float(rng.uniform(z0 + h / 2, z1 - h / 2))
+        span = (a - wd / 2, a + wd / 2)
+        doors_on = [_door_line_span(q, cc["door_margin"]) for q in ds]
+        if any(ax == ("x" if axis == "x" else "y") and abs(ln - line) < 1e-6 and span[0] < hi_ and lo_ < span[1] for ax, ln, lo_, hi_ in doors_on):
+            continue
+        if any(span[0] < t1 and t0 < span[1] for t0, t1 in taken.get((space, side), [])):
+            continue
+        off = WALL_T / 2 + d / 2
+        n = {"x0": line + off, "x1": line - off, "y0": line + off, "y1": line - off}[side]
+        return (n, a, z) if axis == "y" else (a, n, z), _WALL_YAW[side], (space, side), span
+    return None
+
+
+def _fit_labels(grid, res, radius):
+    """Connected components of the cells where a robot of `radius` fits (no occupied cell within it)."""
+    from scipy import ndimage
+    r = int(math.ceil(radius / res))
+    return ndimage.label(~ndimage.maximum_filter(grid == 0, size=2 * r + 1, mode="constant", cval=0))[0]
+
+
+def place_clutter(rng, layout, ds, cfg):
+    """Clutter entries (see the module docstring) for cfg["clutter"]: per space (corridor first) a random number of floor items,
+    then of wall items, each pool item at most once per space and place; an item that finds no spot (50 tries) is skipped, and
+    a floor item that cuts apart approach poses of its space that were connected before is dropped."""
+    cc, out, taken_wall = cfg["clutter"], [], {}
+    res = float(cfg.get("map_resolution", 0.05))
+    lab0 = _fit_labels(occupancy(layout, ds, res)[0], res, cfg["robot_radius"])
+    for space, rect in _spaces(layout).items():
+        counts = cc["corridor" if space == "corridor" else "rooms"]
+        keeps = _keep_outs(ds, space, rect, cfg)
+        for place_kind in ("floor", "wall"):
+            group = [q for q in clutter.POOL if q["place"] == place_kind]
+            lo, hi = counts[f"{place_kind}_count"]
+            want, n = int(rng.integers(lo, hi + 1)), 0
+            for i in rng.permutation(len(group)):
+                if n >= want:
+                    break
+                p = group[i]
+                if place_kind == "floor":
+                    taken = [_aabb_of(c) for c in out if c["space"] == space and c["place"] == "floor"]
+                    spot = _floor_spot(rng, p, rect, keeps, taken, cc["gap"], cc["p_against_wall"])
+                    if spot is None:
+                        continue
+                    pos, yaw = [spot[0], spot[1], p["size"][2] / 2], spot[2]
+                else:
+                    spot = _wall_spot(rng, p, rect, ds, space, taken_wall, cc)
+                    if spot is None:
+                        continue
+                    pos, yaw = list(spot[0]), spot[1]
+                colour = [float(v) for v in rng.uniform(0, 1, 3)] if p["recolour"] else None
+                entry = {"name": f"clutter_{len(out)}", "item": p["name"], "label": 200 + p["id"] - 100, "space": space, "place": place_kind,
+                         "position": [float(v) for v in pos], "yaw": float(yaw), "colour": colour}
+                if place_kind == "floor" and not _keeps_connected(layout, ds, cfg, out + [entry], space, lab0):
+                    continue
+                if place_kind == "wall":
+                    taken_wall.setdefault(spot[2], []).append(spot[3])
+                out.append(entry)
+                n += 1
+    return out
+
+
+def _aabb_of(c):
+    """[x0, y0, x1, y1] of a floor clutter entry's footprint."""
+    xs, ys = zip(*clutter.footprint(c, _POOL[c["item"]]))
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _keeps_connected(layout, ds, cfg, items, space, lab0):
+    """True if, with `items` in, the clear approach poses of `space` that are in one fit component without clutter (lab0) still are."""
+    res = float(cfg.get("map_resolution", 0.05))
+    grid, origin = occupancy(layout, ds, res, items)
+    lab = _fit_labels(grid, res, cfg["robot_radius"])
+    cell = lambda p: (grid.shape[0] - 1 - int((p["y"] - origin[1]) / res), int((p["x"] - origin[0]) / res))
+    clear = [cell(p) for p in approach_poses(layout, ds, cfg, items) if p["space"] == space and p["clear"]]
+    return all(lab[a] == lab[b] for i, a in enumerate(clear) for b in clear[i + 1:] if lab0[a] == lab0[b] != 0)
 
 
 # --- the world file ---
@@ -371,9 +536,25 @@ def _door_models(d):
     return "".join(parts)
 
 
+def _clutter_model(c):
+    """SDF of one clutter entry: a static model at its pose with a visual and a collision per part (layout of clutter._model) and its label."""
+    p = _POOL[c["item"]]
+    h, parts = p["size"][2], []
+    for i, (shape, (x, y, z), dims, rgb) in enumerate(p["parts"]):
+        col = " ".join(f"{v:.3f}" for v in (c["colour"] if p["recolour"] else rgb))
+        pose, geo = f"{x} {y} {z - h / 2:.4f} 0 0 0", clutter._geometry(shape, dims)
+        parts.append(f'        <visual name="v{i}"><pose>{pose}</pose><geometry>{geo}</geometry>'
+                     f'<material><diffuse>{col} 1</diffuse><ambient>{col} 1</ambient></material></visual>\n'
+                     f'        <collision name="c{i}"><pose>{pose}</pose><geometry>{geo}</geometry></collision>\n')
+    x, y, z = c["position"]
+    return (f'    <model name="{c["name"]}">\n      <static>true</static>\n      <pose>{x!r} {y!r} {z!r} 0 0 {c["yaw"]!r}</pose>\n'
+            '      <link name="link">\n' + "".join(parts) + "      </link>\n"
+            f'      <plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>{c["label"]}</label></plugin>\n    </model>\n')
+
+
 def building_sdf(b, name):
     """Full SDF text: plugins / scene / sun of door_room_v3.sdf, floor, ceiling, walls with door openings, one ceiling light per space,
-    every door's models, the v3 camera rig (at the corridor centre; the clutter pool is left out: its ids clash with the doors')."""
+    every door's models, one static model per clutter entry (visuals + collisions + label), the v3 camera rig (at the corridor centre)."""
     v3 = (doors.ROOM / "door_room_v3.sdf").read_text()
     head = v3[v3.index("<sdf "):v3.index('    <light type="point" name="ceiling_light">')]
     head = head.replace('<world name="door_room_v3">', f'<world name="{name}">')
@@ -390,17 +571,18 @@ def building_sdf(b, name):
     c = lay["corridor"]
     rig = rig.replace("<pose>0 0 1.2 0 0 0</pose>", f"<pose>{doors._pose((c[0] + c[2]) / 2, (c[1] + c[3]) / 2, 1.2)} 0 0 0</pose>", 1)
     parts = [f'<?xml version="1.0" ?>\n<!-- Building {name} (seed {b["seed"]}, split {b["split"]}): generated by sim/building/make_buildings.py -->\n', head, lights, "\n",
-             floor, ceiling, walls] + ["\n" + _door_models(d) for d in b["doors"]]
+             floor, ceiling, walls] + ["\n" + _door_models(d) for d in b["doors"]] + ["\n" + _clutter_model(c) for c in b.get("clutter", [])]
     return "".join(parts) + "\n" + rig + "  </world>\n</sdf>\n"
 
 
 # --- whole building ---
 def make_building(cfg, seed, split="train"):
-    """{"seed", "split", "layout", "doors", "poses", "map_resolution"}: deterministic for a seed."""
+    """{"seed", "split", "layout", "doors", "clutter", "poses", "map_resolution"}: deterministic for a seed."""
     rng = np.random.default_rng(seed)
     layout = sample_layout(rng, cfg)
     ds = place_doors(rng, layout, cfg, split)
-    return {"seed": int(seed), "split": split, "layout": layout, "doors": ds, "poses": approach_poses(layout, ds, cfg),
+    cl = place_clutter(rng, layout, ds, cfg) if "clutter" in cfg else []  # after all door draws: doors / layout stay as without clutter
+    return {"seed": int(seed), "split": split, "layout": layout, "doors": ds, "clutter": cl, "poses": approach_poses(layout, ds, cfg, cl),
             "map_resolution": float(cfg.get("map_resolution", 0.05))}
 
 
@@ -413,7 +595,7 @@ def write(b, out_dir, name):
     (out / f"{name}.sdf").write_text(building_sdf(b, name))
     meta = dict(b, doors=[dict(d, labels=door_labels(d)) for d in b["doors"]])
     (out / f"{name}.building.json").write_text(json.dumps(meta, indent=2) + "\n")
-    grid, origin = occupancy(b["layout"], b["doors"], res)
+    grid, origin = occupancy(b["layout"], b["doors"], res, b.get("clutter"))
     (out / f"{name}.map.pgm").write_bytes(f"P5\n{grid.shape[1]} {grid.shape[0]}\n255\n".encode() + grid.tobytes())
     (out / f"{name}.map.yaml").write_text(f"image: {name}.map.pgm\nresolution: {res}\norigin: [{origin[0]:.4f}, {origin[1]:.4f}, 0.0]\n"
                                           "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\nmode: trinary\n")

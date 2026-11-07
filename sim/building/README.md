@@ -15,5 +15,8 @@ Conventions
 - Doors are built as in v5 (`doors.py`) in a local frame and moved into the building (rotate by `yaw`, translate to `pos`). Local +x = the normal from
   `connects[0]` (front) into `connects[1]` (back). Room <-> corridor doors: corridor is front. Neighbour doors: west room front, east room back.
 - Model names: `door_<id>_panel`, `_handle_front`, `_handle_back`, `_glass`, `_hinge_<0..2>`, `door_<id>_frame` (trim / stop / rail); cmd topic `/door_<id>_panel/cmd_pos`.
-- Label ids: base = 10 * door id; +1 panel, +2 handle front, +3 glass, +4 handle back, +5..7 hinge knuckles. At most 24 doors (ids < 256). No clutter pool.
+- Label ids: base = 10 * door id; +1 panel, +2 handle front, +3 glass, +4 handle back, +5..7 hinge knuckles. At most 19 doors (ids < 200).
+- Clutter (config section `clutter:`, optional; `building.json` key `clutter`): items from `doorsim/clutter.py` POOL, label = 200 + (pool id - 100). Floor items
+  keep off the doors' approach strips and are occupied in the map (an item that would cut apart the clear approach poses of a space is dropped); wall items hang flat
+  on a wall face. Static models `clutter_<n>` with visuals + collisions. Drawn after the doors, so doors / layout are the same with or without clutter.
 - Open doors: the joint controller starts at `open_frac` * the v5 open value (`<initial_position>`); closed = 0.
