@@ -193,3 +193,58 @@ def test_score_with_hinges_on_true_and_detector_boxes(tmp_path):
     assert d["matched"] == 8 and "hinges_seen" in d
     a = cascade.score(door_run, handle_run, root, "test")             # step A unchanged
     assert "hinges_seen" not in a
+
+
+# --- closed doors only (Madelief 2026-11-07, "build it to see if it works"): on closed doors a seen hinge always meant pull,
+# on open doors hinges also show from the push side. So the hinge rule is used only on doors judged closed.
+#   - door head "state" ["closed", "open"] (opt-in like door_type; label from attributes "state", left out when missing).
+#   - decide(..., closed=None): None -> as step B; True -> step B; False (open) -> hinges ignored for opening and hinge side (as
+#     step A), hinges_seen still reported, opening_source "classifier".
+#   - score(..., state_run=None, state_gt=False): closed per door from the state run's head (P(closed) >= 0.5) or the true state;
+#     scores gain acc_opening_closed / acc_opening_open and acc_push_pull_hinged_closed / _open (over true state), acc_state.
+def test_state_head_is_opt_in():
+    assert props.HEADS["door"]["state"] == ["closed", "open"]
+    assert props.labels({"opening": "pull", "hinge_side": "left", "door_type": "hinged", "state": "closed"}, "door")["state"] == "closed"
+    assert "state" not in props.labels({"opening": "pull", "hinge_side": "left"}, "door")
+    assert props.resolve({"export": "x", "crop": "door"})["heads"] == ["opening", "hinge_side", "glass"]
+
+
+def test_decide_open_door_ignores_hinges():
+    args = (0.2, "lever", (0.9, 0.1), "right", (0.5, 0.5))
+    d = cascade.decide(*args, hinge_xs=[105.0], door_cx=140.0, closed=False)
+    assert (d["opening"], d["opening_source"], d["hinge_side"], d["hinge_source"], d["hinges_seen"]) == ("push", "classifier", "right", "rule", True)
+    for closed in (True, None):
+        d = cascade.decide(*args, hinge_xs=[105.0], door_cx=140.0, closed=closed)
+        assert (d["opening"], d["hinge_side"]) == ("pull", "left")
+
+
+def test_scores_per_state():
+    truth = [{"opening": "pull", "hinge_side": "left", "state": "closed"}, {"opening": "push", "hinge_side": "left", "state": "open"},
+             {"opening": "slide", "hinge_side": "none", "state": "open"}]
+    dec = [{"door_type": "hinged", "type_source": "handle", "opening": "pull", "hinge_side": "left", "hinge_source": "hinges"},
+           {"door_type": "hinged", "type_source": "handle", "opening": "pull", "hinge_side": "left", "hinge_source": "rule"},
+           {"door_type": "sliding", "type_source": "handle", "opening": "slide", "hinge_side": "none", "hinge_source": None}]
+    s = cascade.scores(dec, truth)
+    assert s["acc_opening_closed"] == pytest.approx(1.0) and s["acc_opening_open"] == pytest.approx(1 / 2)
+    assert s["acc_push_pull_hinged_closed"] == pytest.approx(1.0) and s["acc_push_pull_hinged_open"] == pytest.approx(0.0)
+    assert "acc_opening_closed" not in cascade.scores(dec, [{k: v for k, v in t.items() if k != "state"} for t in truth])
+
+
+def test_score_with_state(tmp_path):
+    root = make_export(tmp_path / "export")
+    for split in ("train", "val", "test"):
+        p = root / "coco" / f"{split}.json"
+        coco = json.loads(p.read_text())
+        for a in coco["annotations"]:
+            if a["category_id"] == 1:
+                a["attributes"]["state"] = "closed" if a["object"] == "door_a" else "open"
+        p.write_text(json.dumps(coco))
+    door_run, handle_run, _ = _runs(tmp_path, root)
+    cfg = props.resolve({"export": str(root), "crop": "door", "heads": ["state"], "backbone": "resnet18", "pretrained": False, "imgsz": 64,
+                         "epochs": 1, "batch": 4, "device": "cpu", "workers": 0, "out": str(tmp_path / "runs"),
+                         "mlflow": {"tracking_uri": f"sqlite:///{tmp_path / 'mlflow.db'}", "experiment": "test"}})
+    state_run = props.train(cfg, run_name="state")["out"]
+    s = cascade.score(door_run, handle_run, root, "test", hinges=True, state_run=state_run)
+    assert 0.0 <= s["acc_state"] <= 1.0 and "acc_opening_closed" in s
+    g = cascade.score(door_run, handle_run, root, "test", hinges=True, state_gt=True)
+    assert g["acc_state"] == pytest.approx(1.0)

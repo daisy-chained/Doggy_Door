@@ -47,7 +47,7 @@ def test_labels_from_attributes():
     assert props.labels(DOOR_A, "door") == {"opening": "push", "hinge_side": "right", "glass": "yes", "door_type": "hinged"}
     assert props.labels(DOOR_B, "door") == {"opening": "slide", "hinge_side": "none", "glass": "no", "door_type": "sliding"}  # sliding: no hinge
     assert props.labels({"handle_type": "knob"}, "handle") == {"handle_type": "knob"}
-    assert set(props.HEADS["door"]) == {"opening", "hinge_side", "glass", "door_type"} and set(props.HEADS["handle"]) == {"handle_type"}
+    assert set(props.HEADS["door"]) == {"opening", "hinge_side", "glass", "door_type", "state"} and set(props.HEADS["handle"]) == {"handle_type"}
     assert props.HEADS["handle"]["handle_type"] == ["lever", "knob", "flush_pull"]
 
 
@@ -92,7 +92,7 @@ def test_dataset_jitter_only_when_training(export_dir):
 def test_model_one_head_per_property_and_subset():
     m = props.Model("resnet18", props.HEADS["door"], pretrained=False)
     out = m(torch.zeros(2, 3, 64, 64))
-    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2), "door_type": (2, 2)}
+    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2), "door_type": (2, 2), "state": (2, 2)}
     one = props.Model("resnet18", {"glass": props.HEADS["door"]["glass"]}, pretrained=False)
     assert set(one(torch.zeros(1, 3, 64, 64))) == {"glass"}        # a single head = a separate model
 
