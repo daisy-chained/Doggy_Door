@@ -106,19 +106,21 @@ def test_behind_needs_losses_and_nan_behind_is_no_return():
 
 
 def test_simulate_and_ra_map_take_the_behind_layer():
+    # a wall at 3 m seen over 120 deg already reaches ~6.1 m slant range at its edges, so the room behind sits at 7 m
     seg = np.full((H, W), WALL_ID, np.uint16)
     d = plane(3.0)
     rng = lambda: np.random.default_rng(0)
     mats = radar.materials(ATTRS)
     a = radar.simulate(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng())
-    b = radar.simulate(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng(), behind=plane(5.0), pass_db=PASS)
-    far = lambda out: (np.linalg.norm(out["points"] - CAM["world_position"], axis=1) > 4.5).sum()
+    b = radar.simulate(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng(), behind=plane(7.0), pass_db=PASS)
+    far = lambda out: (np.linalg.norm(out["points"] - CAM["world_position"], axis=1) > 6.5).sum()
     assert far(a) == 0 and far(b) > 0                      # the room behind the wall shows up
     from doorsim import radar_heatmap as rh
     m0 = rh.ra_map(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng())
-    m1 = rh.ra_map(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng(), behind=plane(5.0), pass_db=PASS)
-    i5 = np.searchsorted(m1["ranges"], 5.0)
-    assert m1["power_db"][i5].max() > m0["power_db"][i5].max() + 10
+    m1 = rh.ra_map(d, seg, d, K(), CAM, radar.MODELS["imaging"], mats, rng(), behind=plane(7.0), pass_db=PASS)
+    i7 = np.searchsorted(m1["ranges"], 7.0)
+    mid = np.abs(m1["az_deg"]) < 20                         # straight ahead: the behind return beats the noise floor speckle
+    assert np.median(m1["power_db"][i7, mid]) > np.median(m0["power_db"][i7, mid]) + 3  # ~6 dB over the floor: -15 dB two-way, (3/7)^4
 
 
 # --- lidar ranges -> pixel depth ---

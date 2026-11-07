@@ -7,8 +7,10 @@ usage (system Python with ROS sourced):
 
 Every recorded scene is replayed (same clutter, door positions, camera poses as meta.json). Output per frame in
 frames/<frame>/: radar_depth.png (uint16 mm, glass.to_png16), radar_seg.png (uint16 labels), radar_depth_noglass.png (depth with
-the glass panes moved away; equal to radar_depth.png where the world has no panes); radar/camera.json (width, height, K, hfov).
-A frame is done when radar_depth_noglass.png exists, so a run can be resumed (retries are up to the caller). Workers: one Gazebo
+the glass panes moved away; equal to radar_depth.png where the world has no panes), radar_behind.png (what is behind the back
+wall / doors / glass: the hidden-wall gpu_lidar "radar_behind" as planar depth on the same pixel grid, radar.behind_depth; 0 =
+no return); radar/camera.json (width, height, K, hfov, behind_lidar).
+A frame is done when radar_behind.png exists (frames rendered before see-through are re-rendered), so a run can be resumed (retries are up to the caller). Workers: one Gazebo
 run each, own GZ_PARTITION (same scheme as thermal_render.py)."""
 import argparse, json, math, multiprocessing, os, pathlib, signal, sys, tempfile, time
 import numpy as np
@@ -18,23 +20,26 @@ SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
 from doorsim import effects, glass, radar, thermal
 
-FILES = ("radar_depth.png", "radar_seg.png", "radar_depth_noglass.png")
+FILES = ("radar_depth.png", "radar_seg.png", "radar_depth_noglass.png", "radar_behind.png")  # last = the done marker
 
 
-def frame_file(ds_dir, frame, name="radar_depth_noglass.png"):
+def frame_file(ds_dir, frame, name=FILES[-1]):
     return ds_dir / "frames" / frame / name
 
 
 def camera_info():
     w, h = radar.WIDE_SIZE
-    return {"width": w, "height": h, "K": radar.camera_K(w, h, radar.WIDE_HFOV), "hfov": radar.WIDE_HFOV}
+    return {"width": w, "height": h, "K": radar.camera_K(w, h, radar.WIDE_HFOV), "hfov": radar.WIDE_HFOV,
+            "behind_lidar": radar.behind_lidar_geometry(w, h, radar.WIDE_HFOV)}
 
 
 def make_sim(gzsim):
-    """gzsim.Sim that also listens to the two wide radar topics (SENSORS is read in Sim.__init__) and can render the wide
+    """gzsim.Sim that also listens to the wide radar topics (depth, labels, the hidden-wall lidar) (SENSORS is read in Sim.__init__) and can render the wide
     depth without the glass panes (a copy of Sim.depth_without_panes for the "radar_depth" key)."""
     gzsim.SENSORS.setdefault("radar_depth", ("/radar/depth", gzsim.Image))
     gzsim.SENSORS.setdefault("radar_seg", ("/radar/seg/labels_map", gzsim.Image))
+    from gz.msgs10.laserscan_pb2 import LaserScan  # lazily: only importable with ROS sourced, like gzsim
+    gzsim.SENSORS.setdefault("radar_behind", ("/radar/behind", LaserScan))
 
     class RadarSim(gzsim.Sim):
         def radar_depth_without_panes(self, panes):
@@ -78,14 +83,19 @@ def render_world(job):
                 sim.set_doors(p["doors"])
                 for frame, cam in vs:
                     sim.set_pose("rig", cam["world_position"], cam["world_rpy"])
-                    m = sim.render(["radar_depth", "radar_seg"])
+                    m = sim.render(["radar_depth", "radar_seg", "radar_behind"])
                     depth = gzsim.image_array(m["radar_depth"], "depth")
                     seg = gzsim.image_array(m["radar_seg"], "seg")
+                    w_px, h_px = radar.WIDE_SIZE
+                    geom = radar.behind_lidar_geometry(w_px, h_px, radar.WIDE_HFOV)
+                    behind = radar.behind_depth(np.array(m["radar_behind"].ranges).reshape(geom["v_samples"], geom["h_samples"]),
+                                                geom, radar.camera_K(w_px, h_px, radar.WIDE_HFOV), (h_px, w_px))
                     noglass = sim.radar_depth_without_panes(list(sim.panes)) if sim.panes else depth
                     out = ds_dir / "frames" / frame
                     Image.fromarray(glass.to_png16(depth)).save(out / FILES[0])
                     Image.fromarray(seg.astype(np.uint16)).save(out / FILES[1])
-                    Image.fromarray(glass.to_png16(noglass)).save(out / FILES[2])  # last: marks the frame as done
+                    Image.fromarray(glass.to_png16(noglass)).save(out / FILES[2])
+                    Image.fromarray(glass.to_png16(behind)).save(out / FILES[3])  # last: marks the frame as done
                     written += 1
                     print(f"[{name}] frame {frame}: {written} frames, {(time.time() - t0) / written:.2f} s/frame", flush=True)
         finally:

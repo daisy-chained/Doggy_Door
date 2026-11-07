@@ -15,6 +15,10 @@ Annotations: the doorway segment in BEV pixels (radar_heatmap.bev_box), attribut
 centre is in the target frame's radar view and not hidden, radar_doorways.in_view). Only OPEN doorways are labelled; a closed door
 is wall to a radar (Claude decision, Madelief can overrule): closed and out-of-view / hidden ones stay as ignore boxes (iscrowd 1 + attributes.ignored, like
 export.py --ignore-below): scored as ignore, left out of the training targets.
+See-through (2026-11-07): when a frame has radar_behind.png (radar_render.py), walls and door panels are partly transparent: the
+map also holds the returns from behind them, weakened by a one-way loss drawn per frame (pass_db_for, from radar.PASS_DB_RANGE,
+seeded by the frame name; domain randomisation) and rough surfaces scatter some power at any angle (radar.DIFFUSE_FRACTION).
+Closed doors are still negatives in the _neg exports (closed_as_negatives); this changes nothing there.
 """
 import argparse, json, multiprocessing, os, pathlib, sys, time, zlib
 import numpy as np
@@ -37,6 +41,13 @@ def to_png(img_db):
     return np.repeat(g.round().astype(np.uint8)[..., None], 3, axis=2)
 
 
+def pass_db_for(frame, seed=0):
+    """One-way pass-through losses {"wall": dB, "door": dB} for a frame: uniform in radar.PASS_DB_RANGE, reproducible from
+    (seed, frame name). Per frame, so one export mixes thin and thick walls / doors."""
+    rng = np.random.default_rng([seed, zlib.crc32(frame.encode())])
+    return {k: float(rng.uniform(*radar.PASS_DB_RANGE[k])) for k in ("wall", "door")}
+
+
 def _init(ctx):
     global _ctx
     _ctx = ctx
@@ -51,8 +62,12 @@ def _map(frame):
     if wf not in _mats:
         _mats[wf] = radar.materials(json.loads((wf.parent / f"{wf.stem}.attributes.json").read_text()))
     rng = np.random.default_rng(zlib.crc32(f"{frame}".encode()))
+    behind = pass_db = None
+    if (fd / "radar_behind.png").exists():  # 0 mm = no return (world_points treats it as such)
+        behind, pass_db = effects.depth_m(fd / "radar_behind.png"), pass_db_for(frame, cfg.get("seed", 0))
     m = rh.ra_map(effects.depth_m(fd / "radar_depth.png"), np.asarray(Image.open(fd / "radar_seg.png")),
-                  effects.depth_m(fd / "radar_depth_noglass.png"), K, meta["camera"], radar.MODELS[model], _mats[wf], rng)
+                  effects.depth_m(fd / "radar_depth_noglass.png"), K, meta["camera"], radar.MODELS[model], _mats[wf], rng,
+                  behind=behind, pass_db=pass_db)
     return m, meta
 
 
@@ -135,6 +150,7 @@ def export_radar(src, out, model, views, size_m=8.0, res=0.05, workers=None, lim
         for t, fr in rd.view_windows({n: metas[n] for n in sorted(rendered)}, [views])[views]:
             tasks.append((split_of[metas[t]["scene"]], t, fr))
     skipped = len(metas) - len(rendered)
+    see_through = bool(rendered) and all((src / "frames" / n / "radar_behind.png").exists() for n in rendered)
     tasks.sort(key=lambda t: (SPLITS.index(t[0]), t[1]))
     tasks = tasks[:limit]
     for sp in SPLITS:
@@ -190,6 +206,7 @@ def export_radar(src, out, model, views, size_m=8.0, res=0.05, workers=None, lim
                                "closed ones are ignore boxes (iscrowd 1, attributes.ignored), left out of the training targets",
                        "box": "doorway segment: centre +- width / 2 along the wall, +- 0.15 m across, axis-aligned in BEV pixels",
                        "in_view": "attribute: the doorway centre is in the target frame's radar view and not hidden"},
+            "see_through": see_through, "pass_db_range": radar.PASS_DB_RANGE, "diffuse_fraction": radar.DIFFUSE_FRACTION,
             "seed": "per frame: crc32(frame name)", "scenes": {sp: sorted(set(s)) for sp, s in given.items()},
             "counts": counts, "frames_not_rendered": skipped, "seconds": round(time.time() - t0, 1), "workers": workers}
     (out / "export.json").write_text(json.dumps(info, indent=2) + "\n")

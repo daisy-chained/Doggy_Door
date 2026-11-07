@@ -2,7 +2,7 @@
 (Madelief 2026-11-04, "just do both"). This is what a real mmWave radar makes before CFAR throws most of it away;
 RadarHD (arXiv 2206.09273) learns from it.
 
-ra_map: per-pixel returns (radar.pixel_returns: material, specular lobe, 1/r^4, glass pass-through) summed over elevation into
+ra_map: per-pixel returns (radar.pixel_returns: material, specular lobe + diffuse share, 1/r^4, glass pass-through, optionally the see-through layer behind walls / doors) summed over elevation into
 a fine (range, azimuth) grid, blurred in azimuth with the model's beam (Gaussian, FWHM = az_res_deg: why the single chip is
 blurry) and in range with the range resolution, plus a noise floor with exponential (Rayleigh-amplitude) speckle. Power units
 as radar.simulate: the bin's pixel power divided by its solid angle (az cell x el cell, el cell capped at the fov), summed over
@@ -47,14 +47,15 @@ def _blur(a, sigma, axis):
     return np.moveaxis(out, 0, axis)
 
 
-def ra_map(depth, seg, depth_noglass, K, camera, model, mats, rng):
-    """{"power_db": (n_range, n_az), "ranges": bin centres (m), "az_deg": bin centres (deg, positive = left)}."""
+def ra_map(depth, seg, depth_noglass, K, camera, model, mats, rng, behind=None, pass_db=None):
+    """behind / pass_db: the see-through layer behind the back wall / doors (radar.pixel_returns; both None = opaque walls).
+    {"power_db": (n_range, n_az), "ranges": bin centres (m), "az_deg": bin centres (deg, positive = left)}."""
     res = radar.RANGE_RES
     nr, na = int(round(MAX_R / res)), int(round(2 * AZ_FOV / AZ_STEP))
     ranges, az_deg = (np.arange(nr) + 0.5) * res, -AZ_FOV + (np.arange(na) + 0.5) * AZ_STEP
     cam_pos = np.array(camera["world_position"], float)
     R = np.array(radar.effects.frames.rot(*camera["world_rpy"]))
-    pts, r, pw = radar.pixel_returns(depth, seg, depth_noglass, K, camera, mats)
+    pts, r, pw = radar.pixel_returns(depth, seg, depth_noglass, K, camera, mats, behind, pass_db)
     b = (pts - cam_pos) @ R  # camera body frame: x forward, y left, z up (azimuth as in radar.simulate)
     az = np.degrees(np.arctan2(b[:, 1], b[:, 0]))
     ir, ia = np.floor(r / res).astype(int), np.floor((az + AZ_FOV) / AZ_STEP).astype(int)

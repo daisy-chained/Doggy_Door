@@ -53,7 +53,7 @@ def test_materials():
 
 def test_specular_falloff():
     p = [radar.returned_power(radar.REFLECT_DB["wall"], a, 3.0) for a in (0, 30, 60, 85)]
-    assert p[0] > p[1] > p[2] >= p[3] and p[3] == 0  # smooth walls reflect away at grazing angles
+    assert p[0] > p[1] > p[2] > p[3] > 0  # smooth walls reflect away at grazing angles; beyond the cutoff only the diffuse share is left
     assert radar.returned_power(0, 0, 2.0) > radar.returned_power(0, 0, 4.0)  # weaker with range
 
 

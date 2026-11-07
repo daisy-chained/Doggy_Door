@@ -6,7 +6,14 @@ IWR6843) and "imaging" (cascade imaging radar).
 Pipeline (simulate): per-pixel world points + surface normals from the depth -> incidence angle -> power per material
 (returned_power) -> bin into (azimuth cell, elevation cell, range bin) -> sum power per bin -> keep bins above NOISE_FLOOR
 (CFAR-lite) -> one noisy point per detection -> random keep -> strongest max_points.
-inject() adds the wide depth + label cameras to a v4 world; radar_render.py replays a dataset with them."""
+inject() adds the wide depth + label cameras to a v4 world; radar_render.py replays a dataset with them.
+
+See-through (Madelief 2026-11-07, "get started on both"; numbers Claude, research-based): real 60-77 GHz radar sees partly through
+drywall and wooden doors, so walls / doors are not opaque. inject() adds a hidden-wall lidar ("radar_behind": a gpu_lidar that
+honours <visibility_mask> and so sees what is behind the back wall / doors, which are hidden from the other sensors with
+<visibility_flags>2); behind_depth turns its ranges into a depth image on the wide camera's pixel grid; pixel_returns adds a
+second layer at that depth for wall / door pixels, weakened by twice the one-way pass loss. Rough surfaces also scatter some
+power back at any angle (DIFFUSE_FRACTION)."""
 import copy, math
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -43,9 +50,17 @@ REFLECT_DB = {
     "plastic": -10.0,        # weak, literature-guided
     "plant": -14.0,          # leaves scatter weakly (guess, not from a source)
 }
+# One-way pass-through loss (dB) through a back wall / a door panel, drawn per frame (radar_export.pass_db_for) = domain
+# randomisation: the literature spread is wide. 73 GHz: drywall ~4 dB, wooden door ~7.6 dB (arXiv 1908.00166); NIST 60 GHz:
+# doors 25-40 dB, plasterboard 12-32 dB (setup dependent). Claude decision, literature-guided.
+PASS_DB_RANGE = {"wall": (-15.0, -4.0), "door": (-25.0, -7.0)}
 GLASS_PASS_DB = -10.0        # one-way loss through interior glass: 7.5-18 dB (NIST, 60 GHz); the return from behind goes through twice
 
 # --- specular lobe: smooth surfaces reflect away from the radar at grazing angles (DREAM-PCD, arXiv 2309.15374) ---
+# plus a small diffuse share (effective-roughness model, Degli-Esposti): plasterboard at 60 GHz is strongly directive (pattern
+# order ~17, arXiv 1905.08295), so only a small part of the power is scattered Lambertian-like (cos^2 there and back).
+# Claude decision, literature-guided.
+DIFFUSE_FRACTION = 0.1
 LOBE_EXPONENT = 4            # lobe = cos(incidence)^n
 LOBE_CUTOFF_DEG = 75.0       # exactly no return beyond this incidence angle
 UNKNOWN_INCIDENCE_DEG = 45.0  # incidence where the normal can't be estimated (depth edges, image border)
@@ -64,9 +79,17 @@ def camera_K(w, h, hfov):
     return [f, 0.0, w / 2, 0.0, f, h / 2, 0.0, 0.0, 1.0]
 
 
+class Materials(dict):
+    """{seg id: material class}, plus door_ids: the ids of the door panels (class 1; they are "wood" like other furniture, but
+    a radar passes through them, see pixel_returns)."""
+    door_ids = frozenset()
+
+
 def materials(attrs):
-    """{seg id: material class} for the labelled things in a world's attributes, plus the labelled structure."""
-    out = {i: {"floor": "floor", "back_wall": "wall", "room_shell": "wall"}[n] for n, i in thermal.STRUCT_IDS.items()}
+    """Materials for the labelled things in a world's attributes, plus the labelled structure ({seg id: material class})."""
+    out = Materials()
+    out.door_ids = frozenset(o["id"] for o in attrs["objects"].values() if "id" in o and o.get("class") == 1)
+    out.update({i: {"floor": "floor", "back_wall": "wall", "room_shell": "wall"}[n] for n, i in thermal.STRUCT_IDS.items()})
     for name, o in attrs["objects"].items():
         if "id" not in o:
             continue
@@ -93,10 +116,13 @@ def materials(attrs):
 
 
 def returned_power(reflect_db, incidence_deg, r):
-    """Linear power: 10^(dB/10) x cos(incidence)^n / r^4; exactly 0 beyond LOBE_CUTOFF_DEG. Arrays or scalars."""
+    """Linear power: 10^(dB/10) x ((1 - f) cos(incidence)^n + f cos(incidence)^2) / r^4, f = DIFFUSE_FRACTION; the specular
+    part is exactly 0 beyond LOBE_CUTOFF_DEG, the diffuse part has no cutoff. Arrays or scalars."""
     inc = np.asarray(incidence_deg, float)
     lobe = np.where(inc < LOBE_CUTOFF_DEG, np.cos(np.radians(np.minimum(inc, 89.0))) ** LOBE_EXPONENT, 0.0)
-    out = 10.0 ** (np.asarray(reflect_db, float) / 10) * lobe / np.maximum(np.asarray(r, float), 1e-3) ** 4
+    diffuse = np.cos(np.radians(np.minimum(inc, 90.0))) ** 2
+    shape = (1 - DIFFUSE_FRACTION) * lobe + DIFFUSE_FRACTION * diffuse
+    out = 10.0 ** (np.asarray(reflect_db, float) / 10) * shape / np.maximum(np.asarray(r, float), 1e-3) ** 4
     return float(out) if out.ndim == 0 else out
 
 
@@ -148,14 +174,50 @@ def _returns(depth, wp, incidence, solid, db, cam_pos, valid):
     return r, p
 
 
-def pixel_returns(depth, seg, depth_noglass, K, camera, mats):
+def behind_lidar_geometry(w, h, hfov):
+    """Rays of the "radar_behind" gpu_lidar: one per pixel column / row of a w x h camera with horizontal fov hfov (rad)."""
+    vf = 2 * math.atan(math.tan(hfov / 2) * h / w)
+    return {"h_samples": w, "v_samples": h, "h_min": -hfov / 2, "h_max": hfov / 2, "v_min": -vf / 2, "v_max": vf / 2}
+
+
+def behind_depth(ranges, geom, K, shape):
+    """Lidar ranges (v_samples, h_samples; row 0 = lowest ray, col 0 = h_min = rightmost; non-finite = no return) -> planar
+    z-depth (m) on a camera's pixel grid (H, W) (row 0 = top, col 0 = left), NaN where there is no return (or a neighbour of the
+    bilinear sample has none). Each pixel's ray angles (azimuth positive = left, elevation) index the equally spaced ray grid."""
+    H, W = shape
+    ranges = np.asarray(ranges, float)
+    u, v = np.meshgrid(np.arange(W) - K[2], np.arange(H) - K[5])
+    left, up = -u / K[0], -v / K[4]
+    az = np.arctan2(left, 1.0)
+    el = np.arctan2(up, np.hypot(1.0, left))
+    nv, nh = ranges.shape
+    fa = (az - geom["h_min"]) / (geom["h_max"] - geom["h_min"]) * (nh - 1)
+    fe = (el - geom["v_min"]) / (geom["v_max"] - geom["v_min"]) * (nv - 1)
+    out_of_grid = (fa < -0.5) | (fa > nh - 0.5) | (fe < -0.5) | (fe > nv - 0.5)  # up to half a ray outside: clamp
+    fa, fe = np.clip(fa, 0, nh - 1), np.clip(fe, 0, nv - 1)
+    i0, j0 = np.minimum(np.floor(fe).astype(int), max(nv - 2, 0)), np.minimum(np.floor(fa).astype(int), max(nh - 2, 0))
+    i1, j1 = np.minimum(i0 + 1, nv - 1), np.minimum(j0 + 1, nh - 1)
+    te, ta = fe - i0, fa - j0
+    ok = np.isfinite(ranges[i0, j0] + ranges[i0, j1] + ranges[i1, j0] + ranges[i1, j1]) & ~out_of_grid
+    with np.errstate(invalid="ignore"):
+        r = ((1 - te) * (1 - ta) * ranges[i0, j0] + (1 - te) * ta * ranges[i0, j1]
+             + te * (1 - ta) * ranges[i1, j0] + te * ta * ranges[i1, j1])
+        return np.where(ok, r * np.cos(az) * np.cos(el), np.nan)
+
+
+def pixel_returns(depth, seg, depth_noglass, K, camera, mats, behind=None, pass_db=None):
     """The radar's per-pixel returns before any binning or thresholding: (world points (N, 3), range from the radar (N,) in m,
     power (N,)) for every valid pixel of the surface layer, then of the layer behind glass (two-way pass-through loss,
-    reflecting like a wall), concatenated. Power = reflect gain x lobe / r^4 x pixel solid angle (linear; zero = no return).
+    reflecting like a wall), concatenated. With behind (planar z-depth of what is behind the back wall / doors / glass, NaN = no
+    return; see behind_depth) the wall and door-panel pixels get a second layer at that depth too (reflecting like a wall, weakened
+    by twice pass_db["wall"] / pass_db["door"], one-way dB; pass_db is then required), and the glass layer uses it instead of
+    depth_noglass. Metal, the room shell and clutter pass nothing. Power = reflect gain x lobe / r^4 x pixel solid angle (linear; zero = no return).
     depth / depth_noglass: planar z-depth in m (0 / NaN = no return), seg: label image, camera: {"world_position", "world_rpy"},
-    mats: materials(attrs). Shared by simulate (detections) and radar_heatmap (raw range x azimuth power map)."""
+    mats: materials(attrs) (its door_ids mark the door panels). Shared by simulate (detections) and radar_heatmap (raw range x azimuth power map)."""
+    if behind is not None and pass_db is None:
+        raise ValueError("behind needs pass_db ({'wall': dB, 'door': dB}, one-way)")
     depth = np.asarray(depth, float)
-    depth_noglass = np.asarray(depth_noglass, float)
+    depth_noglass = np.asarray(depth_noglass, float) if behind is None else np.asarray(behind, float)
     seg = np.asarray(seg)
     cam_pos = np.array(camera["world_position"], float)
     solid = _pixel_solid_angle(depth.shape, K)
@@ -173,6 +235,16 @@ def pixel_returns(depth, seg, depth_noglass, K, camera, mats):
         inc = _incidence(wp, d, cam_pos)
         r, p = _returns(d, wp, inc, solid, level, cam_pos, valid)
         layers.append((wp[valid], r[valid], p[valid]))
+    if behind is not None:  # the return from behind the back wall / a door panel: two-way pass loss, reflecting like a wall
+        door = np.isin(seg, list(getattr(mats, "door_ids", ())))
+        wall = (seg == thermal.STRUCT_IDS["back_wall"]) & ~door
+        loss = np.where(door, 2 * pass_db["door"], 2 * pass_db["wall"])
+        wp = effects.world_points(depth_noglass, K, camera)
+        valid = np.isfinite(wp[..., 0]) & (door | wall)
+        if valid.any():
+            inc = _incidence(wp, depth_noglass, cam_pos)
+            r, p = _returns(depth_noglass, wp, inc, solid, REFLECT_DB["wall"] + loss, cam_pos, valid)
+            layers.append((wp[valid], r[valid], p[valid]))
     glass = names == "glass"
     if glass.any():  # the return from behind the glass: two-way loss through the pane, reflecting like a wall
         wp = effects.world_points(depth_noglass, K, camera)
@@ -184,13 +256,14 @@ def pixel_returns(depth, seg, depth_noglass, K, camera, mats):
             np.concatenate([l[2] for l in layers]))
 
 
-def simulate(depth, seg, depth_noglass, K, camera, model, mats, rng):
+def simulate(depth, seg, depth_noglass, K, camera, model, mats, rng, behind=None, pass_db=None):
     """Radar detections from one wide render. depth / depth_noglass: planar z-depth in m (0 / NaN = no return),
-    seg: label image, camera: {"world_position", "world_rpy"}, model: MODELS[...], mats: materials(attrs).
+    seg: label image, camera: {"world_position", "world_rpy"}, model: MODELS[...], mats: materials(attrs),
+    behind / pass_db: the see-through layer (pixel_returns).
     Returns {"points": (N, 3) world xyz, "power": (N,)} (power in NOISE_FLOOR units: beam-filling power of the bin)."""
     cam_pos = np.array(camera["world_position"], float)
     R = np.array(effects.frames.rot(*camera["world_rpy"]))
-    pts, rng_m, pw = pixel_returns(depth, seg, depth_noglass, K, camera, mats)
+    pts, rng_m, pw = pixel_returns(depth, seg, depth_noglass, K, camera, mats, behind, pass_db)
 
     empty = {"points": np.zeros((0, 3)), "power": np.zeros(0)}
     keep = (pw > 0) & (rng_m < MAX_RANGE)
@@ -243,7 +316,11 @@ WIDE_CLIP = ("0.05", "15")
 
 def inject(sdf_text):
     """World SDF text with a wide depth camera (topic "radar/depth") and a wide segmentation camera ("radar/seg") next to the
-    rig's rgbd camera (same link + pose, same update rate), plus the structure labels (floor / back wall / room shell)."""
+    rig's rgbd camera (same link + pose, same update rate), plus the structure labels (floor / back wall / room shell).
+    Also the hidden-wall lidar "radar_behind" (gpu_lidar, topic "radar/behind", one ray per wide pixel column / row,
+    <visibility_mask>1</visibility_mask>) and <visibility_flags>2 on every visual of the back wall, doors, handles and glass,
+    so only the lidar sees through them. Gazebo's depth camera ignores visibility masks (tested 2026-11-07), the gpu_lidar
+    honours them."""
     sdf_text = thermal.inject(sdf_text, {}, thermal=False)  # labels only
     root = ET.fromstring(sdf_text.encode())
     rig = next(m for m in root.find("world").findall("model") if m.get("name") == "rig")
@@ -270,8 +347,32 @@ def inject(sdf_text):
             ET.SubElement(clip, "near").text, ET.SubElement(clip, "far").text = WIDE_CLIP
             link.insert(at, s)
             at += 1
+        g = behind_lidar_geometry(*WIDE_SIZE, WIDE_HFOV)
+        s = ET.Element("sensor", name="radar_behind", type="gpu_lidar")
+        if rgbd.find("pose") is not None:
+            s.append(copy.deepcopy(rgbd.find("pose")))
+        ET.SubElement(s, "topic").text = "radar/behind"
+        for tag in ("update_rate", "always_on"):
+            ET.SubElement(s, tag).text = rgbd.find(tag).text
+        lidar = ET.SubElement(s, "lidar")
+        scan = ET.SubElement(lidar, "scan")
+        for axis, n, lo, hi in (("horizontal", g["h_samples"], g["h_min"], g["h_max"]),
+                                ("vertical", g["v_samples"], g["v_min"], g["v_max"])):
+            ax = ET.SubElement(scan, axis)
+            for tag, val in (("samples", str(n)), ("resolution", "1"), ("min_angle", f"{lo:.9f}"), ("max_angle", f"{hi:.9f}")):
+                ET.SubElement(ax, tag).text = val
+        rng = ET.SubElement(lidar, "range")
+        for tag, val in (("min", "0.05"), ("max", "15"), ("resolution", "0.01")):
+            ET.SubElement(rng, tag).text = val
+        ET.SubElement(lidar, "visibility_mask").text = "1"
+        link.insert(at, s)
         break
     else:
         raise ValueError("rig has no rgbd_camera sensor")
+    for m in root.find("world").findall("model"):
+        if m.get("name") == "back_wall" or m.get("name").startswith(("door_", "handle_", "glass_")):
+            for vis in m.iter("visual"):
+                if vis.find("visibility_flags") is None:  # glass already has it
+                    ET.SubElement(vis, "visibility_flags").text = "2"
     ET.indent(root)
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
