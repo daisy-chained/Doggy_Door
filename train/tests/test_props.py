@@ -44,10 +44,10 @@ def export_dir(tmp_path):
 
 # --- labels ---
 def test_labels_from_attributes():
-    assert props.labels(DOOR_A, "door") == {"opening": "push", "hinge_side": "right", "glass": "yes"}
-    assert props.labels(DOOR_B, "door") == {"opening": "slide", "hinge_side": "none", "glass": "no"}  # sliding: no hinge
+    assert props.labels(DOOR_A, "door") == {"opening": "push", "hinge_side": "right", "glass": "yes", "door_type": "hinged"}
+    assert props.labels(DOOR_B, "door") == {"opening": "slide", "hinge_side": "none", "glass": "no", "door_type": "sliding"}  # sliding: no hinge
     assert props.labels({"handle_type": "knob"}, "handle") == {"handle_type": "knob"}
-    assert set(props.HEADS["door"]) == {"opening", "hinge_side", "glass"} and set(props.HEADS["handle"]) == {"handle_type"}
+    assert set(props.HEADS["door"]) == {"opening", "hinge_side", "glass", "door_type"} and set(props.HEADS["handle"]) == {"handle_type"}
     assert props.HEADS["handle"]["handle_type"] == ["lever", "knob", "flush_pull"]
 
 
