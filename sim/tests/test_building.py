@@ -249,3 +249,178 @@ def test_approach_poses_clear_of_obstacles(seed):
         assert hit == (not p["clear"])
         blocked += hit
     assert blocked <= len(b["poses"]) // 10
+
+
+# Added 2026-11-08 (Claude, research-based detail of her generator design; logged in the project note): clutter back in the buildings.
+#   cfg["clutter"] (optional; absent -> b["clutter"] == [] and the building is exactly as before, the clutter draws come after all other
+#   draws): {"rooms": {"floor_count": [lo, hi], "wall_count": [lo, hi]}, "corridor": {same}, "gap": m between floor items,
+#   "p_against_wall": chance a floor item stands with its back to a wall of its space, "wall_z": [lo, hi] height range of wall items,
+#   "door_margin": m that wall items stay off a door's opening + trim (+ slide path) along the wall}.
+#   Items come from clutter.POOL (floor items on the floor, wall items on a wall face); one item at most once per space, reused across
+#   spaces. b["clutter"] = [{"name": "clutter_<n>" (n = 0..), "item": pool name, "label": 200 + (pool id - 100), "space", "place":
+#   "floor" | "wall", "position": [x, y, z] (centre of the item's box), "yaw" (item front = local -x, as in clutter.py), "colour": rgb or
+#   None (shape items get a random colour)}]. Label ids: doors stay below 200 (MAX_DOORS = 19 -> 10 * 19 + 7 = 197), clutter 200..247.
+#   Floor items: footprint (clutter.footprint) inside the space (rect shrunk by WALL_T / 2), no two closer than gap, and off every door's
+#   keep-out strip on that side: along the wall = the door's opening + trim (+ slide path) grown by robot_radius each side, into the space
+#   = max(approach distances) + robot_radius from the wall centre line (so the robot's approach line and a hinged panel's swing stay free).
+#   An item that would cut a space's clear approach poses apart (free map grown by robot_radius) is dropped. Floor items are occupied in
+#   the map: occupancy(layout, doors, res, clutter=None) marks their footprints; approach poses are computed with the clutter in.
+#   SDF: one static model per item, named as in b["clutter"], with visuals + collisions (so the robot can't drive through) and its label.
+CCFG = dict(CFG, clutter={"rooms": {"floor_count": [1, 4], "wall_count": [0, 2]}, "corridor": {"floor_count": [0, 2], "wall_count": [0, 3]},
+                          "gap": 0.05, "p_against_wall": 0.6, "wall_z": [0.9, 2.0], "door_margin": 0.2})
+
+
+def _pool():
+    from doorsim import clutter
+    return {p["name"]: p for p in clutter.POOL}
+
+
+def _aabb(corners):
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _door_span(d, margin):
+    """(x0, y0, x1, y1) of the door's opening + trim (+ slide path) along its wall, grown by margin, as a thin box on the wall line."""
+    lo, hi = building._extent(d["spec"], 1)
+    lo, hi = min(lo, -hi), max(hi, -lo)  # either direction of the local y axis
+    if abs(math.cos(d["yaw"])) > 0.5:     # wall along y
+        return d["pos"][1] + lo - margin, d["pos"][1] + hi + margin, "y"
+    return d["pos"][0] + lo - margin, d["pos"][0] + hi + margin, "x"
+
+
+def _keep_out(d, space_rect, cfg):
+    """Keep-out strip of door d inside the space (rect [x0, y0, x1, y1]), conservative (both slide directions)."""
+    lo, hi, along = _door_span(d, cfg["robot_radius"])
+    deep = max(cfg["approach"]["distances"]) + cfg["robot_radius"]
+    r = space_rect
+    if along == "x":
+        y = d["pos"][1]
+        return [lo, y, hi, y + deep] if r[1] >= y - 1e-6 else [lo, y - deep, hi, y]
+    x = d["pos"][0]
+    return [x, lo, x + deep, hi] if r[0] >= x - 1e-6 else [x - deep, lo, x, hi]
+
+
+def test_no_clutter_without_config():
+    b = building.make_building(CFG, 2)
+    assert b["clutter"] == []
+    assert "clutter_" not in building.building_sdf(b, "x")
+
+
+def test_door_ids_stay_below_clutter_ids():
+    assert building.MAX_DOORS == 19 and 10 * building.MAX_DOORS + 7 < 200
+    many = dict(CFG, corridor_length=[40.0, 40.0], room_width=[2.6, 2.6], p_second_door=1.0, p_neighbour_door=1.0)
+    with pytest.raises(ValueError):  # more rooms than MAX_DOORS: some room gets no door
+        building.make_building(many, 0)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_clutter_placement(seed):
+    b = building.make_building(CCFG, seed)
+    pool, sp, cl = _pool(), _spaces(b["layout"]), b["clutter"]
+    assert cl and [c["name"] for c in cl] == [f"clutter_{i}" for i in range(len(cl))]
+    per = {}
+    for c in cl:
+        p = pool[c["item"]]
+        assert c["label"] == 200 + p["id"] - 100 and 200 <= c["label"] < 256
+        assert c["place"] == p["place"] and c["space"] in sp
+        assert (c["colour"] is not None) == p["recolour"]
+        per.setdefault((c["space"], c["place"]), []).append(c)
+    for (space, place), cs in per.items():
+        assert len({c["item"] for c in cs}) == len(cs)                       # one item at most once per space
+        key = "corridor" if space == "corridor" else "rooms"
+        assert len(cs) <= CCFG["clutter"][key][f"{place}_count"][1]
+    for c in cl:
+        p, r = pool[c["item"]], sp[c["space"]]
+        if c["place"] == "floor":
+            assert c["position"][2] == pytest.approx(p["size"][2] / 2)
+            bb = _aabb(building.clutter.footprint({"position": c["position"], "yaw": c["yaw"]}, p))
+            e = building.WALL_T / 2
+            assert bb[0] >= r[0] + e - 1e-6 and bb[2] <= r[2] - e + 1e-6 and bb[1] >= r[1] + e - 1e-6 and bb[3] <= r[3] - e + 1e-6
+            for d in b["doors"]:
+                if c["space"] in d["connects"]:
+                    assert not _overlap(bb, _keep_out(d, r, CCFG)), (c, d["id"])
+        else:
+            z0, z1 = CCFG["clutter"]["wall_z"]
+            assert z0 - 1e-6 <= c["position"][2] - p["size"][2] / 2 and c["position"][2] + p["size"][2] / 2 <= z1 + 1e-6
+            off = building.WALL_T / 2 + p["size"][0] / 2
+            x, y = c["position"][:2]
+            on = [w for w, v in (("x0", x - r[0]), ("x1", r[2] - x), ("y0", y - r[1]), ("y1", r[3] - y)) if abs(v - off) < 1e-6]
+            assert on, c                                                     # hangs flat on a wall face of its space
+            half = p["size"][1] / 2
+            for d in b["doors"]:
+                lo, hi, along = _door_span(d, CCFG["clutter"]["door_margin"])
+                wall_line = d["pos"][1] if along == "x" else d["pos"][0]
+                if abs((y if along == "x" else x) - wall_line) < off + 1e-6:
+                    a = x if along == "x" else y
+                    assert a + half <= lo + 1e-6 or a - half >= hi - 1e-6, (c, d["id"])
+    floor = [c for c in cl if c["place"] == "floor"]
+    for i, a in enumerate(floor):
+        for c in floor[i + 1:]:
+            if a["space"] == c["space"]:
+                ba = _aabb(building.clutter.footprint({"position": a["position"], "yaw": a["yaw"]}, pool[a["item"]]))
+                bc = _aabb(building.clutter.footprint({"position": c["position"], "yaw": c["yaw"]}, pool[c["item"]]))
+                g = CCFG["clutter"]["gap"] - 1e-6
+                assert not _overlap([ba[0] - g, ba[1] - g, ba[2] + g, ba[3] + g], bc)
+
+
+def test_clutter_same_seed_and_doors_unchanged():
+    a, b = building.make_building(CCFG, 4), building.make_building(CCFG, 4)
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    plain = building.make_building(CFG, 4)
+    assert json.dumps(plain["doors"], sort_keys=True) == json.dumps(a["doors"], sort_keys=True)
+    assert plain["layout"] == a["layout"]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_clutter_in_map_and_poses_connected(seed):
+    b = building.make_building(CCFG, seed)
+    res, rr, pool = CCFG["map_resolution"], CCFG["robot_radius"], _pool()
+    grid, origin = building.occupancy(b["layout"], b["doors"], res, clutter=b["clutter"])
+    for c in b["clutter"]:
+        if c["place"] == "floor":
+            assert _cell(grid, origin, res, *c["position"][:2]) == 0
+    plain, _ = building.occupancy(b["layout"], b["doors"], res)
+    assert (grid == 0).sum() > (plain == 0).sum()
+    r = int(math.ceil(rr / res))
+    for p in b["poses"]:                                                     # poses see the clutter
+        c, row = int((p["x"] - origin[0]) / res), grid.shape[0] - 1 - int((p["y"] - origin[1]) / res)
+        assert (grid[max(0, row - r):row + r + 1, max(0, c - r):c + r + 1] == 0).any() == (not p["clear"])
+    # clutter never cuts apart clear poses of one space that are connected without it (free map grown by robot_radius; an open door
+    # swung into a narrow corridor can already block it on its own, that is left as is)
+    from scipy import ndimage
+
+    def comps(g):
+        occ, fits = g == 0, np.ones(g.shape, bool)
+        for dr in range(-r, r + 1):
+            for dc in range(-r, r + 1):
+                fits &= ~np.roll(np.roll(occ, dr, 0), dc, 1)
+        return ndimage.label(fits)[0]
+
+    lab, lab0 = comps(grid), comps(plain)
+    cell = lambda p: (grid.shape[0] - 1 - int((p["y"] - origin[1]) / res), int((p["x"] - origin[0]) / res))
+    clear = [p for p in b["poses"] if p["clear"]]
+    for i, p in enumerate(clear):
+        for q in clear[i + 1:]:
+            if p["space"] == q["space"] and lab0[cell(p)] == lab0[cell(q)] != 0:
+                assert lab[cell(p)] == lab[cell(q)], (p, q)
+
+def test_clutter_sdf_and_json(tmp_path):
+    b = building.make_building(CCFG, 5)
+    root = ET.fromstring(building.building_sdf(b, "bld_c"))
+    models = {m.get("name"): m for m in root.find("world").findall("model")}
+    door_labels = [int(l.text) for n, m in models.items() if n.startswith("door_") for l in m.iter("label")]
+    assert door_labels and len(door_labels) == len(set(door_labels)) and max(door_labels) < 200
+    for c in b["clutter"]:
+        m = models[c["name"]]
+        assert m.find("static").text.strip() == "true"
+        assert int(m.find(".//label").text) == c["label"]
+        assert m.findall(".//collision") and m.findall(".//visual")
+        pose = [float(v) for v in m.find("pose").text.split()]
+        assert pose[:3] == pytest.approx(c["position"], abs=1e-4) and math.cos(pose[5] - c["yaw"]) == pytest.approx(1.0, abs=1e-6)
+    building.write(b, tmp_path, "bld_c")
+    meta = json.loads((tmp_path / "bld_c.building.json").read_text())
+    assert meta["clutter"] == json.loads(json.dumps(b["clutter"]))
+    grid = (tmp_path / "bld_c.map.pgm").read_bytes()
+    g, o = building.occupancy(b["layout"], b["doors"], CCFG["map_resolution"], clutter=b["clutter"])
+    assert grid.endswith(g.tobytes())
