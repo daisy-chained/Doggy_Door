@@ -16,7 +16,7 @@ HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "
                   "door_type": ["hinged", "sliding"]},  # door_type: opt-in head (cascade step A), not in the default heads
          "handle": {"handle_type": ["lever", "knob", "flush_pull"]}}
 DEFAULT_HEADS = {"door": ["opening", "hinge_side", "glass"]}  # crops not listed: all their heads
-CATEGORY = {"door": 1, "handle": 2}
+CATEGORY = {"door": 1, "handle": 2, "hinge": 3}  # hinge: detector class only (cascade step B), no crop heads
 MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
 DHA_MEAN, DHA_STD = 0.5, 0.25  # dha channels are 0..255 maps, not photos
 CHANNELS = {"rgb": 3, "dha": 3, "rgb_dha": 6}
