@@ -36,7 +36,8 @@ def synthetic(n=400, seed=0):
         flush = rng.random() < 0.3
         geo = rng.random() < 0.7
         r = {f: 0.0 for f in cascade.FEATURES}
-        r.update(h_flush=float(flush), h_lever=float(not flush), p_slide=rng.random(), p_push=rng.random(), p_left=rng.random(),
+        lever = not flush and rng.random() < 0.5                      # lever / knob split: h_flush is the only clean sliding cue
+        r.update(h_flush=float(flush), h_lever=float(lever), h_knob=float(not flush and not lever), p_slide=rng.random(), p_push=rng.random(), p_left=rng.random(),
                  p_closed=rng.random(), panel_off=rng.normal(0, 0.3) if geo else math.nan, near_wall=math.nan, box_w=rng.uniform(20, 200),
                  box_h=rng.uniform(60, 400))
         if flush:

@@ -1,7 +1,7 @@
 """Door property cascade, step A (Madelief 2026-11-07): decide the door type first, then ask the hinged-only questions.
 Type from the handle seen inside the door box (flush pull -> sliding, lever / knob -> hinged), else from a type classifier;
 sliding -> opening "slide", hinge side "none"; hinged -> push vs pull from the opening head, left / right from the handle rule, else the hinge_side head."""
-import json, pathlib
+import json, math, pathlib
 import numpy as np
 import torch
 
@@ -124,26 +124,26 @@ def _run_out(run, doors):
     return {h: torch.cat([o[h].float() for o in outs]) for h in outs[0]}, meta
 
 
-def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False, state_run=None, state_gt=False, angle=False):
-    """Cascade vs flat door classifier, on the true boxes (preds None: GT doors and GT handles) or on the detector's boxes
-    (preds {image id: {boxes xyxy, scores, labels}}: detector doors matched to GT doors like props.score_on_boxes, detector handles).
-    -> scores(...) + flat_acc_opening / flat_acc_hinge_side (the door run's plain argmax on the same doors); with preds also "matched".
-    hinges=True (step B): hinge boxes (GT category 3, or the detector's hinge boxes) near each door feed decide(); scores gain the hinge keys.
-    Closed-doors-only: closed per door = the true state (state_gt) or the state run's head (P(closed) >= 0.5), else None; passed to decide(); acc_state = share of doors
-    whose closed / open used equals the true state (needs a state label).
-    angle=True: door_angle.geometry per scored door (its box, true or detector) from its frame's sensor depth (cached per image; no depth.png -> None) goes to decide(geom=)."""
+FEATURES = ["p_slide", "p_push", "p_left", "p_closed", "h_lever", "h_flush", "h_knob", "h_none", "rule_side", "hinges_n", "hinges_side",
+            "panel_off", "near_wall", "box_w", "box_h"]   # the cues of the cascade as one row per door (learned_tree reads them in this order)
+
+
+def _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle):
+    """Everything the cascade knows per door, computed once for score() and cue_table(): the door list (true boxes, or detector boxes
+    matched to GT doors like props.score_on_boxes), their handles, hinge boxes, true labels, handle type, head probabilities, state and
+    door_angle geometry. -> dict of parallel lists / arrays (+ "out", "meta" of the door run, "dec" = decide() per door)."""
     from .evaluate import match
     _, dmeta = props.load(door_run, "cpu")
     ds = CropDataset(export_dir, split, "door", dmeta["imgsz"], dmeta["margin"], dmeta["min_px"], input=dmeta["input"])
     names = props.HEADS["door"]
     coco = json.loads((ds.root / "coco" / f"{split}.json").read_text())
-    gt_handles = {}
+    gt_handles, gt_hinges = {}, {}
     for a in coco["annotations"]:
-        if a["category_id"] == CATEGORY["handle"] and not a.get("iscrowd"):
+        if a.get("iscrowd"):
+            continue
+        if a["category_id"] == CATEGORY["handle"]:
             gt_handles.setdefault(a["image_id"], []).append(a["bbox"])
-    gt_hinges = {}
-    for a in coco["annotations"]:
-        if a["category_id"] == CATEGORY["hinge"] and not a.get("iscrowd"):
+        if a["category_id"] == CATEGORY["hinge"]:
             gt_hinges.setdefault(a["image_id"], []).append(a["bbox"])
     by_image = {}
     for i, image_id in enumerate(ds.image_ids):
@@ -177,41 +177,78 @@ def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, io
         for i, c in zip(idx, out["handle_type"].argmax(1).tolist()):
             handle_type[i] = hmeta["heads"]["handle_type"][c]
     out, meta = _run_out(door_run, doors)
-    if len(doors):
-        p_pp, p_lr = _probs(out, meta, "opening", ["push", "pull"]), _probs(out, meta, "hinge_side", ["left", "right"])
-        if type_run:
-            tout, tmeta = _run_out(type_run, doors)
-            p_sl = torch.softmax(tout["door_type"] / tmeta["temperature"].get("door_type", 1.0), 1)[:, tmeta["heads"]["door_type"].index("sliding")].numpy()
-        else:
-            p_sl = torch.softmax(out["opening"] / meta["temperature"].get("opening", 1.0), 1)[:, meta["heads"]["opening"].index("slide")].numpy()
-        def hinge_kw(i):
-            if not hinges:
-                return {}
-            x, _, w, _ = doors[i][1]
-            return {"hinge_xs": [hboxes[i][k][0] + hboxes[i][k][2] / 2 for k in hinges_near(doors[i][1], hboxes[i])], "door_cx": x + w / 2}
-        closed = [None] * len(doors)
-        if state_gt:
-            closed = [t.get("state") == "closed" for t in truth]
-        elif state_run:
-            sout, smeta = _run_out(state_run, doors)
-            closed = (_probs(sout, smeta, "state", ["closed", "open"])[:, 0] >= 0.5).tolist()
-        cache, geoms = {}, [None] * len(doors)
-        if angle:
-            for i, (path, box) in enumerate(doors):
-                if path not in cache:
-                    cache[path] = door_angle.depth_for(path)
-                if cache[path] is not None:
-                    geoms[i] = door_angle.geometry(*cache[path], box)
-        dec = [decide(float(p_sl[i]), handle_type[i], tuple(p_pp[i]), props.hinge_from_handle(doors[i][1], handles[i]), tuple(p_lr[i]), closed=closed[i], geom=geoms[i] if angle else None, **hinge_kw(i))
-               for i in range(len(doors))]
+    d = {"doors": doors, "handles": handles, "truth": truth, "handle_type": handle_type, "out": out, "meta": meta, "dec": [], "closed": [None] * len(doors),
+         "p_closed": [math.nan] * len(doors), "geoms": [None] * len(doors), "hinge_xs": [[] for _ in doors], "rule": [None] * len(doors),
+         "p_sl": np.zeros(0), "p_pp": np.zeros((0, 2)), "p_lr": np.zeros((0, 2))}
+    if not len(doors):
+        return d
+    d["p_pp"], d["p_lr"] = _probs(out, meta, "opening", ["push", "pull"]), _probs(out, meta, "hinge_side", ["left", "right"])
+    if type_run:
+        tout, tmeta = _run_out(type_run, doors)
+        d["p_sl"] = torch.softmax(tout["door_type"] / tmeta["temperature"].get("door_type", 1.0), 1)[:, tmeta["heads"]["door_type"].index("sliding")].numpy()
     else:
-        dec = []
+        d["p_sl"] = torch.softmax(out["opening"] / meta["temperature"].get("opening", 1.0), 1)[:, meta["heads"]["opening"].index("slide")].numpy()
+    if hinges:
+        d["hinge_xs"] = [[hboxes[i][k][0] + hboxes[i][k][2] / 2 for k in hinges_near(doors[i][1], hboxes[i])] for i in range(len(doors))]
+    if state_gt:
+        d["closed"] = [t.get("state") == "closed" for t in truth]
+    elif state_run:
+        sout, smeta = _run_out(state_run, doors)
+        pc = _probs(sout, smeta, "state", ["closed", "open"])[:, 0]
+        d["p_closed"], d["closed"] = pc.tolist(), (pc >= 0.5).tolist()
+    if angle:
+        cache = {}
+        for i, (path, box) in enumerate(doors):
+            if path not in cache:
+                cache[path] = door_angle.depth_for(path)
+            if cache[path] is not None:
+                d["geoms"][i] = door_angle.geometry(*cache[path], box)
+    d["rule"] = [props.hinge_from_handle(doors[i][1], handles[i]) for i in range(len(doors))]
+    d["dec"] = [decide(float(d["p_sl"][i]), handle_type[i], tuple(d["p_pp"][i]), d["rule"][i], tuple(d["p_lr"][i]), closed=d["closed"][i],
+                       geom=d["geoms"][i] if angle else None,
+                       **({"hinge_xs": d["hinge_xs"][i], "door_cx": doors[i][1][0] + doors[i][1][2] / 2} if hinges else {}))
+                for i in range(len(doors))]
+    return d
+
+
+def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False, state_run=None, state_gt=False, angle=False):
+    """Cascade vs flat door classifier, on the true boxes (preds None: GT doors and GT handles) or on the detector's boxes
+    (preds {image id: {boxes xyxy, scores, labels}}: detector doors matched to GT doors like props.score_on_boxes, detector handles).
+    -> scores(...) + flat_acc_opening / flat_acc_hinge_side (the door run's plain argmax on the same doors); with preds also "matched".
+    hinges=True (step B): hinge boxes (GT category 3, or the detector's hinge boxes) near each door feed decide(); scores gain the hinge keys.
+    Closed-doors-only: closed per door = the true state (state_gt) or the state run's head (P(closed) >= 0.5), else None; passed to decide(); acc_state = share of doors
+    whose closed / open used equals the true state (needs a state label).
+    angle=True: door_angle.geometry per scored door (its box, true or detector) from its frame's sensor depth (cached per image; no depth.png -> None) goes to decide(geom=)."""
+    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle)
+    doors, truth, dec, out, meta = d["doors"], d["truth"], d["dec"], d["out"], d["meta"]
     res = scores(dec, truth)
     if (state_gt or state_run) and dec and all("state" in t for t in truth):
-        res["acc_state"] = _mean([c == (t["state"] == "closed") for c, t in zip(closed, truth)])
+        res["acc_state"] = _mean([c == (t["state"] == "closed") for c, t in zip(d["closed"], truth)])
     for h in ("opening", "hinge_side"):
         pred = out[h].argmax(1).tolist() if len(doors) else []
         res[f"flat_acc_{h}"] = _mean([meta["heads"][h][c] == t[h] for c, t in zip(pred, truth)])
     if preds is not None:
         res["matched"] = len(doors)
     return res
+
+
+def cue_table(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, state_run=None, hinges=True, angle=True, with_decisions=False):
+    """The cascade's cues as one row per scored door (same doors as score()), for the learned tree: -> (rows, truth) with rows = dicts keyed by FEATURES
+    (P(slide) / P(push) / P(left) as decide sees them, P(closed) from the state run, handle type one-hot, handle rule side, hinge boxes near the door,
+    door_angle geometry, door box size) and truth = [{"opening", "hinge_side"[, "state"]}]. Missing cues are NaN (no state run, no depth / wall).
+    with_decisions=True also returns the hand cascade's decide() answers: -> (rows, truth, decisions)."""
+    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, False, angle)
+    side = {"right": 1.0, "left": -1.0}
+    rows = []
+    for i, (_, box) in enumerate(d["doors"]):
+        hx = d["hinge_xs"][i]
+        g = d["geoms"][i] or {}
+        num = lambda v: math.nan if v is None else float(v)
+        ht = d["handle_type"][i]
+        rows.append({"p_slide": float(d["p_sl"][i]), "p_push": float(d["p_pp"][i][0]), "p_left": float(d["p_lr"][i][0]), "p_closed": d["p_closed"][i],
+                     "h_lever": float(ht == "lever"), "h_knob": float(ht == "knob"), "h_flush": float(ht == "flush_pull"), "h_none": float(ht is None),
+                     "rule_side": side.get(d["rule"][i], 0.0), "hinges_n": float(len(hx)),
+                     "hinges_side": 0.0 if not hx else (-1.0 if float(np.mean(hx)) < box[0] + box[2] / 2 else 1.0),
+                     "panel_off": num(g.get("panel_off")), "near_wall": num(g.get("near_wall")), "box_w": float(box[2]), "box_h": float(box[3])})
+    rows = [{f: r[f] for f in FEATURES} for r in rows]
+    return (rows, d["truth"], d["dec"]) if with_decisions else (rows, d["truth"])
