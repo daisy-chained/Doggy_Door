@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .config import REPO
 from .data import load_input
@@ -31,6 +31,7 @@ DEFAULTS = {
     "jitter": {"shift": 0.1, "scale": 0.15},  # train-time crop shift / scale, fractions of the long box side
     "epochs": 20, "batch": 32, "lr": 3e-4, "weight_decay": 1e-4, "amp": False, "workers": 4, "seed": 0, "device": "cuda",
     "min_calibration": 20,  # val crops needed per head to fit a temperature (else T = 1)
+    "balance": None,  # None = plain shuffle; attribute names (e.g. ["glass", "state"]) = oversample so every group weighs the same
     "out": str(REPO / "runs"), "name": None,
     "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door-props", "tags": {}},
 }
@@ -111,6 +112,16 @@ def input_tensor(path, box, imgsz, input, K_cache=None):
     return torch.cat(parts)
 
 
+def balance_weights(attrs, keys):
+    """One weight per item (sums to 1): every group (attribute values of `keys`, missing = None) gets the same total, split evenly."""
+    groups = [tuple(a.get(k) for k in keys) for a in attrs]
+    count = {}
+    for g in groups:
+        count[g] = count.get(g, 0) + 1
+    w = np.array([1.0 / (len(count) * count[g]) for g in groups])
+    return w / w.sum()
+
+
 class CropDataset(Dataset):
     """Crops of door or handle boxes from a COCO export; item = (normalised C x imgsz x imgsz tensor, {head: class index}), C = CHANNELS[input]."""
     def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb", need=None):
@@ -119,7 +130,7 @@ class CropDataset(Dataset):
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
         files = {im["id"]: im["file_name"] for im in coco["images"]}
-        self.items, self.heldout, self.image_ids = [], [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
+        self.items, self.heldout, self.image_ids, self.attrs = [], [], [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
         for a in coco["annotations"]:
             if a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px or a.get("iscrowd"):  # ignore boxes: nearly vanished in smoke
                 continue
@@ -129,6 +140,7 @@ class CropDataset(Dataset):
                 self.items.append((files[a["image_id"]], a["bbox"], {h: HEADS[crop][h].index(v) for h, v in lab.items()}))
                 self.heldout.append(bool(attrs.get("heldout")))
                 self.image_ids.append(a["image_id"])
+                self.attrs.append(dict(attrs))
 
     def __len__(self):
         return len(self.items)
@@ -285,6 +297,10 @@ def train(cfg, run_name=None):
     mk = lambda s, shuffle: DataLoader(sets[s], batch_size=cfg["batch"], shuffle=shuffle, num_workers=cfg["workers"], generator=gen if shuffle else None,
                                        worker_init_fn=reseed_worker)
     loaders = {s: mk(s, s == "train") for s in sets}
+    if cfg["balance"]:  # oversample rare attribute groups in training (len(train) draws per epoch, with replacement)
+        w = torch.as_tensor(balance_weights(sets["train"].attrs, cfg["balance"]), dtype=torch.double)
+        sampler = WeightedRandomSampler(w, num_samples=len(sets["train"]), replacement=True, generator=gen)
+        loaders["train"] = DataLoader(sets["train"], batch_size=cfg["batch"], sampler=sampler, num_workers=cfg["workers"], worker_init_fn=reseed_worker)
     classes = {h: HEADS[crop][h] for h in heads}
     model = Model(cfg["backbone"], classes, cfg["pretrained"], CHANNELS[cfg["input"]]).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
