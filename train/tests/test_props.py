@@ -195,4 +195,4 @@ def test_score_on_detector_boxes(tmp_path):
     for h in props.HEADS["door"]:
         assert 0.0 <= s[f"acc_{h}"] <= 1.0
     # against the true-box accuracy the same keys exist, so the two can be compared side by side
-    assert set(k for k in s if k.startswith("acc_")) == {f"acc_{h}" for h in props.HEADS["door"]}
+    assert set(k for k in s if k.startswith("acc_") and not k.endswith(("_rule", "_combined"))) == {f"acc_{h}" for h in props.HEADS["door"]}

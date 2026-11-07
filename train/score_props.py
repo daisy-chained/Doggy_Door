@@ -11,7 +11,11 @@ def true_box_acc(run, export, split):
     model, meta = props.load(run, "cpu")
     ds = props.CropDataset(export, split, meta["crop"], meta["imgsz"], meta["margin"], meta["min_px"], input=meta["input"])
     pr = props.predict(model, DataLoader(ds, batch_size=32), "cpu", list(meta["heads"]))
-    return {f"acc_{h}": (lg.argmax(1) == lb).float().mean().item() for h, (lg, lb) in pr.items()}
+    out = {f"acc_{h}": (lg.argmax(1) == lb).float().mean().item() for h, (lg, lb) in pr.items()}
+    if meta["crop"] == "door" and "hinge_side" in pr:  # handle rule on the GT handles (hinge is opposite the handle), next to the classifier
+        names = props.HEADS["door"]["hinge_side"]
+        out.update(props.hinge_rule_true_boxes(export, split, [names[i] for i in pr["hinge_side"][0].argmax(1).tolist()], meta["min_px"]))
+    return out
 
 
 def main():
@@ -27,7 +31,8 @@ def main():
     det = props.score_on_boxes(args.props_run, args.export, args.split, preds, args.score_min)
     true = true_box_acc(args.props_run, args.export, args.split)
     print(f"{det['crops']} GT crops: {det['matched']} matched, {det['missed']} missed, {det['false']} false detections (score >= {args.score_min})")
-    for k, v in true.items():
+    for k in dict.fromkeys([*true, *(k for k in det if k.startswith(("acc_", "rule_")))]):
+        v = true.get(k, float("nan"))
         print(f"  {k:<22} true boxes {v:.3f}   detector boxes {det.get(k, float('nan')):.3f}")
     out = pathlib.Path(args.props_run) / f"detector_boxes_{pathlib.Path(args.export).name}.json"
     out.write_text(json.dumps({"export": args.export, "detector": args.detector_run, "split": args.split, "score_min": args.score_min,

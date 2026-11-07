@@ -131,6 +131,50 @@ class CropDataset(Dataset):
         return input_tensor(self.root / fn, box, self.imgsz, self.input, self._K), y
 
 
+def hinge_from_handle(door_xywh, handle_xywhs):
+    """Hinge side from the handle position (Madelief 2026-11-07: the hinge is opposite the handle, which sits on the lock edge).
+    The largest handle box whose centre lies inside the door box decides: handle left of the door centre -> "right", else "left"; none inside -> None."""
+    x, y, w, h = door_xywh
+    inside = [b for b in handle_xywhs if x <= b[0] + b[2] / 2 <= x + w and y <= b[1] + b[3] / 2 <= y + h]
+    if not inside:
+        return None
+    b = max(inside, key=lambda b: b[2] * b[3])
+    return "right" if b[0] + b[2] / 2 < x + w / 2 else "left"
+
+
+def combine_hinge(classifier_label, rule_label):
+    """Classifier's "none" (sliding) stays; otherwise the handle rule when it has an answer, else the classifier."""
+    return classifier_label if classifier_label == "none" or rule_label is None else rule_label
+
+
+def hinge_rule_true_boxes(export_dir, split, classifier_pred=None, min_px=None):
+    """Handle rule on the GT boxes: the CropDataset's door items (same filters) and the non-crowd GT handles of their image.
+    -> {"rule_coverage_hinge_side" (share of hinged doors the rule answers), "acc_hinge_side_rule" (over those answered; 0.0 if none)};
+    with classifier_pred (hinge_side class names in dataset order) also "acc_hinge_side_combined" over all doors."""
+    # min_px = the run's (so the door list lines up with the classifier's predictions); margin / imgsz don't change which items are kept
+    ds = CropDataset(export_dir, split, "door", PER_CROP["imgsz"]["door"], PER_CROP["margin"]["door"], min_px or PER_CROP["min_px"]["door"])
+    coco = json.loads((ds.root / "coco" / f"{split}.json").read_text())
+    handles = {}
+    for a in coco["annotations"]:
+        if a["category_id"] == CATEGORY["handle"] and not a.get("iscrowd"):
+            handles.setdefault(a["image_id"], []).append(a["bbox"])
+    names = HEADS["door"]["hinge_side"]
+    rules = [hinge_from_handle(it[1], handles.get(im, [])) for it, im in zip(ds.items, ds.image_ids)]
+    truth = [names[it[2]["hinge_side"]] for it in ds.items]
+    return _hinge_scores(rules, truth, classifier_pred)
+
+
+def _hinge_scores(rules, truth, classifier_pred=None):
+    """Rule / combined hinge-side numbers from per-door rule answers (None = no handle), true labels and optional classifier names."""
+    hinged = [i for i, t in enumerate(truth) if t != "none"]
+    answered = [i for i in hinged if rules[i] is not None]
+    out = {"rule_coverage_hinge_side": len(answered) / len(hinged) if hinged else 0.0,
+           "acc_hinge_side_rule": float(np.mean([rules[i] == truth[i] for i in answered])) if answered else 0.0}
+    if classifier_pred is not None and truth:
+        out["acc_hinge_side_combined"] = float(np.mean([combine_hinge(c, r) == t for c, r, t in zip(classifier_pred, rules, truth)]))
+    return out
+
+
 def reseed_worker(worker_id):
     """DataLoader workers get a copy of the dataset's jitter generator, and are restarted every epoch: reseed it from
     torch's per-worker seed (new every epoch, fixed by the loader's generator) so jitter differs between workers and epochs."""
@@ -317,7 +361,8 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
     """Classifier accuracy on the detector's own boxes (Madelief 2026-11-02: score on true boxes and on detector boxes).
     Per image the detector's boxes of the crop's category (score >= score_min) are matched to the GT crops the dataset keeps;
     a matched box is cropped like the dataset does (no jitter) and compared with its GT's labels.
-    -> {"crops" GT items, "matched", "missed", "false" (unmatched predictions), "acc_<head>", "ece_<head>" over the matched}"""
+    -> {"crops" GT items, "matched", "missed", "false" (unmatched predictions), "acc_<head>", "ece_<head>" over the matched;
+    door crops with a hinge_side head also the handle rule from the detector's handles: rule_coverage_hinge_side, acc_hinge_side_rule, acc_hinge_side_combined}"""
     from .evaluate import match
     model, meta = load(run_dir, "cpu")
     crop, heads, imgsz = meta["crop"], list(meta["heads"]), meta["imgsz"]
@@ -325,13 +370,17 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
     by_image = {}
     for i, image_id in enumerate(ds.image_ids):
         by_image.setdefault(image_id, []).append(i)
-    xs, ys, matched, false = [], [], 0, 0
+    xs, ys, rules, matched, false = [], [], [], 0, 0
+    hinge = crop == "door" and "hinge_side" in heads
     for image_id in sorted(set(by_image) | {int(k) for k in preds}):
         items = by_image.get(image_id, [])
         p = preds.get(image_id) or preds.get(str(image_id)) or {"boxes": [], "scores": [], "labels": []}
         keep = [j for j, (s, l) in enumerate(zip(p["scores"], p["labels"])) if s >= score_min and l == CATEGORY[crop] - 1]
         boxes = np.asarray(p["boxes"], float).reshape(-1, 4)[keep]
         xywh = [[x1, y1, x2 - x1, y2 - y1] for x1, y1, x2, y2 in boxes]
+        if hinge:  # the detector's own handles of this image
+            hk = [j for j, (s, l) in enumerate(zip(p["scores"], p["labels"])) if s >= score_min and l == CATEGORY["handle"] - 1]
+            hb = [[x1, y1, x2 - x1, y2 - y1] for x1, y1, x2, y2 in np.asarray(p["boxes"], float).reshape(-1, 4)[hk]]
         hit = match([ds.items[i][1] for i in items], xywh, np.asarray(p["scores"], float)[keep], iou)
         false += len(keep) - len(hit)
         if not hit:
@@ -340,6 +389,8 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
         for g, j in hit.items():
             xs.append(input_tensor(path, crop_box(xywh[j], meta["margin"], None, None), imgsz, meta["input"], ds._K))
             ys.append(ds.items[items[g]][2])
+            if hinge:
+                rules.append(hinge_from_handle(xywh[j], hb))
             matched += 1
     out = {"crops": len(ds), "matched": matched, "missed": len(ds) - matched, "false": false}
     if xs:
@@ -350,4 +401,7 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
             conf, pred = torch.softmax(o[h] / meta["temperature"].get(h, 1.0), 1).max(1)
             out[f"acc_{h}"] = (pred == y).float().mean().item()
             out[f"ece_{h}"] = ece(conf.numpy(), (pred == y).numpy())
+            if h == "hinge_side" and hinge:
+                names = HEADS["door"]["hinge_side"]
+                out.update(_hinge_scores(rules, [names[i] for i in y.tolist()], [names[i] for i in pred.tolist()]))
     return out
