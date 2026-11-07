@@ -48,6 +48,13 @@ class Sim:
         self.world, self.attrs = world_name, attrs
         self.proc = subprocess.Popen(["gz", "sim", "-s", "--headless-rendering", str(sdf_path)],
                                      stdout=open(log_path, "w"), stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            self._start(world_name, attrs)
+        except BaseException:  # any failed start (also a TimeoutError from wait_for): never leave the server running
+            self.stop()
+            raise
+
+    def _start(self, world_name, attrs):
         self.node, self.latest, self.lock = Node(), {}, threading.Lock()
         self._sub(Clock, f"/world/{world_name}/clock", "clock")
         self._sub(Pose_V, f"/world/{world_name}/pose/info", "poses")
@@ -68,7 +75,7 @@ class Sim:
                 break
             time.sleep(0.5)
         else:
-            self.stop(); raise RuntimeError("Gazebo server did not answer")
+            raise RuntimeError("Gazebo server did not answer")
         time.sleep(1.0)  # let publishers get matched to subscribers
         self.step(200)
         self.wait_for(["rgb"], 0, timeout=60)  # first render can take a while
@@ -83,7 +90,7 @@ class Sim:
                 break
             time.sleep(0.25)
         else:
-            self.stop(); raise RuntimeError(f"Gazebo did not subscribe to {', '.join(missing)} within 60 s")
+            raise RuntimeError(f"Gazebo did not subscribe to {', '.join(missing)} within 60 s")
 
     def _sub(self, typ, topic, key):
         def cb(m):
