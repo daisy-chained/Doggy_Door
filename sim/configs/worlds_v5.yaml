@@ -1,0 +1,38 @@
+# Door room v5, Madelief 2026-11-07: real push/pull cues - door stop on the push side, panel flush on the pull side, hinge knuckles;
+# same doors and seed as v4.
+out: v5
+door_stop: true
+# Door room v4 worlds (door variety, Madelief 2026-11-03): python3 sim/door_room/make_v4.py sim/configs/worlds_v4.yaml
+# Same room as v3 (closed, headlight on the rig, clutter pool), but every world gets its own two random doors and the
+# room continues behind the wall (cameras on both sides). Doors are fixed per world file (Gazebo can't change a joint
+# while running), so variety = many worlds; the generator renders scenes_per_world scenes in each.
+seed: 0
+count: 44                   # normal worlds: split by world (never by scene) 70/15/15, so a door never leaks into test
+heldout_count: 6            # extra worlds with a held-out combo door: test only
+split_ratios: [0.7, 0.15, 0.15]
+heldout:                    # property combos never seen in training (each value on its own is): CLEVR-CoGenT style
+  - {glass: true, handle_type: knob}
+  - {door_type: sliding, glass: true}
+
+door:                       # per door slot (a at y = -1, b at y = +1)
+  p_sliding: 0.35
+  p_glass: 0.35
+  handle: {lever: 0.5, knob: 0.5}      # hinged doors; sliding doors get a flush pull
+  width: [0.8, 1.0]                    # m, uniform (common doors 0.83 / 0.93)
+  height: [2.0, 2.3]                   # m, uniform (NL standard 2.015 / 2.315)
+  frame_style: {none: 0.33, thin: 0.34, thick: 0.33}
+  p_hangs_back: 0.5                    # sliding doors: hung on the back face instead of the front
+  colours:                             # door colour family, then a random shade inside it
+    wood: {p: 0.4, rgb: [[0.45, 0.28, 0.14], [0.85, 0.7, 0.5]]}
+    white: {p: 0.25, rgb: [[0.85, 0.85, 0.82], [0.97, 0.97, 0.95]]}
+    grey: {p: 0.15, rgb: [[0.25, 0.25, 0.27], [0.6, 0.6, 0.62]]}
+    painted: {p: 0.2, rgb: [[0.05, 0.05, 0.05], [0.9, 0.9, 0.9]]}
+  glass_frame:                         # stiles / rails of glass doors
+    aluminium: {p: 0.4, rgb: [[0.55, 0.57, 0.6], [0.7, 0.72, 0.75]]}
+    black: {p: 0.25, rgb: [[0.05, 0.05, 0.05], [0.15, 0.15, 0.15]]}
+    white: {p: 0.15, rgb: [[0.85, 0.85, 0.85], [0.95, 0.95, 0.95]]}
+    wood: {p: 0.2, rgb: [[0.45, 0.28, 0.14], [0.85, 0.7, 0.5]]}
+  trim:                                # door frame trim colour (frame_style thin / thick)
+    white: {p: 0.5, rgb: [[0.9, 0.9, 0.88], [0.97, 0.97, 0.95]]}
+    match: {p: 0.3}                    # same as the door
+    dark: {p: 0.2, rgb: [[0.1, 0.1, 0.1], [0.35, 0.3, 0.25]]}

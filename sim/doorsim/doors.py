@@ -85,28 +85,36 @@ def sample_world(rng, wcfg, heldout=False):
 
 
 def make_worlds(wcfg):
-    """All worlds of a config, deterministic: `count` normal worlds (split by world), then `heldout_count` held-out worlds (test)."""
+    """All worlds of a config, deterministic: `count` normal worlds (split by world), then `heldout_count` held-out worlds (test).
+    Config keys `out` (version in the world names, default v4) and `door_stop` (push / pull cues on hinged doors, default false)
+    change no random draw: the same seed gives the same doors."""
+    out_name, stop = wcfg.get("out", "v4"), bool(wcfg.get("door_stop", False))
     rng = np.random.default_rng(wcfg["seed"])
     split = {i: sp for sp, idx in export.split_scenes(range(wcfg["count"]), tuple(wcfg["split_ratios"]), wcfg["seed"]).items() for i in idx}
     out = []
     for i in range(wcfg["count"] + wcfg["heldout_count"]):
         held = i >= wcfg["count"]
-        out.append({"name": f"door_room_v4_{i:03d}", "split": "test" if held else split[i], "heldout": held,
-                    **sample_world(rng, wcfg, heldout=held)})
+        world = sample_world(rng, wcfg, heldout=held)
+        for d in world["doors"].values():
+            d["door_stop"] = stop
+        out.append({"name": f"door_room_{out_name}_{i:03d}", "split": "test" if held else split[i], "heldout": held, **world})
     return out
 
 
 # --- geometry shared by the attributes and the world file ---
 def _layout(spec, slot):
-    """Derived numbers of one door: panel size, where its link sits (xc, zc), trim, joint, handle positions."""
+    """Derived numbers of one door: panel size, where its link sits (xc, zc), trim, joint, handle positions. Hinged panels sit
+    centred in the wall (v4); with spec["door_stop"] they sit flush with the wall face on the swing (pull) side, hinge axis on that face."""
     w, h, y = spec["width"], spec["height"], SLOT_Y[slot]
     tw, proud = TRIM[spec["frame_style"]]
     g = {"y": y, "w": w, "h": h, "tw": tw, "proud": proud}
     if spec["door_type"] == "hinged":
-        g.update(pw=w - 0.02, ph=h - 0.02, xc=WALL_X, zc=h / 2)
+        stop = bool(spec.get("door_stop"))
+        sx = spec["swing_x"]
+        g.update(pw=w - 0.02, ph=h - 0.02, xc=WALL_X + 0.03 * sx if stop else WALL_X, zc=h / 2)  # faces at WALL_X + 0.01 s .. + 0.05 s
         g["open"] = 1.2 * spec["swing_x"] * spec["hinge_y"]  # revolute about +z: the lock edge moves to -lock*sin(theta) in x
         g["range"] = [-1.6, 0.0] if g["open"] < 0 else [0.0, 1.6]
-        g["hinge"] = [WALL_X + 0.02 * spec["swing_x"], y + spec["hinge_y"] * g["pw"] / 2, g["zc"]]
+        g["hinge"] = [WALL_X + (0.05 if stop else 0.02) * sx, y + spec["hinge_y"] * g["pw"] / 2, g["zc"]]
         g["lock_y"] = y - spec["hinge_y"] * (g["pw"] / 2 - 0.08)  # handle: 0.08 in from the lock edge
         g["bar"] = spec["hinge_y"]  # lever bar points toward the hinge (world y sign)
     else:
@@ -258,6 +266,10 @@ def _door_model(slot, k, spec, g):
     vis = _panel_visuals(spec, g)
     if hinged:
         inertial = _inertial(25, 0.04, pw, ph)
+        if spec.get("door_stop"):  # hinge knuckles on the axis (the swing face), at the hinge edge; they turn with the panel
+            for i, z in enumerate((0.25, g["h"] / 2, g["h"] - 0.25)):
+                vis.append(_vis(f"knuckle_{i}", (0.02 * spec["swing_x"], spec["hinge_y"] * (pw / 2 + 0.005), z - g["zc"]),
+                                "<geometry><cylinder><radius>0.008</radius><length>0.09</length></cylinder></geometry>", METAL_RGB))
         joint = (f'<joint name="hinge" type="revolute"><parent>frame_anchor</parent><child>panel</child>'
                  f'<pose>{_pose(0.02 * spec["swing_x"], spec["hinge_y"] * pw / 2, 0)} 0 0 0</pose><axis><xyz>0 0 1</xyz>'
                  f'<limit><lower>{g["range"][0]}</lower><upper>{g["range"][1]}</upper></limit><dynamics><damping>2.0</damping></dynamics></axis></joint>')
@@ -365,7 +377,7 @@ def _room_shell():
 
 def _back_wall(world):
     """The wall at WALL_X: boxes around the two openings (each as wide as its door), a lintel over each, trim on both faces, and
-    the top rail of sliding doors. Trim / rail boxes are visual only (thinner than the wall)."""
+    the top rail of sliding doors, the door stop of hinged doors with door_stop. Trim / rail / stop boxes are visual only."""
     parts, edge = [], -3.0
     lay = sorted(((SLOT_Y[s], s) for s in SLOTS))
     full = lambda n, y0, y1: (n, WALL_RGB, -0.05, 0.05, y0, y1, 0.0, ROOM_HEIGHT)
@@ -385,6 +397,13 @@ def _back_wall(world):
                 visuals += [_vis(f"trim_{slot}_{side}_l", (x, y - (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
                             _vis(f"trim_{slot}_{side}_r", (x, y + (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
                             _vis(f"trim_{slot}_{side}_t", (x, y, h + tw / 2), _box(p, w + 2 * tw, tw), c)]
+        if spec["door_type"] == "hinged" and spec.get("door_stop"):  # stop on the push side, against the panel's push face
+            s, y, w, h = spec["swing_x"], g["y"], g["w"], g["h"]
+            c = spec["trim_colour"] if g["tw"] else WALL_RGB
+            xs, dx = 0.0025 * s, 0.015  # x from -0.005 s to +0.01 s
+            visuals += [_vis(f"stop_{slot}_l", (xs, y - w / 2 + 0.015, h / 2), _box(dx, 0.03, h), c),
+                        _vis(f"stop_{slot}_r", (xs, y + w / 2 - 0.015, h / 2), _box(dx, 0.03, h), c),
+                        _vis(f"stop_{slot}_t", (xs, y, h - 0.015), _box(dx, w, 0.03), c)]
         if spec["door_type"] == "sliding":  # rail over the opening and the slide path, on the face the panel hangs on
             lo, hi = g["path"]
             visuals.append(_vis(f"slide_rail_{slot}", (g["sgn"] * (0.09 + g["proud"]), (lo + hi) / 2, g["h"] + 0.08), _box(0.04, hi - lo, 0.06), METAL_RGB))
