@@ -25,11 +25,12 @@ def hinges_near(door_xywh, hinge_xywhs, pad=0.1):
     return out
 
 
-def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_xs=None, door_cx=None):
+def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_xs=None, door_cx=None, closed=None):
     """One door's cascade answer. p_push_pull = (P(push), P(pull)), p_left_right = (P(left), P(right)); rule_hinge: "left" / "right" / None.
     -> {"door_type", "type_source" (handle | classifier), "opening", "hinge_side", "hinge_source" (rule | classifier | None)}
     Step B: hinge_xs (centre x of the hinge boxes near this door, may be empty) + door_cx add "opening_source" and "hinges_seen":
-    hinges seen on a hinged door -> "pull", hinge side from their mean x vs door_cx ("hinges"); none seen -> as step A; sliding -> None, None."""
+    hinges seen on a hinged door -> "pull", hinge side from their mean x vs door_cx ("hinges"); none seen -> as step A; sliding -> None, None.
+    closed (None | True | False): False (open door) -> hinges ignored for opening and hinge side (as step A, opening_source "classifier"), hinges_seen still reported."""
     b = hinge_xs is not None
     dt = type_from_handle(handle_type)
     source = "handle" if dt else "classifier"
@@ -38,7 +39,7 @@ def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_
         res = {"door_type": dt, "type_source": source, "opening": "slide", "hinge_side": "none", "hinge_source": None}
         return {**res, "opening_source": None, "hinges_seen": None} if b else res
     opening, osrc = ("push" if p_push_pull[0] >= p_push_pull[1] else "pull"), "classifier"
-    if b and len(hinge_xs):
+    if b and len(hinge_xs) and closed is not False:
         opening, osrc = "pull", "hinges"
         hinge, hsrc = ("left" if float(np.mean(hinge_xs)) < door_cx else "right"), "hinges"
     elif rule_hinge is not None:
@@ -70,6 +71,11 @@ def scores(decisions, truth):
             "acc_door_type_classifier": _mean([ok_type[i] for i in by("classifier")]),
             "acc_push_pull_hinged": _mean([decisions[i]["opening"] == truth[i]["opening"] for i in both]),
             "acc_left_right_hinged": _mean([decisions[i]["hinge_side"] == truth[i]["hinge_side"] for i in both])}
+    if all("state" in t for t in truth) and truth:   # closed-doors-only: per true state
+        for st in ("closed", "open"):
+            at = [i for i in range(n) if truth[i]["state"] == st]
+            res[f"acc_opening_{st}"] = _mean([decisions[i]["opening"] == truth[i]["opening"] for i in at])
+            res[f"acc_push_pull_hinged_{st}"] = _mean([decisions[i]["opening"] == truth[i]["opening"] for i in at if i in both])
     if any("hinges_seen" in d for d in decisions):   # step B: hinge boxes were used
         seen = [i for i in both if decisions[i].get("hinges_seen")]
         res["hinges_seen"] = len(seen) / len(both) if both else 0.0
@@ -98,11 +104,13 @@ def _run_out(run, doors):
     return {h: torch.cat([o[h].float() for o in outs]) for h in outs[0]}, meta
 
 
-def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False):
+def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False, state_run=None, state_gt=False):
     """Cascade vs flat door classifier, on the true boxes (preds None: GT doors and GT handles) or on the detector's boxes
     (preds {image id: {boxes xyxy, scores, labels}}: detector doors matched to GT doors like props.score_on_boxes, detector handles).
     -> scores(...) + flat_acc_opening / flat_acc_hinge_side (the door run's plain argmax on the same doors); with preds also "matched".
-    hinges=True (step B): hinge boxes (GT category 3, or the detector's hinge boxes) near each door feed decide(); scores gain the hinge keys."""
+    hinges=True (step B): hinge boxes (GT category 3, or the detector's hinge boxes) near each door feed decide(); scores gain the hinge keys.
+    Closed-doors-only: closed per door = the true state (state_gt) or the state run's head (P(closed) >= 0.5), else None; passed to decide(); acc_state = share of doors
+    whose closed / open used equals the true state (needs a state label)."""
     from .evaluate import match
     _, dmeta = props.load(door_run, "cpu")
     ds = CropDataset(export_dir, split, "door", dmeta["imgsz"], dmeta["margin"], dmeta["min_px"], input=dmeta["input"])
@@ -123,7 +131,7 @@ def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, io
     if preds is None:
         for i, (fn, bbox, y) in enumerate(ds.items):
             doors.append((ds.root / fn, bbox)); handles.append(gt_handles.get(ds.image_ids[i], [])); hboxes.append(gt_hinges.get(ds.image_ids[i], []))
-            truth.append({h: names[h][y[h]] for h in ("opening", "hinge_side")})
+            truth.append({h: names[h][y[h]] for h in ("opening", "hinge_side", "state") if h in y})
     else:
         for image_id in sorted(by_image):
             p = preds.get(image_id) or preds.get(str(image_id)) or {"boxes": [], "scores": [], "labels": []}
@@ -138,7 +146,7 @@ def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, io
             for g, j in hit.items():
                 fn, _, y = ds.items[items[g]]
                 doors.append((ds.root / fn, dbox[j])); handles.append(hbox); hboxes.append(nbox)
-                truth.append({h: names[h][y[h]] for h in ("opening", "hinge_side")})
+                truth.append({h: names[h][y[h]] for h in ("opening", "hinge_side", "state") if h in y})
     # handle type of the largest handle inside each door (the handle run's own crop settings, no min_px filter)
     pick = [largest_handle_inside(d[1], hs) for d, hs in zip(doors, handles)]
     idx = [i for i, k in enumerate(pick) if k is not None]
@@ -160,11 +168,19 @@ def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, io
                 return {}
             x, _, w, _ = doors[i][1]
             return {"hinge_xs": [hboxes[i][k][0] + hboxes[i][k][2] / 2 for k in hinges_near(doors[i][1], hboxes[i])], "door_cx": x + w / 2}
-        dec = [decide(float(p_sl[i]), handle_type[i], tuple(p_pp[i]), props.hinge_from_handle(doors[i][1], handles[i]), tuple(p_lr[i]), **hinge_kw(i))
+        closed = [None] * len(doors)
+        if state_gt:
+            closed = [t.get("state") == "closed" for t in truth]
+        elif state_run:
+            sout, smeta = _run_out(state_run, doors)
+            closed = (_probs(sout, smeta, "state", ["closed", "open"])[:, 0] >= 0.5).tolist()
+        dec = [decide(float(p_sl[i]), handle_type[i], tuple(p_pp[i]), props.hinge_from_handle(doors[i][1], handles[i]), tuple(p_lr[i]), closed=closed[i], **hinge_kw(i))
                for i in range(len(doors))]
     else:
         dec = []
     res = scores(dec, truth)
+    if (state_gt or state_run) and dec and all("state" in t for t in truth):
+        res["acc_state"] = _mean([c == (t["state"] == "closed") for c, t in zip(closed, truth)])
     for h in ("opening", "hinge_side"):
         pred = out[h].argmax(1).tolist() if len(doors) else []
         res[f"flat_acc_{h}"] = _mean([meta["heads"][h][c] == t[h] for c, t in zip(pred, truth)])

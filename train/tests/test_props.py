@@ -76,7 +76,7 @@ def test_dataset_items(export_dir):
     assert len(ds) == 8                                           # 2 doors x 4 images, tiny door_c skipped
     x, y = ds[0]
     assert x.shape == (3, 64, 64) and x.dtype == torch.float32
-    assert set(y) == set(props.HEADS["door"]) and all(isinstance(v, int) for v in y.values())
+    assert set(y) == set(props.HEADS["door"]) - {"state"} and all(isinstance(v, int) for v in y.values())
     h = props.CropDataset(export_dir, "train", "handle", imgsz=32, margin=0.5, min_px=3)
     assert len(h) == 8 and h[0][0].shape == (3, 32, 32)
 

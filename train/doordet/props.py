@@ -13,7 +13,8 @@ from .data import load_input
 from .loop import flatten, git_info
 
 HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "right", "none"], "glass": ["no", "yes"],
-                  "door_type": ["hinged", "sliding"]},  # door_type: opt-in head (cascade step A), not in the default heads
+                  "door_type": ["hinged", "sliding"],  # door_type: opt-in head (cascade step A), not in the default heads
+                  "state": ["closed", "open"]},  # state: opt-in head (closed-doors-only hinge rule), label only when the attributes have it
          "handle": {"handle_type": ["lever", "knob", "flush_pull"]}}
 DEFAULT_HEADS = {"door": ["opening", "hinge_side", "glass"]}  # crops not listed: all their heads
 CATEGORY = {"door": 1, "handle": 2, "hinge": 3}  # hinge: detector class only (cascade step B), no crop heads
@@ -72,8 +73,11 @@ def labels(attrs, crop):
     """COCO attributes -> {head: class name}."""
     if crop == "handle":
         return {"handle_type": attrs.get("handle_type")}
-    return {"opening": attrs.get("opening"), "hinge_side": attrs.get("hinge_side") or "none", "glass": "yes" if attrs.get("glass") else "no",
-            "door_type": attrs.get("door_type") or ("sliding" if attrs.get("opening") == "slide" else "hinged")}
+    lab = {"opening": attrs.get("opening"), "hinge_side": attrs.get("hinge_side") or "none", "glass": "yes" if attrs.get("glass") else "no",
+           "door_type": attrs.get("door_type") or ("sliding" if attrs.get("opening") == "slide" else "hinged")}
+    if "state" in attrs:
+        lab["state"] = attrs["state"]
+    return lab
 
 
 def crop_box(bbox, margin, rng, jitter):
@@ -109,7 +113,8 @@ def input_tensor(path, box, imgsz, input, K_cache=None):
 
 class CropDataset(Dataset):
     """Crops of door or handle boxes from a COCO export; item = (normalised C x imgsz x imgsz tensor, {head: class index}), C = CHANNELS[input]."""
-    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb"):
+    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb", need=None):
+        # need: head names a run trains; items without a label for one of them are skipped (e.g. no "state" in the attributes)
         self.root, self.imgsz, self.margin, self.jitter, self.input, self._K = pathlib.Path(export_dir), imgsz, margin, jitter, input, {}
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
@@ -120,7 +125,7 @@ class CropDataset(Dataset):
                 continue
             attrs = a.get("attributes") or {}
             lab = labels(attrs, crop)
-            if all(v in HEADS[crop][h] for h, v in lab.items()):
+            if all(v in HEADS[crop][h] for h, v in lab.items()) and all(h in lab for h in need or ()):
                 self.items.append((files[a["image_id"]], a["bbox"], {h: HEADS[crop][h].index(v) for h, v in lab.items()}))
                 self.heldout.append(bool(attrs.get("heldout")))
                 self.image_ids.append(a["image_id"])
@@ -274,7 +279,7 @@ def train(cfg, run_name=None):
     out = pathlib.Path(cfg["out"]) / run_name
     out.mkdir(parents=True, exist_ok=True)
 
-    kw = {k: cfg[k] for k in ("imgsz", "margin", "min_px", "input")}
+    kw = {k: cfg[k] for k in ("imgsz", "margin", "min_px", "input")} | {"need": heads}
     sets = {s: CropDataset(export, s, crop, jitter=cfg["jitter"] if s == "train" else None, seed=seed, **kw) for s in ("train", "val", "test")}
     gen = torch.Generator().manual_seed(seed)
     mk = lambda s, shuffle: DataLoader(sets[s], batch_size=cfg["batch"], shuffle=shuffle, num_workers=cfg["workers"], generator=gen if shuffle else None,
@@ -376,7 +381,7 @@ def score_on_boxes(run_dir, export_dir, split, preds, score_min=0.3, iou=0.5):
     from .evaluate import match
     model, meta = load(run_dir, "cpu")
     crop, heads, imgsz = meta["crop"], list(meta["heads"]), meta["imgsz"]
-    ds = CropDataset(export_dir, split, crop, imgsz, meta["margin"], meta["min_px"], input=meta["input"])
+    ds = CropDataset(export_dir, split, crop, imgsz, meta["margin"], meta["min_px"], input=meta["input"], need=heads)
     by_image = {}
     for i, image_id in enumerate(ds.image_ids):
         by_image.setdefault(image_id, []).append(i)
