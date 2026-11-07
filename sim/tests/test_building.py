@@ -230,3 +230,22 @@ def test_write_and_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["make_buildings.py", str(tmp_path / "c.yaml"), "--out", str(tmp_path / "out")])
     make_buildings.main()
     assert sorted(p.name for p in (tmp_path / "out").glob("*.sdf")) == ["bld_val_010.sdf", "bld_val_011.sdf"]
+
+
+# Added 2026-11-07 22:50 (Claude, after looking at the first maps): an approach pose can land on an open door panel (2-3 per building).
+#   pose["clear"]: no occupied map cell within robot_radius. A blocked pose is first moved further back along the door normal (0.1 m steps,
+#   staying inside the space), then closer (down to 0.5 m); "dist" is the distance actually used. clear False only if nothing fits.
+@pytest.mark.parametrize("seed", SEEDS)
+def test_approach_poses_clear_of_obstacles(seed):
+    b = building.make_building(CFG, seed)
+    res, rr = CFG["map_resolution"], CFG["robot_radius"]
+    grid, origin = building.occupancy(b["layout"], b["doors"], res)
+    r = int(math.ceil(rr / res))
+    blocked = 0
+    for p in b["poses"]:
+        assert "clear" in p
+        c, row = int((p["x"] - origin[0]) / res), grid.shape[0] - 1 - int((p["y"] - origin[1]) / res)
+        hit = (grid[max(0, row - r):row + r + 1, max(0, c - r):c + r + 1] == 0).any()
+        assert hit == (not p["clear"])
+        blocked += hit
+    assert blocked <= len(b["poses"]) // 10

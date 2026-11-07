@@ -250,6 +250,13 @@ def _label(i):
     return f'<plugin filename="gz-sim-label-system" name="gz::sim::systems::Label"><label>{i}</label></plugin>'
 
 
+def _names(slot, names=None):
+    """Model names of one door's parts: the v5 ones (door_a, handle_a, handle_a_back, glass_a, hinge_a_<i>) unless `names` is given
+    (keys door, handle_front, handle_back, glass, hinge = a format string with {} for the knuckle index)."""
+    return names or {"door": f"door_{slot}", "handle_front": f"handle_{slot}", "handle_back": f"handle_{slot}_back",
+                     "glass": f"glass_{slot}", "hinge": f"hinge_{slot}_{{}}"}
+
+
 def _detach(model, topics=None):
     t = f"<detach_topic>/{model}/detach</detach_topic><attach_topic>/{model}/attach</attach_topic>" if topics else ""
     return (f'<plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">'
@@ -270,11 +277,11 @@ def _has_hinges(spec):
     return spec["door_type"] == "hinged" and bool(spec.get("door_stop"))
 
 
-def _hinge_model(slot, k, spec, g, i):
+def _hinge_model(slot, k, spec, g, i, names=None):
     """One hinge knuckle (door_stop worlds): a metal cylinder on the hinge axis at the hinge edge, own label 10 k + 5 + i, held on the panel."""
     z = (0.25, g["h"] / 2, g["h"] - 0.25)[i]
     x, y = g["xc"] + 0.02 * spec["swing_x"], g["y"] + spec["hinge_y"] * (g["pw"] / 2 + 0.005)
-    return f"""    <model name="hinge_{slot}_{i}">
+    return f"""    <model name="{_names(slot, names)["hinge"].format(i)}">
       <pose>{_pose(x, y, z)} 0 0 0</pose>
       <link name="link">
         <gravity>false</gravity>
@@ -286,7 +293,10 @@ def _hinge_model(slot, k, spec, g, i):
 """
 
 
-def _door_model(slot, k, spec, g):
+def _door_model(slot, k, spec, g, names=None, initial=None):
+    """Door model (panel + joint + controller + detachable joints). `names` = see _names; `initial` = joint position the controller
+    starts at (the door is open by that much as built), None = no initial_position (v5)."""
+    nm = _names(slot, names)
     hinged = spec["door_type"] == "hinged"
     pw, ph = g["pw"], g["ph"]
     vis = _panel_visuals(spec, g)
@@ -303,11 +313,12 @@ def _door_model(slot, k, spec, g):
         joint = (f'<joint name="slide" type="prismatic"><parent>frame_anchor</parent><child>panel</child><axis><xyz>0 {spec["slide_y"]} 0</xyz>'
                  f'<limit><lower>0</lower><upper>{g["travel"]}</upper></limit><dynamics><damping>20.0</damping></dynamics></axis></joint>')
         ctrl, gains, jname = "slide", "<p_gain>200</p_gain><i_gain>0.5</i_gain><d_gain>40</d_gain>", "slide"
-    children = [_detach(f"handle_{slot}"), _detach(f"handle_{slot}_back")] + ([_detach(f"glass_{slot}", topics=True)] if spec["glass"] else [])
-    children += [_detach(f"hinge_{slot}_{i}") for i in range(3) if _has_hinges(spec)]  # knuckles: own models so they get own labels
+    children = [_detach(nm["handle_front"]), _detach(nm["handle_back"])] + ([_detach(nm["glass"], topics=True)] if spec["glass"] else [])
+    children += [_detach(nm["hinge"].format(i)) for i in range(3) if _has_hinges(spec)]  # knuckles: own models so they get own labels
     body = "\n".join("        " + v for v in vis)
+    start = "" if initial is None else f"<initial_position>{_g(initial)}</initial_position>"
     # the order of links / joints follows door_room_v3: anchor link fixed to the world, panel link on the joint
-    return f"""    <model name="door_{slot}">
+    return f"""    <model name="{nm["door"]}">
       <pose>{_pose(g["xc"], g["y"], 0)} 0 0 0</pose>
       <link name="frame_anchor"><inertial><mass>1</mass></inertial></link>
       <joint name="anchor" type="fixed"><parent>world</parent><child>frame_anchor</child></joint>
@@ -319,7 +330,7 @@ def _door_model(slot, k, spec, g):
       </link>
       {joint}
       <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
-        <joint_name>{ctrl}</joint_name><topic>/door_{slot}/cmd_pos</topic>{gains}
+        <joint_name>{ctrl}</joint_name><topic>/{nm["door"]}/cmd_pos</topic>{gains}{start}
       </plugin>
       {chr(10).join("      " + c for c in children).strip()}
       <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
@@ -328,8 +339,8 @@ def _door_model(slot, k, spec, g):
 """
 
 
-def _glass_model(slot, k, g):
-    return f"""    <model name="glass_{slot}">
+def _glass_model(slot, k, g, names=None):
+    return f"""    <model name="{_names(slot, names)["glass"]}">
       <pose>{_pose(g["xc"], g["y"], g["zc"] + 0.02)} 0 0 0</pose>
       <link name="link">
         <gravity>false</gravity>
@@ -362,12 +373,12 @@ def _handle_visuals(kind, bar):
             _vis("lever", (-0.035, bar * 0.05, 0), _box(0.02, 0.13, 0.02), metal, spec)]
 
 
-def _handle_model(slot, k, spec, g, face):
+def _handle_model(slot, k, spec, g, face, names=None):
     front = face == "front"
     x = g["xc"] + (-0.02 if front else 0.02)  # the panel's face on that side
     bar = g["bar"] if front else -g["bar"]  # yaw pi turns local y around
     vis = "\n".join("        " + v for v in _handle_visuals(spec["handle_type"], bar))
-    name = f"handle_{slot}" + ("" if front else "_back")
+    name = _names(slot, names)["handle_front" if front else "handle_back"]
     return f"""    <model name="{name}">
       <pose>{_pose(x, g["lock_y"], 1.0)} 0 0 {0 if front else 3.14159}</pose>
       <link name="link">
@@ -398,6 +409,30 @@ def _room_shell():
     return _boxes_model("room_shell", "closed room, 5 m deep on both sides of the wall: ceiling, side walls, end walls (background, no label)", boxes)
 
 
+def _door_wall_visuals(spec, g, slot):
+    """Visual-only boxes of one door in the wall frame (origin on the wall centre plane, y as in _layout): trim on both faces, the door
+    stop of a hinged door with door_stop, the top rail of a sliding door. `slot` = name tag of the boxes."""
+    visuals = []
+    for side, sgn in (("front", -1), ("back", 1)):
+        if g["tw"]:
+            x, tw, p, y, w, h = sgn * (0.05 + g["proud"] / 2), g["tw"], g["proud"], g["y"], g["w"], g["h"]
+            c = spec["trim_colour"]
+            visuals += [_vis(f"trim_{slot}_{side}_l", (x, y - (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
+                        _vis(f"trim_{slot}_{side}_r", (x, y + (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
+                        _vis(f"trim_{slot}_{side}_t", (x, y, h + tw / 2), _box(p, w + 2 * tw, tw), c)]
+    if spec["door_type"] == "hinged" and spec.get("door_stop"):  # stop on the push side, against the panel's push face
+        s, y, w, h = spec["swing_x"], g["y"], g["w"], g["h"]
+        c = spec["trim_colour"] if g["tw"] else WALL_RGB
+        xs, dx = 0.0025 * s, 0.015  # x from -0.005 s to +0.01 s
+        visuals += [_vis(f"stop_{slot}_l", (xs, y - w / 2 + 0.015, h / 2), _box(dx, 0.03, h), c),
+                    _vis(f"stop_{slot}_r", (xs, y + w / 2 - 0.015, h / 2), _box(dx, 0.03, h), c),
+                    _vis(f"stop_{slot}_t", (xs, y, h - 0.015), _box(dx, w, 0.03), c)]
+    if spec["door_type"] == "sliding":  # rail over the opening and the slide path, on the face the panel hangs on
+        lo, hi = g["path"]
+        visuals.append(_vis(f"slide_rail_{slot}", (g["sgn"] * (0.09 + g["proud"]), (lo + hi) / 2, g["h"] + 0.08), _box(0.04, hi - lo, 0.06), METAL_RGB))
+    return visuals
+
+
 def _back_wall(world):
     """The wall at WALL_X: boxes around the two openings (each as wide as its door), a lintel over each, trim on both faces, and
     the top rail of sliding doors, the door stop of hinged doors with door_stop. Trim / rail / stop boxes are visual only."""
@@ -412,24 +447,7 @@ def _back_wall(world):
     visuals = []
     for slot in SLOTS:
         spec = world["doors"][slot]
-        g = _layout(spec, slot)
-        for side, sgn in (("front", -1), ("back", 1)):
-            if g["tw"]:
-                x, tw, p, y, w, h = sgn * (0.05 + g["proud"] / 2), g["tw"], g["proud"], g["y"], g["w"], g["h"]
-                c = spec["trim_colour"]
-                visuals += [_vis(f"trim_{slot}_{side}_l", (x, y - (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
-                            _vis(f"trim_{slot}_{side}_r", (x, y + (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
-                            _vis(f"trim_{slot}_{side}_t", (x, y, h + tw / 2), _box(p, w + 2 * tw, tw), c)]
-        if spec["door_type"] == "hinged" and spec.get("door_stop"):  # stop on the push side, against the panel's push face
-            s, y, w, h = spec["swing_x"], g["y"], g["w"], g["h"]
-            c = spec["trim_colour"] if g["tw"] else WALL_RGB
-            xs, dx = 0.0025 * s, 0.015  # x from -0.005 s to +0.01 s
-            visuals += [_vis(f"stop_{slot}_l", (xs, y - w / 2 + 0.015, h / 2), _box(dx, 0.03, h), c),
-                        _vis(f"stop_{slot}_r", (xs, y + w / 2 - 0.015, h / 2), _box(dx, 0.03, h), c),
-                        _vis(f"stop_{slot}_t", (xs, y, h - 0.015), _box(dx, w, 0.03), c)]
-        if spec["door_type"] == "sliding":  # rail over the opening and the slide path, on the face the panel hangs on
-            lo, hi = g["path"]
-            visuals.append(_vis(f"slide_rail_{slot}", (g["sgn"] * (0.09 + g["proud"]), (lo + hi) / 2, g["h"] + 0.08), _box(0.04, hi - lo, 0.06), METAL_RGB))
+        visuals += _door_wall_visuals(spec, _layout(spec, slot), slot)
     text = _boxes_model("back_wall", f"wall at x = {WALL_X:g}: 0.1 thick, openings as wide / high as their doors, lintels, trim", parts)
     text = text.replace("      <static>true</static>", f"      <static>true</static>\n      <pose>{WALL_X:g} 0 0 0 0 0</pose>")
     return text.replace("      </link>", "".join("        " + v + "\n" for v in visuals) + "      </link>")

@@ -9,3 +9,4 @@ mlflow.db
 optuna.db
 mlflow.db-shm
 mlflow.db-wal
+sim/building/out/
