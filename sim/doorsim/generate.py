@@ -198,20 +198,25 @@ def render_scenes(sim, attrs, scenes, run, world=None):
 START_TRIES = 3  # Gazebo starts per world: with several servers starting at once a start can time out (2026-11-07)
 
 
-def render_world(w, sdf, attrs, scenes, run, out):
-    """One Gazebo run for one world (stopped at the end); returns the camera info. A failed start (Sim raises before anything is
-    rendered; Sim stops its own server then) is tried again, up to START_TRIES, so one slow start doesn't end the whole render."""
-    from doorsim import gzsim
-    name = w["name"] if w else run.cfg["world"]
-    for attempt in range(1, START_TRIES + 1):
+def start_sim(make, name, tries=None, wait=5):
+    """make() -> a started gzsim.Sim; a failed start (Sim raises before anything is rendered and stops its own server then) is
+    tried again, up to tries (START_TRIES), so one slow start doesn't end a whole render. Used by generate and radar_render."""
+    tries = tries or START_TRIES
+    for attempt in range(1, tries + 1):
         try:
-            sim = gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log"))
-            break
+            return make()
         except (RuntimeError, TimeoutError) as e:  # TimeoutError: "sim clock did not advance" / first render
-            if attempt == START_TRIES:
+            if attempt == tries:
                 raise
             print(f"[{name}] Gazebo start {attempt} failed ({e}); trying again", flush=True)
-            time.sleep(5)
+            time.sleep(wait)
+
+
+def render_world(w, sdf, attrs, scenes, run, out):
+    """One Gazebo run for one world (stopped at the end); returns the camera info. The start goes through start_sim (retries)."""
+    from doorsim import gzsim
+    name = w["name"] if w else run.cfg["world"]
+    sim = start_sim(lambda: gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log")), name)
     try:
         cam = sim.camera_info()
         render_scenes(sim, attrs, scenes, run, w)

@@ -19,6 +19,7 @@ from PIL import Image
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
 from doorsim import effects, glass, radar, thermal
+from doorsim.generate import start_sim
 
 FILES = ("radar_depth.png", "radar_seg.png", "radar_depth_noglass.png", "radar_behind.png")  # last = the done marker
 
@@ -76,7 +77,7 @@ def render_world(job):
     with tempfile.TemporaryDirectory(prefix="radar_") as tmp:
         path = pathlib.Path(tmp) / sdf.name
         path.write_text(radar.inject(sdf.read_text()))
-        sim = make_sim(gzsim)(path, name, attrs, ds_dir / "radar" / f"gz_{name}.log")
+        sim = start_sim(lambda: make_sim(gzsim)(path, name, attrs, ds_dir / "radar" / f"gz_{name}.log"), name)  # retries a slow start (2026-11-07)
         try:
             for p, vs in views:
                 sim.place_clutter(p["clutter"])

@@ -47,3 +47,20 @@ def test_render_world_gives_up_after_the_tries(monkeypatch, tmp_path):
     with pytest.raises((RuntimeError, TimeoutError)):
         generate.render_world({"name": "w"}, tmp_path / "w.sdf", {}, [], types.SimpleNamespace(cfg={}), tmp_path)
     assert calls["starts"] == generate.START_TRIES >= 3
+
+
+def test_radar_render_starts_through_the_retry(monkeypatch):
+    # the radar re-render of 2026-11-07 died three times on a slow start with 3 workers: it must use the same retry
+    import inspect
+    from doorsim import radar_render
+    assert radar_render.start_sim is generate.start_sim
+    assert "start_sim(lambda: make_sim(gzsim)" in inspect.getsource(radar_render.render_world)
+    calls = {"n": 0}
+
+    def make():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("Gazebo did not subscribe to light_config within 60 s")
+        return "sim"
+    monkeypatch.setattr(generate.time, "sleep", lambda s: None)
+    assert generate.start_sim(make, "w") == "sim" and calls["n"] == 3
