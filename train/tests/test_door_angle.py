@@ -9,7 +9,7 @@
 #     near_wall = median signed distance of box points within 0.12 m of the wall (None if < 20)
 #   cascade.decide(..., geom=None): only with a known state (closed True / False) and a hinged door:
 #     closed: hinges seen -> pull ("hinges"); else near_wall < -0.02 -> push, else pull ("recess"); near_wall None -> classifier.
-#     open:   panel_off > 0 -> pull, < 0 -> push ("panel"); None -> classifier.
+#     open (only with open_panel=True since 2026-11-07 21:25):   panel_off > 0 -> pull, < 0 -> push ("panel"); None -> classifier.
 #     closed None or geom None -> as before.
 #   cascade.score(..., angle=True): geometry per scored door from <frame>/depth.png (sensor depth, mm) and the dataset's K;
 #     missing depth -> geom None. Scores gain acc_push_pull_by_<source> over true-hinged doors called hinged.
@@ -71,10 +71,10 @@ def test_decide_with_geometry():
     assert (flush["opening"], flush["opening_source"]) == ("pull", "recess")
     hin = cascade.decide(*base, hinge_xs=[105.0], door_cx=140.0, closed=True, geom={"panel_off": None, "near_wall": -0.06})
     assert (hin["opening"], hin["opening_source"]) == ("pull", "hinges")
-    op = cascade.decide(*base, hinge_xs=[105.0], door_cx=140.0, closed=False, geom={"panel_off": 0.3, "near_wall": 0.0})
+    op = cascade.decide(*base, hinge_xs=[105.0], door_cx=140.0, closed=False, geom={"panel_off": 0.3, "near_wall": 0.0}, open_panel=True)
     assert (op["opening"], op["opening_source"]) == ("pull", "panel")
     op = cascade.decide((0.2), "lever", (0.1, 0.9), "right", (0.5, 0.5), hinge_xs=[], door_cx=140.0, closed=False,
-                        geom={"panel_off": -0.2, "near_wall": None})
+                        geom={"panel_off": -0.2, "near_wall": None}, open_panel=True)
     assert (op["opening"], op["opening_source"]) == ("push", "panel")
     none = cascade.decide(*base, hinge_xs=[], door_cx=140.0, closed=False, geom={"panel_off": None, "near_wall": None})
     assert (none["opening"], none["opening_source"]) == ("push", "classifier")
