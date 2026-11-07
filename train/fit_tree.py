@@ -1,7 +1,7 @@
 """usage: train/.venv/bin/python train/fit_tree.py <door run> <handle run> <detector run> <export dir> [--type-run RUN] [--state-run RUN] [--split-fit val] [--split-test test] [--score-min 0.3] [--device cpu] [--seed 0] [--out DIR]
 Learned decision tree (and a boosted model) over the cascade's cues: fit on the fit split, scored on the test split, on the true boxes and on the
-detector's boxes apart, next to the hand cascade on the same test doors. Writes <out>/learned_tree.json + rules_<target>_<boxes>.txt (default out: <door run>/learned_tree)."""
-import argparse, json, pathlib, sys
+detector's boxes apart, next to the hand cascade on the same test doors. Writes <out>/learned_tree.json + rules_<target>_<boxes>.txt + boost_<target>_<boxes>.pkl (the backup order for the failsafe) (default out: <door run>/learned_tree)."""
+import argparse, json, pathlib, pickle, sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from doordet import cascade, learned_tree, score
 
@@ -10,7 +10,7 @@ MIN_FIT = 20
 
 
 def run_boxes(name, args, preds_fit, preds_test, out):
-    """One box set (preds None = true boxes): cue tables of both splits -> {target: {"tree", "boost", "hand", "tree_depth"}} or {"skipped": reason}."""
+    """One box set (preds None = true boxes): cue tables of both splits -> {target: {"tree", "boost", "hand", "hand_boost", "tree_depth"}} or {"skipped": reason}."""
     kw = dict(score_min=args.score_min, type_run=args.type_run, state_run=args.state_run, hinges=True, angle=True)
     fit_rows, fit_truth = cascade.cue_table(args.door_run, args.handle_run, args.export, args.split_fit, preds=preds_fit, **kw)
     if len(fit_rows) < MIN_FIT:
@@ -29,6 +29,9 @@ def run_boxes(name, args, preds_fit, preds_test, out):
             if kind == "tree":
                 res[target]["tree_depth"] = model.get_depth()
                 (out / f"rules_{target}_{name}.txt").write_text(learned_tree.rules(model))
+            else:
+                res[target]["hand_boost"] = learned_tree.evaluate_backup([d[target] for d in dec], model, test_rows, y_test)
+                (out / f"boost_{target}_{name}.pkl").write_bytes(pickle.dumps(model))
     return res
 
 
@@ -56,14 +59,14 @@ def main():
     _, pt, _ = score.predict_run(args.detector_run, args.export, args.split_test, args.device)
     res["detector_boxes"] = run_boxes("detector_boxes", args, pf, pt, out)
     (out / "learned_tree.json").write_text(json.dumps(res, indent=2) + "\n")
-    print(f"{'boxes':<15}{'target':<12}{'hand':>7}{'tree':>7}{'(depth)':>8}{'boost':>7}{'tree top2':>10}{'boost top2':>11}{'n':>6}")
+    print(f"{'boxes':<15}{'target':<12}{'hand':>7}{'tree':>7}{'(depth)':>8}{'boost':>7}{'tree top2':>10}{'boost top2':>11}{'hand+boost top2':>16}{'n':>6}")
     for boxes in ("true_boxes", "detector_boxes"):
         if "skipped" in res[boxes]:
             print(f"{boxes:<15}skipped: {res[boxes]['skipped']}")
             continue
         for t, r in res[boxes].items():
             print(f"{boxes:<15}{t:<12}{r['hand']['acc']:>7.3f}{r['tree']['acc']:>7.3f}{'(' + str(r['tree_depth']) + ')':>8}{r['boost']['acc']:>7.3f}"
-                  f"{r['tree']['top2']:>10.3f}{r['boost']['top2']:>11.3f}{r['tree']['n']:>6}")
+                  f"{r['tree']['top2']:>10.3f}{r['boost']['top2']:>11.3f}{r['hand_boost']['top2']:>16.3f}{r['tree']['n']:>6}")
     print(f"wrote {out / 'learned_tree.json'}")
 
 

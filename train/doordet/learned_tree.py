@@ -79,6 +79,25 @@ def evaluate(model, rows, labels):
             "top2": float(np.mean([t in s for t, s in zip(labels, top2)])) if n else 0.0, "n": n}
 
 
+def ranked(first, model, row):
+    """The order of tries for one door: [first] + the model's other classes by its probability for this row, most likely first."""
+    _, p, classes = predict(model, [row])
+    return [first] + [classes[i] for i in np.argsort(-p[0], kind="stable") if classes[i] != first]
+
+
+def evaluate_backup(firsts, model, rows, labels):
+    """Hand answers (firsts) with the model as backup -> {"acc", "top2", "n"}: acc = firsts equal to labels, top2 = label among ranked(first, model, row)[:2]."""
+    n = len(labels)
+    if not n:
+        return {"acc": 0.0, "top2": 0.0, "n": 0}
+    _, p, classes = predict(model, rows)
+    top2 = []
+    for f, y, pi in zip(firsts, labels, p):
+        order = [f] + [classes[i] for i in np.argsort(-pi, kind="stable") if classes[i] != f]
+        top2.append(y in order[:2])
+    return {"acc": float(np.mean([f == y for f, y in zip(firsts, labels)])), "top2": float(np.mean(top2)), "n": n}
+
+
 def rules(model):
     """Readable text of a tree (sklearn export_text with the feature names); "" for the boosted model."""
     return export_text(model, feature_names=list(FEATURES)) if isinstance(model, DecisionTreeClassifier) else ""

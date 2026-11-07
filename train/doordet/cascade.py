@@ -25,7 +25,7 @@ def hinges_near(door_xywh, hinge_xywhs, pad=0.1):
     return out
 
 
-def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_xs=None, door_cx=None, closed=None, geom=None):
+def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_xs=None, door_cx=None, closed=None, geom=None, open_panel=False):
     """One door's cascade answer. p_push_pull = (P(push), P(pull)), p_left_right = (P(left), P(right)); rule_hinge: "left" / "right" / None.
     -> {"door_type", "type_source" (handle | classifier), "opening", "hinge_side", "hinge_source" (rule | classifier | None)}
     Step B: hinge_xs (centre x of the hinge boxes near this door, may be empty) + door_cx add "opening_source" and "hinges_seen":
@@ -33,7 +33,8 @@ def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_
     closed (None | True | False): False (open door) -> hinges ignored for opening and hinge side (as step A, opening_source "classifier"), hinges_seen still reported.
     geom ({"panel_off", "near_wall"} from door_angle.geometry, or None) with a known state (closed True / False) on a hinged door overrides only the opening and adds
     "opening_source": closed: hinges seen -> pull ("hinges"); else near_wall < -0.02 (door set in a recess) -> push, else pull ("recess"); near_wall None -> classifier.
-    open: panel_off > 0 (panel in front of the wall) -> pull, < 0 -> push ("panel"); None -> classifier. closed None -> geometry not used. Hinge side unchanged."""
+    open: only with open_panel=True: panel_off > 0 (panel in front of the wall) -> pull, < 0 -> push ("panel"); None -> classifier; by default the opening stays the
+    classifier's ("classifier"). closed None -> geometry not used. Hinge side unchanged."""
     b = hinge_xs is not None
     g = geom is not None
     dt = type_from_handle(handle_type)
@@ -56,7 +57,7 @@ def decide(p_sliding, handle_type, p_push_pull, rule_hinge, p_left_right, hinge_
                 opening, osrc = "pull", "hinges"
             elif geom.get("near_wall") is not None:
                 opening, osrc = ("push" if geom["near_wall"] < -0.02 else "pull"), "recess"
-        elif geom.get("panel_off") not in (None, 0.0):
+        elif open_panel and geom.get("panel_off") not in (None, 0.0):
             opening, osrc = ("pull" if geom["panel_off"] > 0 else "push"), "panel"
     res = {"door_type": dt, "type_source": source, "opening": opening, "hinge_side": hinge, "hinge_source": hsrc}
     if b:
@@ -128,10 +129,10 @@ FEATURES = ["p_slide", "p_push", "p_left", "p_closed", "h_lever", "h_flush", "h_
             "panel_off", "near_wall", "box_w", "box_h"]   # the cues of the cascade as one row per door (learned_tree reads them in this order)
 
 
-def _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle):
+def _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle, open_panel=False):
     """Everything the cascade knows per door, computed once for score() and cue_table(): the door list (true boxes, or detector boxes
     matched to GT doors like props.score_on_boxes), their handles, hinge boxes, true labels, handle type, head probabilities, state and
-    door_angle geometry. -> dict of parallel lists / arrays (+ "out", "meta" of the door run, "dec" = decide() per door)."""
+    door_angle geometry (open_panel goes to decide). -> dict of parallel lists / arrays (+ "out", "meta" of the door run, "dec" = decide() per door)."""
     from .evaluate import match
     _, dmeta = props.load(door_run, "cpu")
     ds = CropDataset(export_dir, split, "door", dmeta["imgsz"], dmeta["margin"], dmeta["min_px"], input=dmeta["input"])
@@ -205,21 +206,21 @@ def _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, t
                 d["geoms"][i] = door_angle.geometry(*cache[path], box)
     d["rule"] = [props.hinge_from_handle(doors[i][1], handles[i]) for i in range(len(doors))]
     d["dec"] = [decide(float(d["p_sl"][i]), handle_type[i], tuple(d["p_pp"][i]), d["rule"][i], tuple(d["p_lr"][i]), closed=d["closed"][i],
-                       geom=d["geoms"][i] if angle else None,
+                       geom=d["geoms"][i] if angle else None, open_panel=open_panel,
                        **({"hinge_xs": d["hinge_xs"][i], "door_cx": doors[i][1][0] + doors[i][1][2] / 2} if hinges else {}))
                 for i in range(len(doors))]
     return d
 
 
-def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False, state_run=None, state_gt=False, angle=False):
+def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, hinges=False, state_run=None, state_gt=False, angle=False, open_panel=False):
     """Cascade vs flat door classifier, on the true boxes (preds None: GT doors and GT handles) or on the detector's boxes
     (preds {image id: {boxes xyxy, scores, labels}}: detector doors matched to GT doors like props.score_on_boxes, detector handles).
     -> scores(...) + flat_acc_opening / flat_acc_hinge_side (the door run's plain argmax on the same doors); with preds also "matched".
     hinges=True (step B): hinge boxes (GT category 3, or the detector's hinge boxes) near each door feed decide(); scores gain the hinge keys.
     Closed-doors-only: closed per door = the true state (state_gt) or the state run's head (P(closed) >= 0.5), else None; passed to decide(); acc_state = share of doors
     whose closed / open used equals the true state (needs a state label).
-    angle=True: door_angle.geometry per scored door (its box, true or detector) from its frame's sensor depth (cached per image; no depth.png -> None) goes to decide(geom=)."""
-    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle)
+    angle=True: door_angle.geometry per scored door (its box, true or detector) from its frame's sensor depth (cached per image; no depth.png -> None) goes to decide(geom=); open_panel is passed to decide() too."""
+    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, state_gt, angle, open_panel)
     doors, truth, dec, out, meta = d["doors"], d["truth"], d["dec"], d["out"], d["meta"]
     res = scores(dec, truth)
     if (state_gt or state_run) and dec and all("state" in t for t in truth):
@@ -232,12 +233,12 @@ def score(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, io
     return res
 
 
-def cue_table(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, state_run=None, hinges=True, angle=True, with_decisions=False):
+def cue_table(door_run, handle_run, export_dir, split, preds=None, score_min=0.3, iou=0.5, type_run=None, state_run=None, hinges=True, angle=True, with_decisions=False, open_panel=False):
     """The cascade's cues as one row per scored door (same doors as score()), for the learned tree: -> (rows, truth) with rows = dicts keyed by FEATURES
     (P(slide) / P(push) / P(left) as decide sees them, P(closed) from the state run, handle type one-hot, handle rule side, hinge boxes near the door,
     door_angle geometry, door box size) and truth = [{"opening", "hinge_side"[, "state"]}]. Missing cues are NaN (no state run, no depth / wall).
-    with_decisions=True also returns the hand cascade's decide() answers: -> (rows, truth, decisions)."""
-    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, False, angle)
+    with_decisions=True also returns the hand cascade's decide() answers: -> (rows, truth, decisions); open_panel as in decide()."""
+    d = _door_data(door_run, handle_run, export_dir, split, preds, score_min, iou, type_run, hinges, state_run, False, angle, open_panel)
     side = {"right": 1.0, "left": -1.0}
     rows = []
     for i, (_, box) in enumerate(d["doors"]):
