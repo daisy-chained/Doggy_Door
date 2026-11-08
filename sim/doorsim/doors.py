@@ -3,6 +3,7 @@
 Doors are fixed per world file (Gazebo can't change a joint while running), so variety = many worlds, each with its own two
 doors in the same wall. Frames: world x toward the wall, y left, z up. "front" = camera at x < WALL_X looking +x (right = -y);
 "back" = camera at x > WALL_X looking -x (right = +y). Randomness: numpy Generator."""
+import math
 import pathlib
 import numpy as np
 
@@ -133,8 +134,129 @@ def make_worlds(wcfg):
             world = sample_world(rng, wcfg, heldout=held)
         for d in world["doors"].values():
             d["door_stop"] = stop
-        out.append({"name": f"door_room_{out_name}_{i:03d}", "split": sp, "heldout": held, **world})
+        world = {"name": f"door_room_{out_name}_{i:03d}", "split": sp, "heldout": held, **world}
+        if wcfg.get("window"):  # own rng stream: the doors stay the same as without a window
+            world["window"] = sample_window(np.random.default_rng([wcfg["seed"], 7000 + i]), wcfg["window"], world)
+        out.append(world)
     return out
+
+
+# --- windows (door room v7) ---
+def _free_stretches(world, margin):
+    """Free y stretches of the door wall: [-3 + margin, 3 - margin] minus every door opening + trim + margin and sliding path + margin."""
+    blocked = []
+    for slot, spec in world["doors"].items():
+        g = _layout(spec, slot)
+        blocked.append((g["y"] - g["w"] / 2 - g["tw"] - margin, g["y"] + g["w"] / 2 + g["tw"] + margin))
+        if spec["door_type"] == "sliding":
+            blocked.append((g["path"][0] - margin, g["path"][1] + margin))
+    out, at = [], -3.0 + margin
+    for a, b in sorted(blocked):
+        if a > at:
+            out.append((at, min(a, 3.0 - margin)))
+        at = max(at, b)
+    if at < 3.0 - margin:
+        out.append((at, 3.0 - margin))
+    return [(a, b) for a, b in out if b > a]
+
+
+def sample_window(rng, wcfg_window, world):
+    """Window spec (plain Python values, JSON-able) in a free stretch of the door wall, or None (p, or no stretch fits min_width).
+    The span width + 2 * frame_width stays 0.002 m inside the stretch, so the 3-decimal rounding never touches a blocked edge."""
+    c = wcfg_window
+    has = rng.random() < c.get("p", 1.0)
+    fw = round(float(rng.uniform(*c["frame_width"])), 3)
+    stretches = [(a, b) for a, b in _free_stretches(world, c["margin"]) if b - a - 2 * fw - 0.002 >= c["min_width"]]
+    if not has or not stretches:
+        return None
+    a, b = stretches[int(rng.integers(len(stretches)))]
+    width = math.floor(min(float(rng.uniform(*c["width"])), b - a - 2 * fw - 0.002) * 1000) / 1000
+    lo, hi = a + width / 2 + fw, b - width / 2 - fw
+    y = min(max(round(float(rng.uniform(lo, hi)), 3), math.ceil(lo * 1000) / 1000), math.floor(hi * 1000) / 1000)
+    low = bool(rng.random() < c["sill"]["low"]["p"])
+    sill = round(float(rng.uniform(*c["sill"]["low" if low else "normal"]["z"])), 3)
+    top = round(min(float(rng.uniform(*c["top"])), ROOM_HEIGHT - 0.1), 3)
+    return {"y": y, "width": width, "sill": sill, "top": top, "frame_width": fw, "frame_colour": _shade(rng, c["frame"][_pick(rng, c["frame"])]),
+            "mullions": _pick(rng, c["mullions"]),
+            "handle": (("front", "back")[int(rng.integers(2))] if rng.random() < c["p_handle"] else None), "low": low}
+
+
+def _window_wall(parts, win):
+    """Split the wall box that holds the window into boxes around the hole (outer frame size): left, right, below the sill, above the top."""
+    y0, y1 = win["y"] - win["width"] / 2 - win["frame_width"], win["y"] + win["width"] / 2 + win["frame_width"]
+    z0, z1 = max(0.0, win["sill"] - win["frame_width"]), win["top"] + win["frame_width"]
+    out = []
+    for part in parts:
+        n, rgb, bx0, bx1, by0, by1, bz0, bz1 = part
+        if not (n.startswith("wall_") and by0 <= y0 and y1 <= by1):
+            out.append(part)
+            continue
+        out += [(n, rgb, bx0, bx1, by0, y0, bz0, bz1), (n + "_win_r", rgb, bx0, bx1, y1, by1, bz0, bz1),
+                (n + "_win_above", rgb, bx0, bx1, y0, y1, z1, bz1)]
+        if z0 > 0:
+            out.append((n + "_win_below", rgb, bx0, bx1, y0, y1, bz0, z0))
+    return out
+
+
+def _window_models(win, name_label=(31, 32, 33)):
+    """SDF of the window frame model (holds the glass by a DetachableJoint), the glass model and the optional handle model."""
+    y, w, fw, sill, top = win["y"], win["width"], win["frame_width"], win["sill"], win["top"]
+    zm, h, t = (sill + top) / 2, top - sill, 0.06
+    f, spec_f = win["frame_colour"], "0.5 0.5 0.5 1"
+    # frame bars in the frame link (origin at WALL_X, y, 0): fill the ring from the hole edge to the glass edge
+    zlo, zhi = max(0.0, sill - fw), top + fw
+    bars = [("left", (0, -(w / 2 + fw / 2), (zlo + zhi) / 2), (t, fw, zhi - zlo)), ("right", (0, w / 2 + fw / 2, (zlo + zhi) / 2), (t, fw, zhi - zlo)),
+            ("top", (0, 0, top + fw / 2), (t, w, fw)), ("bottom", (0, 0, (zlo + sill) / 2), (t, w, sill - zlo))]
+    bars = [b for b in bars if b[2][1] > 1e-6 and b[2][2] > 1e-6]
+    if win["mullions"] in ("vertical", "cross"):
+        bars.append(("mullion_v", (0, 0, zm), (t, 0.04, h)))
+    if win["mullions"] == "cross":
+        bars.append(("mullion_h", (0, 0, zm), (t, w, 0.04)))
+    body = "\n".join(f'        <collision name="c_{n}"><pose>{_pose(*pos)} 0 0 0</pose>{_box(*size)}</collision>\n        '
+                     + _vis(n, pos, _box(*size), f, spec_f) for n, pos, size in bars)
+    det = _detach("window_glass", topics=True).replace("<parent_link>panel", "<parent_link>frame")
+    text = f"""    <model name="window">
+      <pose>{_pose(WALL_X, y, 0)} 0 0 0</pose>
+      <link name="frame_anchor"><inertial><mass>1</mass></inertial></link>
+      <joint name="anchor" type="fixed"><parent>world</parent><child>frame_anchor</child></joint>
+      <link name="frame">
+        <gravity>false</gravity>
+        {_inertial(10, t, w + 2 * fw, h + 2 * fw)}
+{body}
+      </link>
+      <joint name="frame_fix" type="fixed"><parent>frame_anchor</parent><child>frame</child></joint>
+      {det}
+      {_label(31)}
+    </model>
+    <model name="window_glass">
+      <pose>{_pose(WALL_X, y, zm)} 0 0 0</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        {_inertial(0.5, 0.01, w, h)}
+        <visual name="glass">
+          {_box(0.01, w, h)}
+          <material><diffuse>0.75 0.88 0.92 1</diffuse><specular>0.9 0.9 0.9 1</specular></material>
+          <transparency>0.85</transparency>
+          <visibility_flags>2</visibility_flags>
+        </visual>
+      </link>
+      {_label(33)}
+    </model>
+"""
+    if win["handle"]:
+        front = win["handle"] == "front"
+        vis = "\n".join("        " + v for v in _handle_visuals("lever", 1))
+        text += f"""    <model name="window_handle">
+      <pose>{_pose(WALL_X + (-0.03 if front else 0.03), y + w / 2 - 0.06, min(zm, 1.4))} 0 0 {0 if front else 3.14159}</pose>
+      <link name="link">
+        <gravity>false</gravity>
+        {_inertial(0.2, 0.05, 0.05, 0.05)}
+{vis}
+      </link>
+      {_label(32)}
+    </model>
+"""
+    return text
 
 
 # --- geometry shared by the attributes and the world file ---
@@ -216,11 +338,24 @@ def attributes(world, name):
                                      "detach_topic": f"/glass_{slot}/detach", "attach_topic": f"/glass_{slot}/attach"}
     for p in clutter.POOL:
         objs[p["name"]] = {"id": p["id"], "class": None, "role": p["role"], "kind": p["kind"], "place": p["place"], "size": p["size"]}
+    win = world.get("window")
+    if win:
+        objs["window"] = {"id": 31, "class": 4, "width": win["width"], "sill": win["sill"], "top": win["top"], "low": win["low"],
+                          "mullions": win["mullions"], "frame_width": win["frame_width"], "y": win["y"], "handle": win["handle"], "glass": True}
+        ky = [round(win["y"] - win["width"] / 2 - win["frame_width"] - 0.1, 3), round(win["y"] + win["width"] / 2 + win["frame_width"] + 0.1, 3)]
+        objs["window"]["keep_out"] = {"front": [{"x": [round(WALL_X - 0.35, 3), round(WALL_X - 0.05, 3)], "y": list(ky)}],
+                                      "back": [{"x": [round(WALL_X + 0.05, 3), round(WALL_X + 0.35, 3)], "y": list(ky)}]}
+        objs["window_glass"] = {"id": 33, "class": None, "part": "glass_pane", "part_of": "window",
+                                "detach_topic": "/window_glass/detach", "attach_topic": "/window_glass/attach"}
+        if win["handle"]:
+            objs["window_handle"] = {"id": 32, "class": None, "part": "window_handle", "part_of": "window", "face": win["handle"]}
     classes = {"1": "door", "2": "handle"}
     if any(o.get("class") == 3 for o in objs.values()):
         classes["3"] = "hinge"
+    if win:
+        classes["4"] = "window"
     return {"_note": f"Ground truth per object for {name} (door room v4: two random doors in one wall, see sim/doorsim/doors.py). "
-                     "'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle, 3 = hinge (door room v5 only: three knuckles per hinged door, hinge_<slot>_<i>). World frame: "
+                     "'id' = the Gazebo label on that model (unique per object, 1-255). Classes: 1 = door, 2 = handle, 3 = hinge (door room v5 only: three knuckles per hinged door, hinge_<slot>_<i>), 4 = window (door room v7: one fixed window in the door wall, parts window_glass / window_handle). World frame: "
                      "x toward the wall, y left, z up (metres). 'front' = camera at x < 3 looking +x, 'back' = camera at x > 3 looking -x. "
                      "Push / pull, hinge side and slide direction depend on the camera side: seen_from has both, the keys on the object "
                      "itself are the front view and the generator sets them per frame. Each door has a handle on each face "
@@ -480,6 +615,8 @@ def _back_wall(world):
         parts += [full(f"wall_{i}", edge, y - w / 2), ("lintel_" + slot, WALL_RGB, -0.05, 0.05, y - w / 2, y + w / 2, h, ROOM_HEIGHT)]
         edge = y + w / 2
     parts.append(full(f"wall_{len(lay)}", edge, 3.0))
+    if world.get("window"):
+        parts = _window_wall(parts, world["window"])
     visuals = []
     for slot in SLOTS:
         spec = world["doors"][slot]
@@ -518,4 +655,6 @@ def world_sdf(world, name):
         parts += [_handle_model(slot, k, spec, g, "front"), _handle_model(slot, k, spec, g, "back")]
         if _has_hinges(spec):
             parts += [_hinge_model(slot, k, spec, g, i) for i in range(3)]
+    if world.get("window"):
+        parts.append(_window_models(world["window"]))
     return "".join(parts) + "\n" + rig_and_pool + _room_shell() + "  </world>\n</sdf>\n"

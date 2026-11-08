@@ -1,0 +1,73 @@
+# Door room v7, Madelief 2026-11-08: the v6 set (same worlds, doors, seed, views) plus one window per world (worlds_v7.yaml),
+# so the detector learns to tell a window from a door. Was v6: balanced door types (sim/configs/worlds_v6.yaml) and balanced states / sides:
+# per world every door is closed in one scene and open in the other (doors.balance_states), and the views go round
+# door a front, door b front, door a back, door b back (view.balance), so every door type x state gets the same views.
+#   python3 sim/doorsim/generate.py sim/configs/door_room_v7_6k.yaml
+world: door_room_v7
+worlds: door_room/v7/worlds.json
+scenes_per_world: 2
+workers: 4                 # Gazebo runs at once (one world each, own GZ_PARTITION); --workers overrides
+per_scene_rng: true        # seed per scene (+ a separate stream for lighting): scenes can be rendered on their own
+seed: 6
+views_per_scene: 20
+settle_steps: 6000          # max physics steps (1 ms) to let the doors reach their new position
+
+doors:                      # per scene
+  p_closed: 0.3             # unused with balance_states
+  balance_states: true      # scenes_per_world must be even: each door closed in half its scenes
+  min_open_fraction: 0.1    # otherwise opened 10..100 % of its range
+
+lights:                     # per scene: base colour (from the world file) x intensity, plus a small tint
+  ceiling_light: {type: point, base: [0.8, 0.8, 0.75], intensity: [0.3, 1.2], tint: 0.1,
+                  range: 8, attenuation: [0.5, 0.1, 0.02], cast_shadows: false}
+  sun: {type: directional, base: [0.9, 0.9, 0.9], intensity: [0.3, 1.0], tint: 0.05,
+        direction: [-0.3, 0.2, -0.9], cast_shadows: false}
+  ceiling_light_back: {type: point, base: [0.8, 0.8, 0.75], intensity: [0.3, 1.2], tint: 0.1,   # behind the wall
+                       range: 8, attenuation: [0.5, 0.1, 0.02], cast_shadows: false}
+
+lighting:                   # per scene; room lights (below) x level. Hard limit: fixed: {level: L, headlight: H}
+  modes:                    # p = share of scenes, level = log-uniform range
+    normal: {p: 0.34, level: [0.6, 1.2]}
+    dim: {p: 0.33, level: [0.08, 0.4]}
+    dark: {p: 0.33, level: [0.003, 0.05]}
+  headlight:                # spot light on the camera rig (the robot's own light)
+    p: {normal: 0.0, dim: 0.5, dark: 1.0}   # chance it is on, per mode
+    level: [0.4, 1.0]       # brightness when on, uniform (Gazebo ignores a light colour above 1: tested 2026-11-02)
+    type: spot
+    range: 10
+    attenuation: [0.2, 0.05, 0.02]
+    direction: [1, 0, 0]
+    spot: [0.4, 0.8, 1.0]   # inner angle, outer angle (rad), falloff
+    cast_shadows: true
+  flicker: {p: 0.15, depth: [0.3, 0.9]}     # per view: chance the room lights dip to level x (1 - depth)
+  fixed: null
+
+clutter:                    # per scene, sim/doorsim/clutter.py; both sides of the wall, doors' keep-out areas from each world
+  floor_count: [0, 6]       # floor items per side
+  wall_count: [0, 2]        # wall items per side
+  sides:                    # zone = floor area, wall_x = the wall face on that side
+    front: {zone: {x: [-0.5, 2.94], y: [-2.9, 2.9]}, wall_x: 2.95}
+    back: {zone: {x: [3.06, 6.5], y: [-2.9, 2.9]}, wall_x: 3.05}
+  gap: 0.05                 # min space between floor items, m
+  p_against_wall: 0.3       # chance a floor item stands with its back to the wall, facing the camera
+  wall: {y: [-2.9, 2.9], z: [0.9, 2.0]}   # wall items; the doors' keep-out spans are kept clear
+  camera_margin: 0.15       # a viewpoint this close to (or inside) an item is tried again
+
+view:                       # per frame: camera in front of a random door, on a random side of the wall
+  p_back: 0.5               # unused with balance
+  balance: true             # view i: door i % 2, side (i // 2) % 2 (front, back)
+  distance: [0.5, 4.0]      # m from the door centre (on the wall face)
+  angle_deg: 60             # max angle off straight in front
+  height: [0.3, 1.5]        # camera height, m (small to tall robots)
+  target_height: [0.6, 1.6] # aim point on the door, m
+  target_jitter: 0.3        # aim point shift along the wall, m
+  roll_deg: 0
+
+reject:                     # a viewpoint is tried again when
+  min_depth: 0.2            # something is closer than this (camera inside / against a door)
+  need_target_box: true     # the door it aims at isn't in the image
+  max_tries: 20
+
+glass_depth:                # per frame with glass in view
+  mix: {holes: 0.4, see_through: 0.3, partial: 0.3}
+  partial: {holes: 0.35, see_through: 0.35, cell: 32}   # rest of the glass keeps its surface depth
