@@ -3,6 +3,7 @@
 # round the doors and sides (view.balance). No Gazebo needed: python3 -m pytest sim/tests/test_balance.py
 import collections, json, pathlib, sys
 import numpy as np
+import pytest
 import yaml
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
@@ -165,4 +166,46 @@ def test_generator_passes_scene_and_view_index():
     from doorsim import generate
     src = inspect.getsource(generate.render_scenes)
     assert "door_targets(rng, attrs, cfg[\"doors\"], scene=scene)" in src
-    assert "sampling.view(rng, attrs, cfg[\"view\"], index=v)" in src
+    assert "find_view(rng, attrs, cfg[\"view\"], v," in src
+
+
+def _attrs6():
+    return attrs_of(doors.make_worlds(V6)[0])
+
+
+def test_find_view_keeps_door_and_side_when_it_can():
+    from doorsim import generate
+    a, cfg = _attrs6(), GEN6["view"]
+    calls = []
+    def try_cam(cam):
+        calls.append(cam)
+        return "ok" if len(calls) == 3 else None  # two rejected poses first
+    cam, res, fallback = generate.find_view(np.random.default_rng(0), a, cfg, 6, 20, try_cam)
+    assert res == "ok" and not fallback and len(calls) == 3
+    assert {(c["target_door"], c["side"]) for c in calls} == {("door_a", "back")}  # view 6 = door a, back
+
+
+def test_find_view_falls_back_to_a_free_view():
+    # an open sliding door seen from the side it doesn't hang on can be fully behind the wall: no box from there
+    from doorsim import generate
+    a, cfg = _attrs6(), GEN6["view"]
+    calls = []
+    def try_cam(cam):
+        calls.append(cam)
+        return None if (cam["target_door"], cam["side"]) == ("door_a", "back") else "ok"
+    cam, res, fallback = generate.find_view(np.random.default_rng(0), a, cfg, 6, 20, try_cam)
+    assert res == "ok" and fallback and (cam["target_door"], cam["side"]) != ("door_a", "back")
+    assert len(calls) > 20  # all 20 fixed tries first
+
+
+def test_find_view_unbalanced_has_no_fallback_round():
+    from doorsim import generate
+    a = _attrs6()
+    cfg = dict(GEN6["view"], balance=False)
+    n = []
+    def never(cam):
+        n.append(1)
+        return None
+    with pytest.raises(RuntimeError):
+        generate.find_view(np.random.default_rng(0), a, cfg, 6, 20, never)
+    assert len(n) == 20
