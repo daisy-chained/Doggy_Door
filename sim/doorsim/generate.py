@@ -101,6 +101,20 @@ def n_workers(cfg, cli):
     return n
 
 
+def find_view(rng, attrs, vcfg, v, tries, try_cam):
+    """(cam, try_cam result, fallback) for view v. try_cam(cam) renders and returns None when the pose is rejected. Balanced
+    views (vcfg balance) keep their door and side for `tries` poses; when none works (an open sliding door seen from the side
+    it doesn't hang on can sit fully behind the wall) the view is drawn freely for another `tries` (fallback True)."""
+    rounds = [v, None] if vcfg.get("balance") else [None]
+    for idx in rounds:
+        for _ in range(tries):
+            cam = sampling.view(rng, attrs, vcfg, index=idx)
+            res = try_cam(cam)
+            if res is not None:
+                return cam, res, bool(vcfg.get("balance")) and idx is None
+    raise RuntimeError(f"no usable viewpoint in {tries} tries" + (" (+ free fallback)" if len(rounds) > 1 else ""))
+
+
 def render_scenes(sim, attrs, scenes, run, world=None):
     """Render `scenes` in a running world. run = shared state: cfg, lcfg, out, rng, count, rejected, t_start, scenes_total, scenes_done.
     world = the world dict for many-worlds datasets (frames then get "world" / "side"), None for a single-world config."""
@@ -141,11 +155,10 @@ def render_scenes(sim, attrs, scenes, run, world=None):
                     view_level = lv
                     for name, l in at(lv).items():
                         sim.set_light(name, cfg["lights"][name], l["diffuse"])
-            for _ in range(rej["max_tries"]):
-                cam = sampling.view(rng, attrs, cfg["view"], index=v)
+            def try_cam(cam):  # rendered messages + sensor depth, or None (rejected)
                 if placed and clutter.camera_blocked(cam["world_position"], placed, clutter.POOL, ccfg["camera_margin"]):
                     run.rejected += 1
-                    continue
+                    return None
                 sim.set_pose("rig", cam["world_position"], cam["world_rpy"])
                 m = sim.render(keys)
                 depth_gt = gzsim.image_array(m["depth"], "depth")
@@ -154,10 +167,12 @@ def render_scenes(sim, attrs, scenes, run, world=None):
                 too_close = np.nanmin(np.where(np.isfinite(depth_gt), depth_gt, np.nan)) < rej["min_depth"]
                 if too_close or (rej["need_target_box"] and target_id not in {b["label"] for b in b2}):
                     run.rejected += 1
-                    continue
-                break
-            else:
-                raise RuntimeError(f"scene {scene} view {v}: no usable viewpoint in {rej['max_tries']} tries")
+                    return None
+                return m, depth_gt, b2
+            try:
+                cam, (m, depth_gt, b2), fallback = find_view(rng, attrs, cfg["view"], v, rej["max_tries"], try_cam)
+            except RuntimeError as e:
+                raise RuntimeError(f"scene {scene} view {v}: {e}") from None
             seg = gzsim.image_array(m["seg"], "seg")
             in_view = [n for i, n in glass_ids.items() if (seg == i).any()]
             mask = np.isin(seg, [attrs["objects"][n]["id"] for n in in_view])
@@ -167,7 +182,7 @@ def render_scenes(sim, attrs, scenes, run, world=None):
                 if mode != "holes":
                     behind = sim.depth_without_panes(in_view)
             depth = glass.apply(depth_gt, mask, mode or "holes", rng, behind, gcfg.get("partial"))
-            extra = {"scene": scene, "view": v, "target_door": cam["target_door"],
+            extra = {"scene": scene, "view": v, "target_door": cam["target_door"], "view_fallback": fallback,
                      "sim_time_ns": gzsim.ns(m["rgb"].header.stamp), "lights": light, "glass_depth_mode": mode}
             if world:
                 extra.update(world=world["name"], side=cam["side"])
