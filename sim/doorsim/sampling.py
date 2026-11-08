@@ -4,16 +4,21 @@ import math
 import numpy as np
 
 
-def door_targets(rng, attrs, cfg):
+def door_targets(rng, attrs, cfg, scene=None):
     """{door name: joint position}. Each door is closed with probability p_closed, otherwise opened
-    a random fraction (min_open_fraction .. 1) of its range, toward the open end."""
+    a random fraction (min_open_fraction .. 1) of its range, toward the open end. With cfg balance_states, door i (sorted
+    names) is closed iff (scene + i) is even, so each door is closed in half the scenes."""
     out = {}
-    for name, o in attrs["objects"].items():
+    bal = cfg.get("balance_states")
+    items = sorted(attrs["objects"].items()) if bal else attrs["objects"].items()
+    i = 0
+    for name, o in items:
         if "joint" not in o:
             continue
+        k, i = i, i + 1
         lo, hi = o["joint"]["range"]
         end = lo if abs(lo) > abs(hi) else hi
-        if rng.random() < cfg["p_closed"]:
+        if (scene + k) % 2 == 0 if bal else rng.random() < cfg["p_closed"]:
             out[name] = 0.0
         else:
             out[name] = float(end * rng.uniform(cfg["min_open_fraction"], 1.0))
@@ -68,16 +73,21 @@ def look_at(position, target):
     return math.atan2(dy, dx), math.atan2(-dz, math.hypot(dx, dy))
 
 
-def view(rng, attrs, cfg):
+def view(rng, attrs, cfg, index=None):
     """A camera pose in front of a random door: distance, angle off the door's facing direction and
     camera height from cfg ranges; aimed at a point on the door (target_height, target_jitter along the wall).
+    With cfg balance and an index, view i takes door i % n and side (i // n) % 2 (front, back) instead of drawing them.
     Doors with `approach` (v4) are seen from the front or, with chance cfg p_back, from the back; old doors only from the front."""
     doors = [n for n, o in attrs["objects"].items() if "front_world" in o or "approach" in o]
-    door = doors[rng.integers(len(doors))]
+    fixed = bool(cfg.get("balance")) and index is not None
+    door = doors[index % len(doors)] if fixed else doors[rng.integers(len(doors))]
     o = attrs["objects"][door]
     side = "front"
     if "approach" in o:
-        side = "back" if rng.random() < cfg.get("p_back", 0) else "front"
+        if fixed:
+            side = ("front", "back")[(index // len(doors)) % 2]
+        else:
+            side = "back" if rng.random() < cfg.get("p_back", 0) else "front"
     f = o["approach"][side] if "approach" in o else o["front_world"]
     px, py, pz = f["point"]
     nx, ny = f["direction"][0], f["direction"][1]

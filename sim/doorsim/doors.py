@@ -30,12 +30,20 @@ def _shade(rng, family):
     return [round(float(c), 3) for c in rng.uniform(lo, hi)]
 
 
-def sample_door(rng, cfg, slot):
-    """Spec of one door (plain Python values, JSON-able). Hinged: hinge_y = which edge the hinge is on (-1 / +1),
+def sample_door(rng, cfg, slot, force=None):
+    """Spec of one door (plain Python values, JSON-able). `force` = optional {glass, door_type, handle_type} set instead of
+    drawn (same random draws either way, hinged handle_type only). Hinged: hinge_y = which edge the hinge is on (-1 / +1),
     swing_x = which way it swings (-1 toward -x, +1 toward +x). Sliding: hangs_on a wall face, slide_y away from the other doorway."""
     sliding = bool(rng.random() < cfg["p_sliding"])
     glass = bool(rng.random() < cfg["p_glass"])
+    force = force or {}
+    if "door_type" in force:
+        sliding = force["door_type"] == "sliding"
+    if "glass" in force:
+        glass = bool(force["glass"])
     handle = "flush_pull" if sliding else _pick(rng, cfg["handle"])
+    if not sliding and "handle_type" in force:
+        handle = force["handle_type"]
     spec = {"slot": slot, "door_type": "sliding" if sliding else "hinged", "glass": glass, "handle_type": handle,
             "width": round(float(rng.uniform(*cfg["width"])), 3), "height": round(float(rng.uniform(*cfg["height"])), 3),
             "frame_style": _pick(rng, cfg["frame_style"])}
@@ -67,9 +75,9 @@ def is_heldout(spec, combos):
     return any(all(spec.get(k) == v for k, v in c.items()) for c in combos)
 
 
-def _draw(rng, cfg, slot, combos, heldout):
+def _draw(rng, cfg, slot, combos, heldout, force=None):
     for _ in range(1000):
-        spec = sample_door(rng, cfg, slot)
+        spec = sample_door(rng, cfg, slot, force)
         if is_heldout(spec, combos) == heldout:
             return spec
     raise ValueError(f"no door with heldout={heldout} in 1000 draws: check the heldout combos")
@@ -84,6 +92,21 @@ def sample_world(rng, wcfg, heldout=False):
     return {"doors": doors, "doors_heldout": {slot: is_heldout(d, combos) for slot, d in doors.items()}}
 
 
+def _balanced_world(rng, wcfg, held, deal, sp, j):
+    """Like sample_world, but door types come from `deal` (normal doors) or balance.heldout_cells[j % len] (held-out door)."""
+    combos = wcfg["heldout"]
+    must = SLOTS[int(rng.integers(len(SLOTS)))] if held else None
+    doors = {}
+    for slot in SLOTS:
+        if slot == must:
+            hc = wcfg["balance"]["heldout_cells"]
+            force = hc[j % len(hc)]
+        else:
+            force = deal(sp)
+        doors[slot] = _draw(rng, wcfg["door"], slot, combos, slot == must, force)
+    return {"doors": doors, "doors_heldout": {slot: is_heldout(d, combos) for slot, d in doors.items()}}
+
+
 def make_worlds(wcfg):
     """All worlds of a config, deterministic: `count` normal worlds (split by world), then `heldout_count` held-out worlds (test).
     Config keys `out` (version in the world names, default v4) and `door_stop` (push / pull cues on hinged doors, default false)
@@ -91,13 +114,26 @@ def make_worlds(wcfg):
     out_name, stop = wcfg.get("out", "v4"), bool(wcfg.get("door_stop", False))
     rng = np.random.default_rng(wcfg["seed"])
     split = {i: sp for sp, idx in export.split_scenes(range(wcfg["count"]), tuple(wcfg["split_ratios"]), wcfg["seed"]).items() for i in idx}
+    bal = wcfg.get("balance")
+    decks = {}  # split -> door types still to deal (balance)
+
+    def deal(sp):
+        if not decks.get(sp):
+            cycle = [c for c in bal["cells"] for _ in range(int(c["w"]))]
+            decks[sp] = [cycle[j] for j in rng.permutation(len(cycle))]
+        return {k: v for k, v in decks[sp].pop(0).items() if k != "w"}
+
     out = []
     for i in range(wcfg["count"] + wcfg["heldout_count"]):
         held = i >= wcfg["count"]
-        world = sample_world(rng, wcfg, heldout=held)
+        sp = "test" if held else split[i]
+        if bal:
+            world = _balanced_world(rng, wcfg, held, deal, sp, i - wcfg["count"])
+        else:
+            world = sample_world(rng, wcfg, heldout=held)
         for d in world["doors"].values():
             d["door_stop"] = stop
-        out.append({"name": f"door_room_{out_name}_{i:03d}", "split": "test" if held else split[i], "heldout": held, **world})
+        out.append({"name": f"door_room_{out_name}_{i:03d}", "split": sp, "heldout": held, **world})
     return out
 
 

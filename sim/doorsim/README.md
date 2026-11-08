@@ -74,7 +74,7 @@ YOLO (`images/`, `labels/`, `data.yaml`) + COCO (`coco/<split>.json`) from one d
 - `export.py`: YOLO + COCO training export (CLI); keeps `split_scenes` from `dataset.json` when present
 - `effects.py`: smoke, depth and camera-noise effects on a saved dataset (CLI)
 - `gzsim.py`: runs a headless world and drives it over gz-transport (pause/step, set pose, doors, lights, glass panes, clutter placement + colours). Every step request also says `pause: true`: without it Gazebo un-pauses the world.
-- `sampling.py`: random door positions, lights, lighting modes, flicker, per-scene streams and viewpoints
+- `sampling.py`: random door positions, lights, lighting modes, flicker, per-scene streams and viewpoints (balance_states / view balance: closed-open and door/side go round, v6)
 - `clutter.py`: the clutter pool, its SDF, placement, camera-inside check and `visible_fraction`
 - `glass.py`: the glass depth step
 - `frames.py`: frame metadata (also used by `sim/door_room/meta.py`)

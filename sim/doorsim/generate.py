@@ -117,7 +117,7 @@ def render_scenes(sim, attrs, scenes, run, world=None):
             rng, light_rng = sampling.scene_rngs(cfg["seed"], scene)
         else:
             light_rng = rng
-        targets = sampling.door_targets(rng, attrs, cfg["doors"])
+        targets = sampling.door_targets(rng, attrs, cfg["doors"], scene=scene)
         lit = sampling.lighting(light_rng, lcfg) if lcfg else None
         level = lit["level"] if lit else 1.0
         base = sampling.lights(light_rng, cfg["lights"])  # at level 1; per view the level only scales these
@@ -142,7 +142,7 @@ def render_scenes(sim, attrs, scenes, run, world=None):
                     for name, l in at(lv).items():
                         sim.set_light(name, cfg["lights"][name], l["diffuse"])
             for _ in range(rej["max_tries"]):
-                cam = sampling.view(rng, attrs, cfg["view"])
+                cam = sampling.view(rng, attrs, cfg["view"], index=v)
                 if placed and clutter.camera_blocked(cam["world_position"], placed, clutter.POOL, ccfg["camera_margin"]):
                     run.rejected += 1
                     continue
@@ -292,6 +292,8 @@ def main():
     if "worlds" in cfg:  # many worlds: [(world dict, its sdf, its attributes, its scenes)]
         worlds = json.loads((SIM / cfg["worlds"]).read_text())["worlds"][:cfg.get("max_worlds")]
         spw = cfg["scenes_per_world"]
+        if cfg["doors"].get("balance_states") and spw % 2:
+            sys.exit(f"doors.balance_states needs an even scenes_per_world (got {spw}): each door is closed in half its scenes")
         plan = [(w, SIM / w["sdf"], json.loads((SIM / w["attributes"]).read_text()), scenes) for w, scenes in world_scenes(worlds, spw, args.split)]
         first = json.loads((SIM / worlds[0]["attributes"]).read_text())
         info["attributes"] = {"classes": first["classes"], "objects": first["objects"]}  # the first world's, for readers of single-world datasets
