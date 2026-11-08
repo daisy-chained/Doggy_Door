@@ -33,7 +33,7 @@ def test_default_all():
 
 
 def test_fraction_keeps_whole_scenes_nested_and_seeded(tmp_path):
-    root = with_scenes(make_export(tmp_path / "e"))
+    root = with_scenes(make_export(tmp_path / "e", n=16))  # 8 scenes of 2 images
     full = props.CropDataset(root, "train", "door", 64, 0.1, 4)
     all_scenes = scenes_of(full, root)
     assert len(all_scenes) >= 4

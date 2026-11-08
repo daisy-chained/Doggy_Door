@@ -31,6 +31,7 @@ DEFAULTS = {
     "jitter": {"shift": 0.1, "scale": 0.15},  # train-time crop shift / scale, fractions of the long box side
     "epochs": 20, "batch": 32, "lr": 3e-4, "weight_decay": 1e-4, "amp": False, "workers": 4, "seed": 0, "device": "cuda",
     "min_calibration": 20,  # val crops needed per head to fit a temperature (else T = 1)
+    "train_fraction": 1.0,  # share of the train split's scenes to train on (nested seeded subsets; frame-count test)
     "balance": None,  # None = plain shuffle; attribute names (e.g. ["glass", "state"]) = oversample so every group weighs the same
     "out": str(REPO / "runs"), "name": None,
     "mlflow": {"tracking_uri": f"sqlite:///{REPO / 'mlflow.db'}", "experiment": "doggy-door-props", "tags": {}},
@@ -126,15 +127,23 @@ def balance_weights(attrs, keys):
 
 class CropDataset(Dataset):
     """Crops of door or handle boxes from a COCO export; item = (normalised C x imgsz x imgsz tensor, {head: class index}), C = CHANNELS[input]."""
-    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb", need=None):
+    def __init__(self, export_dir, split, crop, imgsz, margin, min_px, jitter=None, seed=0, input="rgb", need=None, fraction=1.0, fraction_seed=0):
+        # fraction < 1: keep that share of the scenes (whole scenes; an image without "scene" is its own), seeded shuffle of the sorted
+        # scene ids, so smaller fractions are subsets of bigger ones
         # need: head names a run trains; items without a label for one of them are skipped (e.g. no "state" in the attributes)
         self.root, self.imgsz, self.margin, self.jitter, self.input, self._K = pathlib.Path(export_dir), imgsz, margin, jitter, input, {}
         self.rng = np.random.default_rng(seed)
         coco = json.loads((self.root / "coco" / f"{split}.json").read_text())
         files = {im["id"]: im["file_name"] for im in coco["images"]}
+        if fraction < 1.0:
+            scene = {im["id"]: im.get("scene", ("img", im["id"])) for im in coco["images"]}
+            ids = sorted(set(scene.values()), key=str)
+            order = [ids[i] for i in np.random.default_rng(fraction_seed).permutation(len(ids))]
+            keep = set(order[:max(1, round(fraction * len(ids)))])
+            files = {i: f for i, f in files.items() if scene[i] in keep}
         self.items, self.heldout, self.image_ids, self.attrs = [], [], [], []  # heldout: the item's property combo was never in training (sim worlds with held-out doors)
         for a in coco["annotations"]:
-            if a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px or a.get("iscrowd"):  # ignore boxes: nearly vanished in smoke
+            if a["image_id"] not in files or a["category_id"] != CATEGORY[crop] or min(a["bbox"][2:]) < min_px or a.get("iscrowd"):  # ignore boxes: nearly vanished in smoke
                 continue
             attrs = a.get("attributes") or {}
             lab = labels(attrs, crop)
@@ -294,7 +303,8 @@ def train(cfg, run_name=None):
     out.mkdir(parents=True, exist_ok=True)
 
     kw = {k: cfg[k] for k in ("imgsz", "margin", "min_px", "input")} | {"need": heads}
-    sets = {s: CropDataset(export, s, crop, jitter=cfg["jitter"] if s == "train" else None, seed=seed, **kw) for s in ("train", "val", "test")}
+    sets = {s: CropDataset(export, s, crop, jitter=cfg["jitter"] if s == "train" else None, seed=seed, **kw,
+                           **({"fraction": cfg["train_fraction"], "fraction_seed": seed} if s == "train" else {})) for s in ("train", "val", "test")}
     gen = torch.Generator().manual_seed(seed)
     mk = lambda s, shuffle: DataLoader(sets[s], batch_size=cfg["batch"], shuffle=shuffle, num_workers=cfg["workers"], generator=gen if shuffle else None,
                                        worker_init_fn=reseed_worker)
@@ -323,6 +333,7 @@ def train(cfg, run_name=None):
                        "export.source": src.get("path"), **git_info()})
         mlflow.log_params({k: str(v) for k, v in params.items()})
         mlflow.set_tags({k: str(v) for k, v in cfg["mlflow"]["tags"].items()})
+        mlflow.log_metric("train_crops", len(sets["train"]))
         (out / "config.json").write_text(json.dumps(cfg, indent=2))
         mlflow.log_artifact(str(out / "config.json"))
 
