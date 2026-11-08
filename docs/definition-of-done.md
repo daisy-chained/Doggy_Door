@@ -97,9 +97,9 @@ Done when `document-requirements.md` §4 is ticked off: report, repo, video, thi
 
 ---
 
-## 4. Open choices for Madelief
+## 4. Choices (Madelief, 2026-11-08 ~22:10)
 
-- **A. Stairs.** A wheeled base can't use Dutch stairs. Options: (1) one floor only, the ground floor = "the house"; (2) each floor tested as its own map (robot placed on it); (3) a stair-capable robot (out of scope for now). Claude's pick: (2).
-- **B. Windows.** In the brief and SQ2 but never built. Options: (1) add a window class to the detector; (2) scope out with a reason in the report (the robot drives through doors, not windows). Claude's pick: (1) if it fits before 2e, else (2).
-- **C. Opening doors.** The plan stops at perception; "drive through the whole house" needs closed doors opened. Options: (1) doors open in the house test, closed doors only checked for "reported + not hit"; (2) a scripted "door opens" once the robot reports it correctly (fake actuator); (3) real opening (out of scope). Claude's pick: (2).
-- **D. Any number above** you want stricter or looser.
+- **A. Stairs → a Spot-style legged robot** ("I wanna do the spot bot"), so the whole house, stairs included, is in the test. Notes (Claude, to check): Quad-SDK targets Gazebo Harmonic + ROS 2 Jazzy and ships a Spot description ([Quad-SDK](https://robomechanics.github.io/quad-sdk/ros2/packages/quad_simulator/)); CHAMP-based Spot sims (e.g. [spot_gazebo](https://github.com/g1y5x3/spot_gazebo), Humble) don't climb stairs ([TU Wien](https://www.vr.tuwien.ac.at/topics/simulation-environment-for-boston-dynamics-spot)). Stair climbing in the sim is the main risk; licences still to check. Camera height changes (Spot body ~0.5–0.7 m), so training heights need a check.
+- **B. Windows → build them first**, as a detector class, plus **detection / recognition for mapping** (windows found and placed on the map, so they help the robot know where it is).
+- **C. Opening doors → scripted "door opens"** once the robot reports the door correctly (fake actuator). Builds on the 2026-11-07 decision "a correct identification → the robot opens the door".
+- **D. Numbers → "let's see how far we get"**: the numbers above stay as targets, not hard gates; the report says where each one ended up.
