@@ -56,3 +56,13 @@ def test_train_with_thermal_input(export_dir, tmp_path):
     r = props.train(cfg, run_name="unit")
     model, meta = props.load(r["out"])[:2]
     assert meta["input"] == "rgb_thermal"
+
+
+def test_dha_thermal_is_dha_and_thermal_stacked(export_dir):
+    # depth shows where the leaf is (in the frame or swung), thermal shows a pane as a surface (Madelief 2026-11-08 follow-up:
+    # thermal alone lost on closed solid doors, so the geometry has to come from depth)
+    assert props.CHANNELS["dha_thermal"] == 6
+    assert props.resolve({"export": str(export_dir), "crop": "door", "input": "dha_thermal"})["input"] == "dha_thermal"
+    both, dha, th = (tpd.ds(export_dir, k)[0][0] for k in ("dha_thermal", "dha", "thermal"))
+    assert both.shape == (6, 32, 32)
+    assert torch.allclose(both[:3], dha) and torch.allclose(both[3:], th)
