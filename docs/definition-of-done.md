@@ -40,7 +40,7 @@ Scored in the sim on the **test split** (and the held-out door combos), on **det
 | Door recall in hard conditions | ≥ 0.80 | measured per level, mixed | A missed door = a room the robot never explores |
 | Door centre 3D error, closed doors ≤ 3 m | ≤ 10 cm median | ~11–14 cm | 17 cm margin each side of the robot in an 85 cm doorway |
 | Door centre 3D error at the 1 m stop | ≤ 5 cm median | not measured | Needed to line up and pass through |
-| Windows | detected **or** scoped out with a reason | not built | **Open choice B** |
+| Windows | the robot can tell a window from a door (window class) | not built | Choice B |
 
 ### 2b. Handles
 
@@ -100,6 +100,6 @@ Done when `document-requirements.md` §4 is ticked off: report, repo, video, thi
 ## 4. Choices (Madelief, 2026-11-08 ~22:10)
 
 - **A. Stairs → a Spot-style legged robot** ("I wanna do the spot bot"), so the whole house, stairs included, is in the test. Notes (Claude, to check): Quad-SDK targets Gazebo Harmonic + ROS 2 Jazzy and ships a Spot description ([Quad-SDK](https://robomechanics.github.io/quad-sdk/ros2/packages/quad_simulator/)); CHAMP-based Spot sims (e.g. [spot_gazebo](https://github.com/g1y5x3/spot_gazebo), Humble) don't climb stairs ([TU Wien](https://www.vr.tuwien.ac.at/topics/simulation-environment-for-boston-dynamics-spot)). Stair climbing in the sim is the main risk; licences still to check. Camera height changes (Spot body ~0.5–0.7 m), so training heights need a check.
-- **B. Windows → build them first**, as a detector class, plus **detection / recognition for mapping** (windows found and placed on the map, so they help the robot know where it is).
+- **B. Windows → build them first**, as a detector class: the robot should be able to **tell that something is a window** (and not a door). Not as map landmarks (corrected by Madelief, 22:20).
 - **C. Opening doors → scripted "door opens"** once the robot reports the door correctly (fake actuator). Builds on the 2026-11-07 decision "a correct identification → the robot opens the door".
 - **D. Numbers → "let's see how far we get"**: the numbers above stay as targets, not hard gates; the report says where each one ended up.
