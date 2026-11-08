@@ -1,0 +1,63 @@
+# Door room v7, Madelief 2026-11-08: windows ("build those first"), so the robot can tell a window from a door.
+# Same worlds as v6 (same doors, splits, held-out combos: the window draws use their own rng stream) plus one fixed window per
+# world in a free stretch of the door wall (class 4 "window", sim/doorsim/doors.py). Dutch homes: sill ~0.8-1.0 m, and
+# floor-length windows ("pui") that look like a glass door, the hard case.
+#   python3 sim/door_room/make_v4.py sim/configs/worlds_v7.yaml
+out: v7
+door_stop: true
+seed: 6
+count: 132                  # 132 + 18 = 150 worlds x 2 scenes x 20 views = 6000 frames
+heldout_count: 18
+balance:                    # door types are dealt in turn (shuffled per cycle) instead of drawn by p_sliding / p_glass
+  cells:                    # normal worlds, per split; w = share
+    - {glass: false, door_type: hinged, w: 2}
+    - {glass: false, door_type: sliding, w: 1}
+    - {glass: true, door_type: hinged, w: 2}
+  heldout_cells:            # the held-out door of a held-out world, in turn
+    - {glass: true, door_type: sliding}
+    - {glass: true, door_type: hinged, handle_type: knob}
+split_ratios: [0.7, 0.15, 0.15]
+heldout:                    # property combos never seen in training (each value on its own is): CLEVR-CoGenT style
+  - {glass: true, handle_type: knob}
+  - {door_type: sliding, glass: true}
+
+door:                       # per door slot (a at y = -1, b at y = +1)
+  p_sliding: 0.35
+  p_glass: 0.35
+  handle: {lever: 0.5, knob: 0.5}      # hinged doors; sliding doors get a flush pull
+  width: [0.8, 1.0]                    # m, uniform (common doors 0.83 / 0.93)
+  height: [2.0, 2.3]                   # m, uniform (NL standard 2.015 / 2.315)
+  frame_style: {none: 0.33, thin: 0.34, thick: 0.33}
+  p_hangs_back: 0.5                    # sliding doors: hung on the back face instead of the front
+  colours:                             # door colour family, then a random shade inside it
+    wood: {p: 0.4, rgb: [[0.45, 0.28, 0.14], [0.85, 0.7, 0.5]]}
+    white: {p: 0.25, rgb: [[0.85, 0.85, 0.82], [0.97, 0.97, 0.95]]}
+    grey: {p: 0.15, rgb: [[0.25, 0.25, 0.27], [0.6, 0.6, 0.62]]}
+    painted: {p: 0.2, rgb: [[0.05, 0.05, 0.05], [0.9, 0.9, 0.9]]}
+  glass_frame:                         # stiles / rails of glass doors
+    aluminium: {p: 0.4, rgb: [[0.55, 0.57, 0.6], [0.7, 0.72, 0.75]]}
+    black: {p: 0.25, rgb: [[0.05, 0.05, 0.05], [0.15, 0.15, 0.15]]}
+    white: {p: 0.15, rgb: [[0.85, 0.85, 0.85], [0.95, 0.95, 0.95]]}
+    wood: {p: 0.2, rgb: [[0.45, 0.28, 0.14], [0.85, 0.7, 0.5]]}
+  trim:                                # door frame trim colour (frame_style thin / thick)
+    white: {p: 0.5, rgb: [[0.9, 0.9, 0.88], [0.97, 0.97, 0.95]]}
+    match: {p: 0.3}                    # same as the door
+    dark: {p: 0.2, rgb: [[0.1, 0.1, 0.1], [0.35, 0.3, 0.25]]}
+
+window:                     # one per world, in the door wall; none if no free stretch fits min_width
+  p: 1.0
+  margin: 0.15                         # m kept free from door openings + trim, sliding paths and the room corners
+  width: [0.6, 1.2]                    # m (glass + frame inside it), clipped to the free stretch, never under min_width
+  min_width: 0.5
+  top: [2.0, 2.3]                      # m, top of the opening (<= room height - 0.1)
+  sill:                                # bottom of the opening
+    normal: {p: 0.7, z: [0.8, 1.0]}
+    low: {p: 0.3, z: [0.0, 0.3]}       # floor-length: looks like a glass door
+  frame_width: [0.05, 0.08]            # m, frame around the glass (part of the window box)
+  frame:                               # frame colour family, then a shade
+    white: {p: 0.45, rgb: [[0.85, 0.85, 0.85], [0.97, 0.97, 0.95]]}
+    aluminium: {p: 0.2, rgb: [[0.55, 0.57, 0.6], [0.7, 0.72, 0.75]]}
+    dark: {p: 0.2, rgb: [[0.05, 0.05, 0.05], [0.2, 0.2, 0.22]]}
+    wood: {p: 0.15, rgb: [[0.45, 0.28, 0.14], [0.85, 0.7, 0.5]]}
+  mullions: {none: 0.4, vertical: 0.3, cross: 0.3}
+  p_handle: 0.7                        # window handle (raamkruk) on one face: background, not a door handle
