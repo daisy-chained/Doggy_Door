@@ -1,0 +1,7 @@
+# Realistic glass for training: uncoated glass (Claude, research-based, 2026-11-08), ~opaque in LWIR.
+emissivity: [0.84, 0.92]   # 8-14 um, at normal incidence
+leak: [0.0, 0.02]         # share of the radiance from behind the pane
+env_K: [-3.0, 3.0]    # reflected surroundings: air + offset (K)
+env_noise_K: 1.0      # + smooth noise (K)
+env_cell: 16          # px
+robot: {p: 1.0, radius_m: 0.25, dK: [5.0, 15.0]}   # the robot's own warm mirror image

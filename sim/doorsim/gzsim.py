@@ -234,6 +234,23 @@ class Sim:
         self.step(2)
         return depth
 
+    def seg_without_panes(self, panes):
+        """Label image with the given glass panes moved out of the way (like depth_without_panes, rendering "seg")."""
+        saved = {n: self.model_pose(n) for n in panes}
+        for n in panes:
+            self.pane_pub[n][0].publish(Empty())
+        self.step(2)
+        for n in panes:
+            self.set_pose(n, [0, 0, -50])
+        seg = image_array(self.render(["seg"])["seg"], "seg")
+        for n, (pos, q) in saved.items():
+            self.set_pose(n, pos, orientation=q)
+        self.step(2)
+        for n in panes:
+            self.pane_pub[n][1].publish(Empty())
+        self.step(2)
+        return seg
+
     def camera_info(self):
         with self.lock:
             c = self.latest.get("camera_info")

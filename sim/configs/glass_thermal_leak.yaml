@@ -1,0 +1,7 @@
+# Stress test: realistic glass but with 5-10 % leak (see-through), more than real glass does.
+emissivity: [0.84, 0.92]   # 8-14 um, at normal incidence
+leak: [0.05, 0.10]         # share of the radiance from behind the pane
+env_K: [-3.0, 3.0]    # reflected surroundings: air + offset (K)
+env_noise_K: 1.0      # + smooth noise (K)
+env_cell: 16          # px
+robot: {p: 1.0, radius_m: 0.25, dK: [5.0, 15.0]}   # the robot's own warm mirror image
