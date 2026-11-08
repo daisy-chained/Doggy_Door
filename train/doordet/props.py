@@ -20,12 +20,12 @@ DEFAULT_HEADS = {"door": ["opening", "hinge_side", "glass"]}  # crops not listed
 CATEGORY = {"door": 1, "handle": 2, "hinge": 3}  # hinge: detector class only (cascade step B), no crop heads
 MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
 DHA_MEAN, DHA_STD = 0.5, 0.25  # dha channels are 0..255 maps, not photos
-CHANNELS = {"rgb": 3, "dha": 3, "rgb_dha": 6}
+CHANNELS = {"rgb": 3, "dha": 3, "rgb_dha": 6, "thermal": 3, "rgb_thermal": 6}  # thermal: AGC-stretched frame, same norm as dha
 BACKBONES = ("resnet18", "resnet34", "mobilenet_v3_small", "mobilenet_v3_large", "efficientnet_b0")
 PER_CROP = {"imgsz": {"door": 224, "handle": 96}, "margin": {"door": 0.1, "handle": 0.5}, "min_px": {"door": 16, "handle": 6}}
 DEFAULTS = {
     "export": None, "crop": None,  # required: exporter output folder, "door" or "handle"
-    "input": "rgb",  # rgb | dha | rgb_dha (dha: depth, height above floor, normal angle)
+    "input": "rgb",  # rgb | dha | rgb_dha | thermal | rgb_thermal (dha: depth, height above floor, normal angle)
     "heads": None,  # None -> the crop's default heads (all, except the opt-in door_type)
     "backbone": "resnet18", "pretrained": True, "imgsz": None, "margin": None, "min_px": None,  # None -> per-crop default
     "jitter": {"shift": 0.1, "scale": 0.15},  # train-time crop shift / scale, fractions of the long box side
@@ -103,12 +103,14 @@ def crop_tensor(img, box, imgsz, mean=MEAN, std=STD):
 
 
 def input_tensor(path, box, imgsz, input, K_cache=None):
-    """Export image path -> crop tensor of the run's input: rgb (ImageNet norm), dha (DHA_MEAN / DHA_STD) or both stacked."""
+    """Export image path -> crop tensor of the run's input: rgb (ImageNet norm), dha or thermal (DHA_MEAN / DHA_STD), or rgb + one stacked."""
     parts = []
-    if input in ("rgb", "rgb_dha"):
+    if input in ("rgb", "rgb_dha", "rgb_thermal"):
         parts.append(crop_tensor(load_input(path, "rgb"), box, imgsz))
     if input in ("dha", "rgb_dha"):
         parts.append(crop_tensor(load_input(path, "dha", K_cache), box, imgsz, DHA_MEAN, DHA_STD))
+    if input in ("thermal", "rgb_thermal"):
+        parts.append(crop_tensor(load_input(path, "thermal"), box, imgsz, DHA_MEAN, DHA_STD))
     return torch.cat(parts)
 
 
