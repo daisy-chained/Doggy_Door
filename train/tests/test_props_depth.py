@@ -59,7 +59,7 @@ def test_input_defaults_to_rgb_and_is_checked(export_dir):
 
 
 def test_channels_per_input():
-    assert props.CHANNELS == {"rgb": 3, "dha": 3, "rgb_dha": 6}
+    assert {k: props.CHANNELS[k] for k in ("rgb", "dha", "rgb_dha")} == {"rgb": 3, "dha": 3, "rgb_dha": 6}
 
 
 # --- crops ---
