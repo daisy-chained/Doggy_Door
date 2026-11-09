@@ -215,3 +215,84 @@ def test_bridge_args(plat):
             "/joint_states": "sensor_msgs/msg/JointState[gz.msgs.Model"}
     for topic, rest in want.items():
         assert f"{topic}@{rest}" in args, topic
+
+
+# ---- Nav2 (phase 2e, Madelief 2026-11-07: Nav2 + waypoints over the approach poses; at a door stop at ~2.5 m, look, then ~1 m) ----
+#   robot.nav2_params(p, base) -> new dict (base = the parsed nav2_bringup params/nav2_params.yaml, left untouched): every
+#     base_frame_id / robot_base_frame "base_footprint" -> "base_link"; every use_sim_time -> True; local + global costmap: no
+#     robot_radius, footprint = nav2_footprint(p); MPPI FollowPath vx_max = max_speed, wz_max = max_turn; velocity_smoother
+#     max_velocity = [max_speed, 0, max_turn], min_velocity = [-max_speed, 0, -max_turn].
+#   robot.door_tour(poses, start) -> [{"door", "side", "space", "stops": [far pose, near pose]}]: one visit per (door, side) with
+#     all its poses reachable and clear; stops sorted far -> near by dist; visits ordered greedily: next = the visit whose first
+#     stop is nearest (straight line) to the last stop of the previous visit (start = [x, y] for the first).
+import copy
+
+NAV2_BASE = pathlib.Path("/opt/ros/jazzy/share/nav2_bringup/params/nav2_params.yaml")
+
+
+def walk(d, path=()):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            yield path + (k,), k, v
+            yield from walk(v, path + (k,))
+    elif isinstance(d, list):
+        for i, v in enumerate(d):
+            yield from walk(v, path + (i,))
+
+
+@pytest.mark.skipif(not NAV2_BASE.exists(), reason="nav2_bringup not installed")
+def test_nav2_params(plat):
+    base = yaml.safe_load(NAV2_BASE.read_text())
+    keep = copy.deepcopy(base)
+    out = robot.nav2_params(plat, base)
+    assert base == keep                                           # input untouched
+    for path, k, v in walk(out):
+        if k in ("base_frame_id", "robot_base_frame"):
+            assert v != "base_footprint", path
+        if k == "use_sim_time":
+            assert v is True, path
+    for cm in ("local_costmap", "global_costmap"):
+        prm = out[cm][cm]["ros__parameters"]
+        assert "robot_radius" not in prm
+        assert yaml.safe_load(prm["footprint"]) == yaml.safe_load(robot.nav2_footprint(plat))
+    fp = out["controller_server"]["ros__parameters"]["FollowPath"]
+    assert fp["vx_max"] == pytest.approx(plat["limits"]["max_speed"])
+    assert fp["wz_max"] == pytest.approx(plat["limits"]["max_turn"])
+    vs = out["velocity_smoother"]["ros__parameters"]
+    s, w = plat["limits"]["max_speed"], plat["limits"]["max_turn"]
+    assert vs["max_velocity"] == pytest.approx([s, 0, w]) and vs["min_velocity"] == pytest.approx([-s, 0, -w])
+
+
+def P(door, side, dist, x, y, ok=True, clear=True, space="corridor"):
+    return {"door": door, "side": side, "space": space, "dist": dist, "x": x, "y": y, "yaw": 0.0, "reachable": ok, "clear": clear}
+
+
+def test_door_tour_order_and_stops():
+    poses = [P(1, "front", 1.0, 1, 1), P(1, "front", 2.5, 1, 2.5),
+             P(2, "front", 2.5, 10, 2.5), P(2, "front", 1.0, 10, 1),
+             P(3, "front", 2.5, 4, 2.5), P(3, "front", 1.0, 4, 1),
+             P(3, "back", 2.5, 4, -2.5, space="r1"), P(3, "back", 1.0, 4, -1, space="r1")]
+    tour = robot.door_tour(poses, [0, 2.5])
+    assert [(v["door"], v["side"]) for v in tour] == [(1, "front"), (3, "front"), (3, "back"), (2, "front")]
+    for v in tour:
+        assert [s["dist"] for s in v["stops"]] == [2.5, 1.0]
+    assert tour[2]["space"] == "r1"
+
+
+def test_door_tour_skips_unreachable_or_blocked():
+    poses = [P(1, "front", 2.5, 1, 2.5), P(1, "front", 1.0, 1, 1),
+             P(1, "back", 2.5, 1, -2.5, ok=False), P(1, "back", 1.0, 1, -1, ok=False),
+             P(2, "front", 2.5, 5, 2.5), P(2, "front", 1.0, 5, 1, clear=False)]
+    tour = robot.door_tour(poses, [0, 0])
+    assert [(v["door"], v["side"]) for v in tour] == [(1, "front")]
+
+
+def test_door_tour_real_building():
+    import json
+    f = SIM / "building" / "out" / "bld_train_000.building.json"
+    if not f.exists():
+        pytest.skip("no generated building")
+    b = json.loads(f.read_text())
+    tour = robot.door_tour(b["poses"], [1.0, 4.0])
+    good = {(q["door"], q["side"]) for q in b["poses"] if q["reachable"] and q.get("clear", True)}
+    assert {(v["door"], v["side"]) for v in tour} <= good and tour
