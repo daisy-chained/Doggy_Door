@@ -15,7 +15,7 @@ Y=${4:-4.04}
 OUT=runs/tours/$(basename "$BLD")_$(basename "$PLAT" .yaml)_$(date +%Y%m%d_%H%M)
 mkdir -p "$OUT"
 
-source /opt/ros/jazzy/setup.bash
+set +u; source /opt/ros/jazzy/setup.bash; set -u   # ROS setup scripts use unset variables
 export GZ_PARTITION=tour_$$ ROS_DOMAIN_ID=$(( ($$ % 100) + 100 ))   # own Gazebo + ROS network, nothing else gets in
 PIDS=()
 cleanup() {
