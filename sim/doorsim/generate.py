@@ -79,6 +79,33 @@ def frame_offsets(plan, views_per_scene):
     return offs
 
 
+FRAME_FILES = ("rgb.png", "depth.png", "depth_gt.png", "seg.png")
+
+
+def frame_done(d):
+    """True if frame folder d is complete: the four images and a meta.json that parses (save_frame writes meta last)."""
+    if not all((d / n).is_file() for n in FRAME_FILES) or not (d / "meta.json").is_file():
+        return False
+    try:
+        json.loads((d / "meta.json").read_text())
+    except ValueError:
+        return False
+    return True
+
+
+def resume_plan(plan, offsets, views_per_scene, out):
+    """Drop the plan items (worlds) whose frames are all done in out -> (plan, offsets, frames kept). Frame numbers and seeds are
+    fixed per world (per_scene_rng), so an unfinished world is simply rendered again at the same numbers."""
+    keep, offs, kept = [], [], 0
+    for item, o in zip(plan, offsets):
+        n = len(item[-1]) * views_per_scene
+        if all(frame_done(out / "frames" / f"{i:06d}") for i in range(o, o + n)):
+            kept += n
+        else:
+            keep.append(item); offs.append(o)
+    return keep, offs, kept
+
+
 def assign_workers(plan, n):
     """[[plan indices]] for min(n, len(plan)) workers, round-robin so sizes differ by at most 1."""
     n = max(1, min(n, len(plan)))
@@ -298,6 +325,7 @@ def main():
     ap.add_argument("--light-level", type=float, help="fixed room light level for every scene (needs a lighting section)")
     ap.add_argument("--headlight", type=float, help="fixed headlight brightness (default 0 with --light-level)")
     ap.add_argument("--workers", type=int, help="many worlds: Gazebo runs at once (default: workers in the config, else 1)")
+    ap.add_argument("--resume", action="store_true", help="continue an unfinished render in --out (no dataset.json yet): worlds whose frames are all there are kept")
     args = ap.parse_args()
     cfg_path = pathlib.Path(args.config)
     cfg = yaml.safe_load(cfg_path.read_text())
@@ -315,6 +343,8 @@ def main():
     out = pathlib.Path(args.out) if args.out else SIM.parent / "datasets" / cfg_path.stem
     if (out / "dataset.json").exists():
         sys.exit(f"{out} already has a dataset; pick another --out")
+    if args.resume and not cfg.get("per_scene_rng"):
+        sys.exit("--resume needs per_scene_rng in the config (else a world's frames depend on the render order)")
     out.mkdir(parents=True, exist_ok=True)
     info = {"world": world, "config": cfg, "seed": cfg["seed"], "git": git_state(),
             "created": datetime.datetime.now().isoformat(timespec="seconds")}
@@ -339,29 +369,40 @@ def main():
         fixed = lcfg.get("fixed")
         info["lighting"] = {"mode": "fixed", "level": fixed["level"], "headlight": fixed["headlight"]} if fixed else {"mode": "random"}
     offsets = frame_offsets(plan, cfg["views_per_scene"])
+    kept = 0
+    if args.resume:
+        n_all = len(plan)
+        plan, offsets, kept = resume_plan(plan, offsets, cfg["views_per_scene"], out)
+        info["resumed_worlds"] = n_all - len(plan)
+        print(f"resume: {n_all - len(plan)} of {n_all} worlds already done ({kept} frames kept)", flush=True)
+        if not plan:
+            info.update({"frames": kept, "rejected_viewpoints": 0})
+            (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
+            print(f"done: {kept} frames in {out}")
+            return
     workers = n_workers(cfg, args.workers) if "worlds" in cfg else 1  # a single world is one Gazebo run
     t_start = time.time()
     if workers > 1:
         if not cfg.get("per_scene_rng"):
             sys.exit("--workers > 1 needs per_scene_rng in the config (else the scenes depend on the render order)")
         info["workers"] = min(workers, len(plan))
-        try:
-            render_parallel(plan, offsets, workers, cfg, lcfg, out, info)
-        finally:
-            info["seconds"] = round(time.time() - t_start)
-            (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
+        render_parallel(plan, offsets, workers, cfg, lcfg, out, info)  # a failed render writes no dataset.json, so --resume can continue it
+        info["seconds"] = round(time.time() - t_start)
+        info["frames"] = info.get("frames", 0) + kept
+        (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
         print(f"done: {info['frames']} frames in {out}")
         return
     run = types.SimpleNamespace(cfg=cfg, lcfg=lcfg, out=out, rng=np.random.default_rng(cfg["seed"]), count=0, rejected=0, t_start=t_start,
                                 scenes_total=sum(len(s) for *_, s in plan), scenes_done=0)
-    try:
-        for (w, sdf, attrs, scenes), offset in zip(plan, offsets):  # one Gazebo run per world, stopped before the next starts
-            run.count = offset
-            info.setdefault("camera_intrinsics", render_world(w, sdf, attrs, scenes, run, out))
-    finally:
-        info.update({"frames": run.count, "rejected_viewpoints": run.rejected, "seconds": round(time.time() - run.t_start)})
-        (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
-    print(f"done: {run.count} frames in {out}")
+    new = 0
+    for (w, sdf, attrs, scenes), offset in zip(plan, offsets):  # one Gazebo run per world, stopped before the next starts
+        run.count = offset
+        info.setdefault("camera_intrinsics", render_world(w, sdf, attrs, scenes, run, out))
+        new += run.count - offset
+    # only after a finished render: a failed one writes no dataset.json, so --resume can continue it
+    info.update({"frames": kept + new, "rejected_viewpoints": run.rejected, "seconds": round(time.time() - run.t_start)})
+    (out / "dataset.json").write_text(json.dumps(info, indent=2) + "\n")
+    print(f"done: {kept + new} frames in {out}")
 
 
 if __name__ == "__main__":
