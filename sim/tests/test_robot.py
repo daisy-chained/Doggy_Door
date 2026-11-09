@@ -8,16 +8,17 @@
 #     y = +/- separation / 2, z = wheel radius); casters on fixed/ball joints touching the floor; base_link collision box =
 #     footprint length x width x base height, bottom at the clearance; link poses are in the model frame (model origin on the floor
 #     under the base centre). camera_link at z = mast_height, x = camera.forward, a mast visual from the base top up to it.
-#     Sensors on camera_link copy the training rig (v3: horizontal_fov 1.3, 640 x 480, clip 0.1-12, 10 Hz): rgbd_camera "rgbd"
-#     (topic rgbd), boundingbox_camera "boxes" (2d, topic boxes), boundingbox_camera "boxes3d" (3d), segmentation_camera "seg"
-#     (instance); gpu_lidar "scan" (topic scan) on lidar_link. Plugins: gz::sim::systems::DiffDrive (left_joint, right_joint,
+#     Sensors on camera_link copy the training rig (v3: horizontal_fov 1.3, 640 x 480, clip 0.1-12, 10 Hz): rgbd_camera "rgbd",
+#     boundingbox_camera "boxes" (2d), boundingbox_camera "boxes3d" (3d), segmentation_camera "seg" (instance); topics under the
+#     model name (<name>/rgbd, <name>/boxes, <name>/boxes3d, <name>/seg), because the building worlds keep the v3 rig on rgbd / boxes; gpu_lidar "scan" (topic scan) on lidar_link. Plugins: gz::sim::systems::DiffDrive (left_joint, right_joint,
 #     wheel_separation, wheel_radius, topic cmd_vel, odom_topic odom, tf_topic /tf, frame_id odom, child_frame_id base_link,
 #     max_velocity / max_angular_velocity from limits), gz::sim::systems::JointStatePublisher (topic /joint_states). No Label plugin (robot = background).
 #   robot.nav2_footprint(p) -> "[[x, y], ...]": the footprint rectangle corners (Nav2 footprint parameter string).
 #   robot.static_tfs(p) -> [(parent, child, [x, y, z], [roll, pitch, yaw])]: base_link -> camera_link, camera_link -> camera_optical
 #     (ROS optical frame: rpy -pi/2, 0, -pi/2), base_link -> lidar_link. z in base_link = height above the floor (base_link on the floor).
-#   robot.bridge_args(p) -> ["topic@ros_type<dir>gz_type", ...] for ros_gz_bridge parameter_bridge: /cmd_vel ROS->GZ (]), and GZ->ROS
-#     ([): /clock, /odom, /tf, /scan, /rgbd/image, /rgbd/depth_image, /rgbd/camera_info, /joint_states.
+#   robot.bridge_args(p, name="robot") -> ["topic@ros_type<dir>gz_type", ...] for ros_gz_bridge parameter_bridge: /cmd_vel ROS->GZ
+#     (]), and GZ->ROS ([): /clock, /odom, /tf, /scan, /<name>/rgbd/image, /<name>/rgbd/depth_image, /<name>/rgbd/camera_info,
+#     /joint_states.
 import math, pathlib, sys, xml.etree.ElementTree as ET
 import pytest
 import yaml
@@ -136,7 +137,10 @@ def test_camera_height_and_rig(plat):
     assert z == pytest.approx(plat["mast_height"])
     assert x == pytest.approx(plat["camera"]["forward"])
     sensors = {s.get("name"): s for s in cam.findall("sensor")}
-    assert sensors["rgbd"].get("type") == "rgbd_camera" and sensors["rgbd"].findtext("topic") == "rgbd"
+    assert sensors["rgbd"].get("type") == "rgbd_camera"
+    for n in ("rgbd", "boxes", "boxes3d", "seg"):                  # own topics: the building's v3 rig uses rgbd / boxes
+        assert sensors[n].findtext("topic") == f"robot/{n}"
+    assert model(plat, "bot_7").find("link[@name='camera_link']").find("sensor[@name='rgbd']").findtext("topic") == "bot_7/rgbd"
     assert sensors["boxes"].get("type") == "boundingbox_camera"
     assert sensors["boxes"].find("camera").findtext("box_type") == "2d"
     assert sensors["boxes3d"].find("camera").findtext("box_type") == "3d"
@@ -210,11 +214,12 @@ def test_bridge_args(plat):
     assert "/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist" in args
     want = {"/clock": "rosgraph_msgs/msg/Clock[gz.msgs.Clock", "/odom": "nav_msgs/msg/Odometry[gz.msgs.Odometry",
             "/tf": "tf2_msgs/msg/TFMessage[gz.msgs.Pose_V", "/scan": "sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
-            "/rgbd/image": "sensor_msgs/msg/Image[gz.msgs.Image", "/rgbd/depth_image": "sensor_msgs/msg/Image[gz.msgs.Image",
-            "/rgbd/camera_info": "sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
+            "/robot/rgbd/image": "sensor_msgs/msg/Image[gz.msgs.Image", "/robot/rgbd/depth_image": "sensor_msgs/msg/Image[gz.msgs.Image",
+            "/robot/rgbd/camera_info": "sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/joint_states": "sensor_msgs/msg/JointState[gz.msgs.Model"}
     for topic, rest in want.items():
         assert f"{topic}@{rest}" in args, topic
+    assert "/bot_7/rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image" in robot.bridge_args(plat, "bot_7")
 
 
 # ---- Nav2 (phase 2e, Madelief 2026-11-07: Nav2 + waypoints over the approach poses; at a door stop at ~2.5 m, look, then ~1 m) ----
