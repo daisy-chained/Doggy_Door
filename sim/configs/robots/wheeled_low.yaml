@@ -1,0 +1,13 @@
+# Wheeled base, low sensor mast (Madelief 2026-11-09: wheeled first, Jackal-size 0.5 x 0.43 m, camera at 0.4 m + 1.2 m).
+# Builder: sim/doorsim/robot.py (robot_sdf / nav2_footprint / bridge_args / static_tfs). Frames: base_link x forward, y left, z up;
+# the model origin sits on the floor under the base centre. Numbers after the Clearpath Jackal (508 x 430 x 250 mm, ~17 kg,
+# wheel ~0.098 m radius); speeds kept low indoors so the camera frames don't blur.
+name: wheeled_low
+footprint: {length: 0.50, width: 0.43}   # m, x (forward) by y; also the Nav2 footprint
+base: {height: 0.20, clearance: 0.06, mass: 15.0}   # m body box height, m floor to body bottom, kg
+wheel: {radius: 0.10, width: 0.05, separation: 0.37, mass: 0.5}   # separation = centre to centre of the two drive wheels
+caster: {radius: 0.04}                  # two passive ball casters, front + back (diff drive needs them to stay level)
+mast_height: 0.40                       # m, camera optical centre above the floor (training range 0.3 - 1.5 m)
+camera: {forward: 0.20}                 # m, camera ahead of the base centre
+lidar: {height: 0.30, forward: 0.15, range: [0.1, 12.0], samples: 360}   # planar 2D lidar for the Nav2 costmaps (and AMCL / SLAM later)
+limits: {max_speed: 0.5, max_turn: 1.0} # m/s, rad/s
