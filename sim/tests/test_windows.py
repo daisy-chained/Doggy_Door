@@ -5,9 +5,10 @@
 #   world["window"] = {"y", "width", "sill", "top", "frame_width", "frame_colour", "mullions" (none / vertical / cross),
 #                      "handle" (None / "front" / "back"), "low" (bool: floor-length window, looks like a glass door)}
 #   attributes: "window" id 31 class 4 (+ classes["4"] = "window"), "window_glass" id 33 class None part glass_pane part_of window
-#   (detach / attach topics like door glass), "window_handle" id 32 class None part window_handle part_of window (if a handle).
-#   world_sdf: the wall gets a hole for the window (wall boxes around it), a "window" model (frame, label 31) holding the
-#   "window_glass" model (label 33, same glass look + visibility_flags 2 as door glass) by a DetachableJoint, and a handle model.
+#   (no detach / attach topics: the window never moves, so the pane is a free model that set_pose moves aside; 2026-11-09, its
+#   DetachableJoint topics were the most common Gazebo start failure), "window_handle" id 32 class None part window_handle part_of window (if a handle).
+#   world_sdf: the wall gets a hole for the window (wall boxes around it), a "window" model (frame, label 31), a free
+#   "window_glass" model (label 33, gravity off, same glass look + visibility_flags 2 as door glass), and a handle model.
 # No Gazebo needed: python3 -m pytest sim/tests/test_windows.py
 import pathlib, re, sys
 import xml.etree.ElementTree as ET
@@ -98,7 +99,7 @@ def test_attributes_have_window(w7):
         assert o["window"][k] == w["window"][k]
     g = o["window_glass"]
     assert g["id"] == 33 and g["class"] is None and g["part"] == "glass_pane" and g["part_of"] == "window"
-    assert g["detach_topic"] == "/window_glass/detach" and g["attach_topic"] == "/window_glass/attach"
+    assert "detach_topic" not in g and "attach_topic" not in g  # fixed window: the pane is a free model, moved aside directly (2026-11-09)
     h = o["window_handle"]
     assert h["id"] == 32 and h["class"] is None and h["part_of"] == "window"
     ids = [x["id"] for x in o.values()]
@@ -154,10 +155,11 @@ def test_world_sdf_has_window_and_hole(w7):
             assert _covered(boxes, win["y"], win["sill"] - win["frame_width"] - 0.03)  # below the sill
         m = _model(root, "window")
         assert "<label>31</label>" in ET.tostring(m, encoding="unicode")
-        dj = [p for p in m.iter("plugin") if p.get("name") == "gz::sim::systems::DetachableJoint"]
-        assert len(dj) == 1 and dj[0].find("child_model").text == "window_glass"
-        assert dj[0].find("detach_topic").text == "/window_glass/detach" and dj[0].find("attach_topic").text == "/window_glass/attach"
-        gl = ET.tostring(_model(root, "window_glass"), encoding="unicode")
+        assert not [p for p in root.iter("plugin") if p.get("name") == "gz::sim::systems::DetachableJoint" and "window" in ET.tostring(p, encoding="unicode")]
+        wg = _model(root, "window_glass")
+        assert wg.find("static") is None or wg.find("static").text != "true"  # free model: set_pose can move it aside
+        assert wg.find("link/gravity").text == "false"
+        gl = ET.tostring(wg, encoding="unicode")
         assert "<label>33</label>" in gl and "<transparency>" in gl and "<visibility_flags>2</visibility_flags>" in gl
         if win["handle"]:
             assert "<label>32</label>" in ET.tostring(_model(root, "window_handle"), encoding="unicode")
