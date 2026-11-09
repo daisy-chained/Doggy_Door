@@ -60,6 +60,41 @@ def point_metrics(gt_json, preds, classes=POINT_CLASSES, score_min=0.5):
     return out
 
 
+def door_hinge_metrics(gt_json, preds, score_min=0.5, margin=0.1):
+    """Per-door "is there a hinge" score: door_hinge_recall / _false_yes / _n_pos / _n_neg / _recall_<state>; spec in tests/test_door_hinge.py."""
+    gt = json.loads(open(gt_json).read())
+    ids = {c["name"]: c["id"] for c in gt["categories"]}
+    n_pos, n_neg, found, false_yes, by_state = 0, 0, 0, 0, {}
+    for img in gt["images"]:
+        anns = [a for a in gt["annotations"] if a["image_id"] == img["id"]]
+        hinges = [a for a in anns if a["category_id"] == ids.get("hinge")]
+        live = [a for a in hinges if not a.get("iscrowd", 0)]
+        g = np.array([a["bbox"] for a in live], float).reshape(-1, 4)
+        gc, rad = g[:, :2] + g[:, 2:] / 2, np.maximum(MIN_RADIUS, 0.5 * g[:, 2:].max(1, initial=0))
+        p = preds.get(img["id"]) or preds.get(str(img["id"])) or {"boxes": [], "scores": [], "labels": []}
+        boxes, scores = np.asarray(p["boxes"], float).reshape(-1, 4), np.asarray(p["scores"], float)
+        keep = [i for i, l in enumerate(p["labels"]) if l == ids.get("hinge", 0) - 1 and scores[i] >= score_min]
+        pc = (boxes[keep, :2] + boxes[keep, 2:]) / 2
+        hit = (np.linalg.norm(pc[:, None] - gc[None], axis=2) <= rad).reshape(len(pc), len(gc))  # pred x GT hinge
+        for d in (a for a in anns if a["category_id"] == ids.get("door")):
+            mine = [k for k, a in enumerate(live) if a["attributes"].get("door") == d["object"]]
+            if mine:
+                n_pos += 1
+                ok = bool(hit[:, mine].any())
+                found += ok
+                st = by_state.setdefault(d["attributes"].get("state"), [0, 0])
+                st[0] += ok; st[1] += 1
+            elif not any(a["attributes"].get("door") == d["object"] for a in hinges):
+                n_neg += 1
+                x, y, w, h = d["bbox"]
+                inside = (pc[:, 0] >= x - margin * w) & (pc[:, 0] <= x + w + margin * w) & (pc[:, 1] >= y) & (pc[:, 1] <= y + h)
+                false_yes += bool((inside & ~hit.any(1)).any())
+    out = {"door_hinge_recall": found / n_pos if n_pos else 0.0, "door_hinge_false_yes": false_yes / n_neg if n_neg else 0.0,
+           "door_hinge_n_pos": n_pos, "door_hinge_n_neg": n_neg}
+    out.update({f"door_hinge_recall_{s}": v[0] / v[1] for s, v in by_state.items()})
+    return out
+
+
 def coco_metrics(gt_json, preds):
     gt = json.loads(open(gt_json).read())
     for a in gt["annotations"]:
