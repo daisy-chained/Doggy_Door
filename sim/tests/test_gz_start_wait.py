@@ -92,3 +92,26 @@ def test_more_start_tries_with_growing_waits(monkeypatch):
         return "sim"
     assert generate.start_sim(make, "w", wait=5) == "sim"
     assert waits == [5, 10, 15]
+
+
+# A topic still without a subscriber after 120 s (2026-11-09 check render: /door_a/cmd_pos, with 4 Gazebos starting at once) is
+# not slow but lost: the announcement never reached Gazebo. _wait_subscribed(pubs, ..., remake={topic: fn}, readvertise_every=s)
+# calls fn() (a fresh Node advertising the topic again) for topics still missing every readvertise_every seconds and returns the
+# final {topic: publisher}; Sim keeps those. Workers also start staggered: render_worker waits START_STAGGER * worker index s first.
+def test_wait_subscribed_readvertises_lost_topics(monkeypatch):
+    gzsim = pytest.importorskip("doorsim.gzsim")
+    monkeypatch.setattr(gzsim.time, "sleep", lambda s: None)
+    s = bare(gzsim)
+    remade = []
+    def remake():
+        remade.append(1)
+        return Pub(s, "new", 0)
+    pubs = {"/door_a/cmd_pos": Pub(s, "old", None), "light_config": Pub(s, "l", 0)}
+    out = s._wait_subscribed(pubs, timeout=120, poll=0.25, step_every=8, remake={"/door_a/cmd_pos": remake}, readvertise_every=20)
+    assert len(remade) == 1 and out["/door_a/cmd_pos"].name == "new" and out["light_config"] is pubs["light_config"]
+
+
+def test_workers_start_staggered(monkeypatch):
+    import inspect
+    assert generate.START_STAGGER >= 5
+    assert "START_STAGGER" in inspect.getsource(generate.render_worker)
