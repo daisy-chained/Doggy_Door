@@ -291,8 +291,8 @@ def nav2_params(p, base):
     fp = out["controller_server"]["ros__parameters"]["FollowPath"]
     fp["vx_max"], fp["wz_max"] = s, w
     vs = out["velocity_smoother"]["ros__parameters"]
-    vs["max_velocity"] = [s, 0, w]
-    vs["min_velocity"] = [-s, 0, -w]
+    vs["max_velocity"] = [float(s), 0.0, float(w)]   # one type per list, or ROS rejects the params file
+    vs["min_velocity"] = [-float(s), 0.0, -float(w)]
     return out
 
 

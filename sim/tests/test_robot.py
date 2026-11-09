@@ -268,6 +268,15 @@ def test_nav2_params(plat):
     assert vs["max_velocity"] == pytest.approx([s, 0, w]) and vs["min_velocity"] == pytest.approx([-s, 0, -w])
 
 
+@pytest.mark.skipif(not NAV2_BASE.exists(), reason="nav2_bringup not installed")
+def test_nav2_param_lists_have_one_type(plat):
+    # ROS params files reject lists that mix ints and floats ("Sequence should be of same type"): Nav2 died on [0.5, 0, 1.0]
+    # in the first live tour (2026-11-10). Every list in the written params must be all-int, all-float, all-str or all-bool.
+    for path, _, v in walk(robot.nav2_params(plat, yaml.safe_load(NAV2_BASE.read_text()))):
+        if isinstance(v, list) and v:
+            assert len({type(x) for x in v}) == 1, (path, v)
+
+
 def P(door, side, dist, x, y, ok=True, clear=True, space="corridor"):
     return {"door": door, "side": side, "space": space, "dist": dist, "x": x, "y": y, "yaw": 0.0, "reachable": ok, "clear": clear}
 
