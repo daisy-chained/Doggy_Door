@@ -12,7 +12,7 @@
 #     (topic rgbd), boundingbox_camera "boxes" (2d, topic boxes), boundingbox_camera "boxes3d" (3d), segmentation_camera "seg"
 #     (instance); gpu_lidar "scan" (topic scan) on lidar_link. Plugins: gz::sim::systems::DiffDrive (left_joint, right_joint,
 #     wheel_separation, wheel_radius, topic cmd_vel, odom_topic odom, tf_topic /tf, frame_id odom, child_frame_id base_link,
-#     max_velocity / max_angular_velocity from limits), gz::sim::systems::JointStatePublisher. No Label plugin (robot = background).
+#     max_velocity / max_angular_velocity from limits), gz::sim::systems::JointStatePublisher (topic /joint_states). No Label plugin (robot = background).
 #   robot.nav2_footprint(p) -> "[[x, y], ...]": the footprint rectangle corners (Nav2 footprint parameter string).
 #   robot.static_tfs(p) -> [(parent, child, [x, y, z], [roll, pitch, yaw])]: base_link -> camera_link, camera_link -> camera_optical
 #     (ROS optical frame: rpy -pi/2, 0, -pi/2), base_link -> lidar_link. z in base_link = height above the floor (base_link on the floor).
@@ -173,7 +173,8 @@ def test_diff_drive_plugin(plat):
     assert dd.findtext("frame_id") == "odom" and dd.findtext("child_frame_id") == "base_link"
     assert float(dd.findtext("max_velocity")) == pytest.approx(plat["limits"]["max_speed"])
     assert float(dd.findtext("max_angular_velocity")) == pytest.approx(plat["limits"]["max_turn"])
-    assert plugin(m, "gz::sim::systems::JointStatePublisher") is not None
+    jsp = plugin(m, "gz::sim::systems::JointStatePublisher")
+    assert jsp is not None and jsp.findtext("topic") == "/joint_states"   # absolute, so the bridge finds it
 
 
 def test_robot_is_background(plat):
@@ -189,7 +190,9 @@ def test_nav2_footprint(plat):
     pts = yaml.safe_load(robot.nav2_footprint(plat))
     L, W = plat["footprint"]["length"] / 2, plat["footprint"]["width"] / 2
     assert len(pts) == 4
-    assert sorted(map(tuple, pts)) == pytest.approx(sorted([(L, W), (L, -W), (-L, W), (-L, -W)]))
+    flat = [v for pt in sorted(map(tuple, pts)) for v in pt]
+    want = [v for pt in sorted([(L, W), (L, -W), (-L, W), (-L, -W)]) for v in pt]
+    assert flat == pytest.approx(want)
 
 
 def test_static_tfs(plat):

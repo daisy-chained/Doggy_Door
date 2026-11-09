@@ -9,5 +9,5 @@ wheel: {radius: 0.10, width: 0.05, separation: 0.37, mass: 0.5}   # separation =
 caster: {radius: 0.04}                  # two passive ball casters, front + back (diff drive needs them to stay level)
 mast_height: 1.20                       # m, camera optical centre above the floor (training range 0.3 - 1.5 m)
 camera: {forward: 0.20}                 # m, camera ahead of the base centre
-lidar: {height: 0.30, forward: 0.15, range: [0.1, 12.0], samples: 360}   # planar 2D lidar for the Nav2 costmaps (and AMCL / SLAM later)
+lidar: {height: 0.30, forward: 0.22, range: [0.1, 12.0], samples: 360}   # planar 2D lidar, in front of the mast (x 0.20) so the mast only hides a rear sliver; for the Nav2 costmaps (and AMCL / SLAM later)
 limits: {max_speed: 0.5, max_turn: 1.0} # m/s, rad/s
