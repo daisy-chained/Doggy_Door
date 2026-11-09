@@ -227,17 +227,29 @@ def start_sim(make, name, tries=None, wait=5):
             time.sleep(wait)
 
 
+WORLD_TRIES = 3  # renders of one world: a message that hasn't arrived yet mid-world (joint_state, pose/info) used to end a whole render (2026-11-09)
+
+
 def render_world(w, sdf, attrs, scenes, run, out):
-    """One Gazebo run for one world (stopped at the end); returns the camera info. The start goes through start_sim (retries)."""
+    """One Gazebo run for one world (stopped at the end); returns the camera info. The start goes through start_sim (retries); an
+    error while rendering stops that Gazebo and renders the world again from the same frame number, up to WORLD_TRIES."""
     from doorsim import gzsim
     name = w["name"] if w else run.cfg["world"]
-    sim = start_sim(lambda: gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log")), name)
-    try:
-        cam = sim.camera_info()
-        render_scenes(sim, attrs, scenes, run, w)
-        return cam
-    finally:
-        sim.stop()
+    before = {k: getattr(run, k) for k in ("count", "scenes_done", "rejected") if hasattr(run, k)}
+    for attempt in range(1, WORLD_TRIES + 1):
+        sim = start_sim(lambda: gzsim.Sim(sdf, name, attrs, out / (f"gz_{name}.log" if w else "gz.log")), name)
+        try:
+            cam = sim.camera_info()
+            render_scenes(sim, attrs, scenes, run, w)
+            return cam
+        except Exception as e:  # not KeyboardInterrupt / SystemExit
+            if attempt == WORLD_TRIES:
+                raise
+            print(f"[{name}] render try {attempt} failed ({type(e).__name__}: {e}); rendering the world again", flush=True)
+            for k, v in before.items():
+                setattr(run, k, v)
+        finally:
+            sim.stop()
 
 
 def render_worker(args):

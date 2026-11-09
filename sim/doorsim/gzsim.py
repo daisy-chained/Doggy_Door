@@ -149,9 +149,15 @@ class Sim:
         # while paused the reply only comes with the next step, so don't wait for it: the next step applies the pose
         self.node.request(f"/world/{self.world}/set_pose", req, Pose, Boolean, 50)
 
-    def model_pose(self, name):
-        with self.lock:
-            poses = self.latest["poses"]
+    def model_pose(self, name, tries=50):
+        for _ in range(tries):  # pose/info may not have arrived yet: step a little and look again
+            with self.lock:
+                poses = self.latest.get("poses")
+            if poses is not None:
+                break
+            self.step(10)
+        else:
+            raise RuntimeError(f"no pose/info message after {tries} tries")
         p = next(q for q in poses.pose if q.name == name)
         return [p.position.x, p.position.y, p.position.z], {"x": p.orientation.x, "y": p.orientation.y, "z": p.orientation.z, "w": p.orientation.w}
 
@@ -159,6 +165,8 @@ class Sim:
         """(position, velocity) of the door's joint from its joint_state topic."""
         with self.lock:
             m = self.latest.get("js_" + door)
+        if m is None:  # joint_state not received yet
+            return None
         j = next(j for j in m.joint if j.name == self.doors[door]["joint"]["name"])
         return j.axis1.position, j.axis1.velocity
 
@@ -172,8 +180,11 @@ class Sim:
             for n, v in targets.items():  # same target again: harmless, and a lost first command can't leave a door shut
                 self.door_pub[n].publish(Double(data=v))
             js = {n: self.joint(n) for n in targets}
-            if all(abs(p - targets[n]) < 0.02 and abs(v) < still for n, (p, v) in js.items()):
+            if all(j is not None and abs(j[0] - targets[n]) < 0.02 and abs(j[1]) < still for n, j in js.items()):
                 break
+        missing = [n for n in targets if self.joint(n) is None]
+        if missing:
+            raise RuntimeError(f"no joint_state for {', '.join(missing)} after {done} steps")
         return {n: self.joint(n)[0] for n in targets}
 
     def set_light(self, name, cfg, diffuse):
