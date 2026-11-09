@@ -6,6 +6,7 @@ casters (front + back) on fixed joints, a camera on a mast and a planar lidar. T
 training rig in door_room_v3.sdf (rgbd, 2d boxes, 3d boxes, instance segmentation; fov 1.3, 640 x 480, clip 0.1-12, 10 Hz).
 The robot has no Label plugin: it is background for the segmentation camera. Also gives the Nav2 footprint string, the static TFs
 (Gazebo does not publish the fixed sensor frames) and the ros_gz_bridge arguments. Only stdlib + PyYAML."""
+import copy
 import math
 import pathlib
 
@@ -257,3 +258,60 @@ def bridge_args(p):
     ]:
         out.append(f"{topic}@{ros}[{gz}")
     return out
+
+
+# --- Nav2 + door tour ---
+def _patch(node):
+    """In place, recursively: base_footprint -> base_link frames, use_sim_time True, rectangular MPPI critics."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in ("base_frame_id", "robot_base_frame") and v == "base_footprint":
+                node[k] = "base_link"
+            elif k == "use_sim_time":
+                node[k] = True
+            elif k == "consider_footprint":
+                node[k] = True
+            else:
+                _patch(v)
+    elif isinstance(node, list):
+        for v in node:
+            _patch(v)
+
+
+def nav2_params(p, base):
+    """Copy of the nav2_bringup params for this platform (base is left untouched): base_link frames, sim time, rectangular
+    footprint in both costmaps (no robot_radius), MPPI + velocity smoother limits from the platform."""
+    out = copy.deepcopy(base)
+    _patch(out)
+    for cm in ("local_costmap", "global_costmap"):
+        prm = out[cm][cm]["ros__parameters"]
+        prm.pop("robot_radius", None)
+        prm["footprint"] = nav2_footprint(p)
+    s, w = p["limits"]["max_speed"], p["limits"]["max_turn"]
+    fp = out["controller_server"]["ros__parameters"]["FollowPath"]
+    fp["vx_max"], fp["wz_max"] = s, w
+    vs = out["velocity_smoother"]["ros__parameters"]
+    vs["max_velocity"] = [s, 0, w]
+    vs["min_velocity"] = [-s, 0, -w]
+    return out
+
+
+def door_tour(poses, start):
+    """Visits [{"door", "side", "space", "stops"}]: one per (door, side) whose poses are all reachable and clear, stops far -> near
+    (dist descending); ordered greedily by straight-line distance from the previous visit's last stop (start = [x, y])."""
+    groups = {}
+    for q in poses:
+        groups.setdefault((q["door"], q["side"]), []).append(q)
+    todo = []
+    for (door, side), qs in groups.items():
+        if all(q["reachable"] and q.get("clear", True) for q in qs):
+            stops = sorted(qs, key=lambda q: -q["dist"])
+            todo.append({"door": door, "side": side, "space": stops[0]["space"], "stops": stops})
+    tour, here = [], (start[0], start[1])
+    while todo:
+        nxt = min(todo, key=lambda v: (math.hypot(v["stops"][0]["x"] - here[0], v["stops"][0]["y"] - here[1]),
+                                       v["door"], v["side"]))
+        todo.remove(nxt)
+        tour.append(nxt)
+        here = (nxt["stops"][-1]["x"], nxt["stops"][-1]["y"])
+    return tour
