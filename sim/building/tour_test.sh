@@ -5,7 +5,7 @@
 #   bash sim/building/tour_test.sh [building=sim/building/out/bld_train_000] [platform=sim/configs/robots/wheeled_low.yaml] [x=1.0] [y=4.04]
 #
 # Output in runs/tours/<building>_<platform>_<time>/: tour.json (per stop: reached, seconds, position / heading error),
-# robot.log, nav.log, tour.log. No rosbag (camera at 10 Hz for a whole tour = GBs); --bag on door_tour.py when needed.
+# stops/NNN_door<id>_<side>_<dist>/ (what the robot sees at each stop: rgb / depth / seg + true boxes), robot.log, nav.log, tour.log. No rosbag (camera at 10 Hz for a whole tour = GBs); --bag on door_tour.py when needed.
 set -u
 cd "$(dirname "$0")/../.."
 BLD=${1:-sim/building/out/bld_train_000}
@@ -34,7 +34,7 @@ setsid ros2 launch sim/launch/nav.launch.py building:="$BLD" platform:="$PLAT" >
 PIDS+=($!)
 echo "robot up, Nav2 starting; tour log in $OUT/tour.log"
 
-timeout 5400 python3 sim/building/door_tour.py "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" 2>&1 | tee "$OUT/tour.log"
+timeout 5400 python3 sim/building/door_tour.py "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" 2>&1 | tee "$OUT/tour.log"
 status=${PIPESTATUS[0]}
 echo "door_tour exit $status (124 = 90 min timeout)"
 exit "$status"

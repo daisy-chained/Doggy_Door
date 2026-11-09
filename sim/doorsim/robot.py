@@ -157,7 +157,7 @@ def _camera(name, topic, kind, extra=""):
             f'<clip><near>{CLIP[0]}</near><far>{CLIP[1]}</far></clip></camera></sensor>')
 
 
-def _camera_link(p):
+def _camera_link(p, name="robot"):
     top = p["base"]["clearance"] + p["base"]["height"]
     mast_len = p["mast_height"] - top
     mast = ""
@@ -166,10 +166,10 @@ def _camera_link(p):
                 f'{_material(0.4, 0.4, 0.4)}</visual>')
     body = "<box><size>0.0400 0.0800 0.0400</size></box>"
     sensors = "".join([
-        _camera("rgbd", "rgbd", "rgbd_camera"),
-        _camera("boxes", "boxes", "boundingbox_camera", "<box_type>2d</box_type>"),
-        _camera("boxes3d", "boxes3d", "boundingbox_camera", "<box_type>3d</box_type>"),
-        _camera("seg", "seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>"),
+        _camera("rgbd", f"{name}/rgbd", "rgbd_camera"),
+        _camera("boxes", f"{name}/boxes", "boundingbox_camera", "<box_type>2d</box_type>"),
+        _camera("boxes3d", f"{name}/boxes3d", "boundingbox_camera", "<box_type>3d</box_type>"),
+        _camera("seg", f"{name}/seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>"),
     ])
     return (f'<link name="camera_link">{_pose(x=p["camera"]["forward"], z=p["mast_height"])}'
             f'{_inertial(SENSOR_MASS, _box_inertia(SENSOR_MASS, 0.04, 0.08, 0.04))}'
@@ -213,7 +213,7 @@ def robot_sdf(p, name="robot"):
         _base_link(p),
         _wheel_link(p, "left_wheel", +1), _wheel_link(p, "right_wheel", -1),
         _caster_link(p, "front_caster", +1), _caster_link(p, "rear_caster", -1),
-        _camera_link(p), _lidar_link(p),
+        _camera_link(p, name), _lidar_link(p),
         _joint("left_wheel_joint", "revolute", "base_link", "left_wheel", axis),
         _joint("right_wheel_joint", "revolute", "base_link", "right_wheel", axis),
         _joint("front_caster_joint", "fixed", "base_link", "front_caster"),
@@ -243,7 +243,7 @@ def static_tfs(p):
     ]
 
 
-def bridge_args(p):
+def bridge_args(p, name="robot"):
     """ros_gz_bridge parameter_bridge arguments: /cmd_vel ROS -> GZ, everything else GZ -> ROS."""
     out = ["/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist"]
     for topic, ros, gz in [
@@ -251,9 +251,9 @@ def bridge_args(p):
         ("/odom", "nav_msgs/msg/Odometry", "gz.msgs.Odometry"),
         ("/tf", "tf2_msgs/msg/TFMessage", "gz.msgs.Pose_V"),
         ("/scan", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan"),
-        ("/rgbd/image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
-        ("/rgbd/depth_image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
-        ("/rgbd/camera_info", "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo"),
+        (f"/{name}/rgbd/image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
+        (f"/{name}/rgbd/depth_image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
+        (f"/{name}/rgbd/camera_info", "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo"),
         ("/joint_states", "sensor_msgs/msg/JointState", "gz.msgs.Model"),
     ]:
         out.append(f"{topic}@{ros}[{gz}")

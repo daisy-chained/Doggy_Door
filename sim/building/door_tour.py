@@ -3,11 +3,13 @@ approach poses, at a door stop ~2.5 m and look, then ~1 m, report, move on). Nee
 
     source /opt/ros/jazzy/setup.bash
     python3 sim/building/door_tour.py sim/building/out/bld_train_000 --start 1.0 4.04 [--look 2.0] [--bag runs/tours/bld_train_000]
-                                      [--max-visits N] [--out runs/tours/bld_train_000.tour.json]
+                                      [--max-visits N] [--out runs/tours/bld_train_000.tour.json] [--frames DIR]
 
 Order = doorsim.robot.door_tour (greedy nearest next door side, far stop then near stop). Per stop it logs whether Nav2 reached it,
 the time it took and the final position / heading error (from tf map -> base_link). Perception at the stops comes later; for now the
 robot only stops for --look seconds (sim time) so a recording has frames of every door from both distances.
+--frames saves what the robot sees at every stop (Madelief 2026-11-09): DIR/NNN_door<id>_<side>_<dist>/ with rgb / depth / seg png,
+the true 2D + 3D boxes (door id per box) and meta.json (stop, reached, robot + camera pose in the map). doorsim.stop_frames.
 --bag records the run with rosbag2 (camera, depth, boxes, lidar, odom, tf), for "record first, score after".
 """
 import argparse, json, math, pathlib, signal, subprocess, sys, time
@@ -21,7 +23,7 @@ SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
 from doorsim import robot  # noqa: E402
 
-BAG_TOPICS = ["/rgbd/image", "/rgbd/depth_image", "/rgbd/camera_info", "/scan", "/odom", "/tf", "/tf_static", "/clock",
+BAG_TOPICS = ["/robot/rgbd/image", "/robot/rgbd/depth_image", "/robot/rgbd/camera_info", "/scan", "/odom", "/tf", "/tf_static", "/clock",
               "/cmd_vel", "/joint_states"]
 
 
@@ -34,9 +36,9 @@ def goal(nav, x, y, yaw):
     return g
 
 
-def where(nav, tf):
+def where(nav, tf, frame="base_link"):
     try:
-        t = tf.lookup_transform("map", "base_link", rclpy.time.Time()).transform
+        t = tf.lookup_transform("map", frame, rclpy.time.Time()).transform
     except Exception:
         return None
     q = t.rotation
@@ -58,6 +60,8 @@ def main():
     ap.add_argument("--max-visits", type=int, default=0)
     ap.add_argument("--bag", default="")
     ap.add_argument("--out", default="")
+    ap.add_argument("--frames", default="", help="folder: save camera frames + true boxes at every stop")
+    ap.add_argument("--name", default="robot", help="robot model name (camera topics live under it)")
     a = ap.parse_args()
 
     b = json.loads(pathlib.Path(a.building + ".building.json").read_text())
@@ -73,6 +77,12 @@ def main():
     TransformListener(tf, nav)
     stop_pub = nav.create_publisher(Twist, "/cmd_vel", 1)
     nav.waitUntilNav2Active(localizer="map_server")   # no AMCL: map -> odom comes from robot.launch.py
+
+    grab = None
+    if a.frames:
+        from doorsim import stop_frames
+        grab = stop_frames.Grabber(a.name)
+    n_frame = 0
 
     bag = None
     if a.bag:
@@ -100,6 +110,19 @@ def main():
                 if pos:
                     dyaw = (pos[2] - s["yaw"] + math.pi) % (2 * math.pi) - math.pi
                     r.update(pos_err=round(math.hypot(pos[0] - s["x"], pos[1] - s["y"]), 3), yaw_err=round(abs(dyaw), 3))
+                if grab:
+                    shot = grab.grab(nav.get_clock().now().nanoseconds, timeout=10)
+                    if shot is None:
+                        r["frame"] = None
+                    else:
+                        cam = where(nav, tf, "camera_optical")
+                        d = pathlib.Path(a.frames) / f"{n_frame:03d}_door{v['door']}_{v['side']}_{s['dist']:.1f}"
+                        meta = {"building": a.building, "door": v["door"], "side": v["side"], "space": v["space"],
+                                "dist": s["dist"], "target": {"x": s["x"], "y": s["y"], "yaw": s["yaw"]}, **r,
+                                "robot_pose": pos, "camera_xy_yaw": cam, "stamp_ns": shot["stamp_ns"]}
+                        stop_frames.save_stop(d, shot["rgb"], shot["depth"], shot["seg"], shot["boxes"], shot["boxes3d"], meta)
+                        r["frame"] = d.name
+                        n_frame += 1
                 rec["stops"].append(r)
                 print(f"door {v['door']} {v['side']} @ {s['dist']:.1f} m: {r}")
             log["visits"].append(rec)
