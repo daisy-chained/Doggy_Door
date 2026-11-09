@@ -5,6 +5,8 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
 STATS = ("map", "map_50", "map_75", "map_small", "map_medium", "map_large")
+POINT_CLASSES = ("hinge", "handle")
+MIN_RADIUS = 4  # px
 
 
 def to_coco_results(preds):
@@ -16,12 +18,55 @@ def to_coco_results(preds):
     return out
 
 
+def point_metrics(gt_json, preds, classes=POINT_CLASSES, score_min=0.5):
+    """Centre-distance score per class: {"point_ap_<name>", "point_recall_<name>"}; a prediction hits a GT whose centre is within max(MIN_RADIUS, half its longer side) px."""
+    gt = json.loads(open(gt_json).read())
+    ids = {c["name"]: c["id"] for c in gt["categories"]}
+    out = {}
+    for name in (n for n in classes if n in ids):
+        cid, n_gt, kept, hits = ids[name], 0, [], 0
+        by_img = {}
+        for a in gt["annotations"]:
+            if a["category_id"] == cid:
+                by_img.setdefault(a["image_id"], []).append(a)
+        for img in gt["images"]:
+            anns = by_img.get(img["id"], [])
+            g = np.array([a["bbox"] for a in anns if not a.get("iscrowd", 0)], float).reshape(-1, 4)
+            crowd = np.array([a["bbox"] for a in anns if a.get("iscrowd", 0)], float).reshape(-1, 4)
+            n_gt += len(g)
+            gc, rad = g[:, :2] + g[:, 2:] / 2, np.maximum(MIN_RADIUS, 0.5 * g[:, 2:].max(1, initial=0))
+            p = preds.get(img["id"]) or preds.get(str(img["id"])) or {"boxes": [], "scores": [], "labels": []}
+            boxes, scores = np.asarray(p["boxes"], float).reshape(-1, 4), np.asarray(p["scores"], float)
+            idx = [i for i, l in enumerate(p["labels"]) if l == cid - 1]
+            free = np.ones(len(g), bool)
+            for i in sorted(idx, key=lambda i: -scores[i]):
+                c = (boxes[i, :2] + boxes[i, 2:]) / 2
+                d = np.where(free, np.linalg.norm(gc - c, axis=1), np.inf)
+                d[d > rad] = np.inf
+                if len(d) and np.isfinite(d.min()):
+                    free[d.argmin()] = False
+                    kept.append((scores[i], 1))
+                    hits += scores[i] >= score_min
+                elif not ((c >= crowd[:, :2]) & (c <= crowd[:, :2] + crowd[:, 2:])).all(1).any():
+                    kept.append((scores[i], 0))
+        ap = 0.0
+        if n_gt and kept:
+            tp = np.array([t for _, t in sorted(kept, key=lambda k: -k[0])])
+            tpc, fpc = np.cumsum(tp), np.cumsum(1 - tp)
+            prec, rec = np.maximum.accumulate((tpc / (tpc + fpc))[::-1])[::-1], tpc / n_gt
+            at = np.searchsorted(rec, np.linspace(0, 1, 101), side="left")
+            ap = float(np.mean([prec[i] if i < len(prec) else 0.0 for i in at]))
+        out[f"point_ap_{name}"], out[f"point_recall_{name}"] = ap, float(hits / n_gt) if n_gt else 0.0
+    return out
+
+
 def coco_metrics(gt_json, preds):
     gt = json.loads(open(gt_json).read())
     for a in gt["annotations"]:
         a["id"] += 1  # pycocotools treats id 0 as 'unmatched'; exports made before 2026-10-29 number annotations from 0
     names = {c["id"]: c["name"] for c in gt["categories"]}
     metrics = {k: 0.0 for k in (*STATS, *(f"ap_{n}" for n in names.values()))}
+    metrics.update(point_metrics(gt_json, preds))
     results = to_coco_results(preds)
     if not results:
         return metrics
