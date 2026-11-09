@@ -43,6 +43,13 @@ def image_array(msg, kind):
     return a[..., 2].copy() if kind == "seg" else a[..., :3].copy()  # seg labels_map: channel 2 = label (object id)
 
 
+def pane_topics(attrs):
+    """{pane: (detach topic, attach topic)} for the glass panes held by a DetachableJoint (door glass); panes without topics
+    (the fixed window glass, a free model) are moved aside by set_pose alone."""
+    return {n: (o["detach_topic"], o["attach_topic"]) for n, o in attrs["objects"].items()
+            if o.get("part") == "glass_pane" and o.get("detach_topic")}
+
+
 class Sim:
     def __init__(self, sdf_path, world_name, attrs, log_path):
         self.world, self.attrs = world_name, attrs
@@ -66,8 +73,7 @@ class Sim:
             self._sub(Model, f"/world/{world_name}/model/{n}/joint_state", "js_" + n)
         self.door_pub = {n: self.node.advertise(f"/{n}/cmd_pos", Double) for n in self.doors}
         self.panes = {n: o for n, o in attrs["objects"].items() if o.get("part") == "glass_pane"}
-        self.pane_pub = {n: (self.node.advertise(o["detach_topic"], Empty), self.node.advertise(o["attach_topic"], Empty))
-                         for n, o in self.panes.items()}
+        self.pane_pub = {n: (self.node.advertise(d, Empty), self.node.advertise(a, Empty)) for n, (d, a) in pane_topics(attrs).items()}
         self.light_pub = self.node.advertise(f"/world/{world_name}/light_config", Light)
         self.colour_pub = self.node.advertise(f"/world/{world_name}/material_color", MaterialColor)
         for _ in range(120):  # server start + rendering init
@@ -82,15 +88,42 @@ class Sim:
         # a message published before Gazebo's subscriber is matched is lost silently (doors stay shut, lights unchanged);
         # with several Gazebo runs starting at once matching takes longer, so wait for every command publisher (after the
         # first steps: the glass panes' DetachableJoint only subscribes once the simulation has run)
-        pubs = {**{f"/{n}/cmd_pos": p for n, p in self.door_pub.items()}, "light_config": self.light_pub, "material_color": self.colour_pub,
-                **{o["detach_topic"]: self.pane_pub[n][0] for n, o in self.panes.items()}, **{o["attach_topic"]: self.pane_pub[n][1] for n, o in self.panes.items()}}
-        for _ in range(240):
+        types_ = {**{f"/{n}/cmd_pos": Double for n in self.door_pub}, f"/world/{world_name}/light_config": Light,
+                  f"/world/{world_name}/material_color": MaterialColor, **{t: Empty for ts in pane_topics(attrs).values() for t in ts}}
+        pubs = {**{f"/{n}/cmd_pos": p for n, p in self.door_pub.items()}, f"/world/{world_name}/light_config": self.light_pub,
+                f"/world/{world_name}/material_color": self.colour_pub,
+                **{t: self.pane_pub[n][i] for n, ts in pane_topics(attrs).items() for i, t in enumerate(ts)}}
+        self._extra_nodes = []
+
+        def fresh(topic):  # a new Node announces the topic again (one Node can't advertise a topic twice)
+            node = Node()
+            self._extra_nodes.append(node)
+            return node.advertise(topic, types_[topic])
+        pubs = self._wait_subscribed(pubs, timeout=120, remake={t: (lambda t=t: fresh(t)) for t in pubs})
+        self.door_pub = {n: pubs[f"/{n}/cmd_pos"] for n in self.door_pub}
+        self.light_pub, self.colour_pub = pubs[f"/world/{world_name}/light_config"], pubs[f"/world/{world_name}/material_color"]
+        self.pane_pub = {n: (pubs[d], pubs[a]) for n, (d, a) in pane_topics(attrs).items()}
+
+    def _wait_subscribed(self, pubs, timeout=120, poll=0.25, step_every=8, remake=None, readvertise_every=20):
+        """Wait until every publisher in pubs ({topic: publisher}) has a subscriber; step the sim by 1 every step_every polls
+        meanwhile (a DetachableJoint only subscribes once the simulation runs), and every readvertise_every s replace a still
+        unmatched publisher by remake[topic]() (its announcement may have been lost). Returns the final {topic: publisher};
+        RuntimeError naming the missing topics after timeout."""
+        pubs, remake = dict(pubs), remake or {}
+        every = max(1, int(readvertise_every / poll))
+        missing = list(pubs)
+        for i in range(int(timeout / poll)):
             missing = [t for t, p in pubs.items() if not p.has_connections()]
             if not missing:
-                break
-            time.sleep(0.25)
-        else:
-            raise RuntimeError(f"Gazebo did not subscribe to {', '.join(missing)} within 60 s")
+                return pubs
+            if i % step_every == step_every - 1:
+                self.step(1)
+            if i % every == every - 1:
+                for t in missing:
+                    if t in remake:
+                        pubs[t] = remake[t]()
+            time.sleep(poll)
+        raise RuntimeError(f"Gazebo did not subscribe to {', '.join(missing)} within {timeout:g} s")
 
     def _sub(self, typ, topic, key):
         def cb(m):
@@ -232,7 +265,8 @@ class Sim:
         Each pane is detached, moved away, and put back + re-attached at exactly its old pose."""
         saved = {n: self.model_pose(n) for n in panes}
         for n in panes:
-            self.pane_pub[n][0].publish(Empty())
+            if n in self.pane_pub:
+                self.pane_pub[n][0].publish(Empty())
         self.step(2)
         for n in panes:
             self.set_pose(n, [0, 0, -50])
@@ -241,7 +275,8 @@ class Sim:
             self.set_pose(n, pos, orientation=q)
         self.step(2)
         for n in panes:
-            self.pane_pub[n][1].publish(Empty())
+            if n in self.pane_pub:
+                self.pane_pub[n][1].publish(Empty())
         self.step(2)
         return depth
 
@@ -249,7 +284,8 @@ class Sim:
         """Label image with the given glass panes moved out of the way (like depth_without_panes, rendering "seg")."""
         saved = {n: self.model_pose(n) for n in panes}
         for n in panes:
-            self.pane_pub[n][0].publish(Empty())
+            if n in self.pane_pub:
+                self.pane_pub[n][0].publish(Empty())
         self.step(2)
         for n in panes:
             self.set_pose(n, [0, 0, -50])
@@ -258,7 +294,8 @@ class Sim:
             self.set_pose(n, pos, orientation=q)
         self.step(2)
         for n in panes:
-            self.pane_pub[n][1].publish(Empty())
+            if n in self.pane_pub:
+                self.pane_pub[n][1].publish(Empty())
         self.step(2)
         return seg
 

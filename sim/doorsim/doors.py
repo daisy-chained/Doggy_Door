@@ -199,7 +199,7 @@ def _window_wall(parts, win):
 
 
 def _window_models(win, name_label=(31, 32, 33)):
-    """SDF of the window frame model (holds the glass by a DetachableJoint), the glass model and the optional handle model."""
+    """SDF of the window frame model, the free glass model (moved aside by set_pose, no DetachableJoint) and the optional handle model."""
     y, w, fw, sill, top = win["y"], win["width"], win["frame_width"], win["sill"], win["top"]
     zm, h, t = (sill + top) / 2, top - sill, 0.06
     f, spec_f = win["frame_colour"], "0.5 0.5 0.5 1"
@@ -214,7 +214,6 @@ def _window_models(win, name_label=(31, 32, 33)):
         bars.append(("mullion_h", (0, 0, zm), (t, w, 0.04)))
     body = "\n".join(f'        <collision name="c_{n}"><pose>{_pose(*pos)} 0 0 0</pose>{_box(*size)}</collision>\n        '
                      + _vis(n, pos, _box(*size), f, spec_f) for n, pos, size in bars)
-    det = _detach("window_glass", topics=True).replace("<parent_link>panel", "<parent_link>frame")
     text = f"""    <model name="window">
       <pose>{_pose(WALL_X, y, 0)} 0 0 0</pose>
       <link name="frame_anchor"><inertial><mass>1</mass></inertial></link>
@@ -225,7 +224,6 @@ def _window_models(win, name_label=(31, 32, 33)):
 {body}
       </link>
       <joint name="frame_fix" type="fixed"><parent>frame_anchor</parent><child>frame</child></joint>
-      {det}
       {_label(31)}
     </model>
     <model name="window_glass">
@@ -345,8 +343,7 @@ def attributes(world, name):
         ky = [round(win["y"] - win["width"] / 2 - win["frame_width"] - 0.1, 3), round(win["y"] + win["width"] / 2 + win["frame_width"] + 0.1, 3)]
         objs["window"]["keep_out"] = {"front": [{"x": [round(WALL_X - 0.35, 3), round(WALL_X - 0.05, 3)], "y": list(ky)}],
                                       "back": [{"x": [round(WALL_X + 0.05, 3), round(WALL_X + 0.35, 3)], "y": list(ky)}]}
-        objs["window_glass"] = {"id": 33, "class": None, "part": "glass_pane", "part_of": "window",
-                                "detach_topic": "/window_glass/detach", "attach_topic": "/window_glass/attach"}
+        objs["window_glass"] = {"id": 33, "class": None, "part": "glass_pane", "part_of": "window"}  # free model: no DetachableJoint (never moves)
         if win["handle"]:
             objs["window_handle"] = {"id": 32, "class": None, "part": "window_handle", "part_of": "window", "face": win["handle"]}
     classes = {"1": "door", "2": "handle"}

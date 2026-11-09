@@ -210,7 +210,8 @@ def render_scenes(sim, attrs, scenes, run, world=None):
     run.rng = rng
 
 
-START_TRIES = 3  # Gazebo starts per world: with several servers starting at once a start can time out (2026-11-07)
+START_STAGGER = 10  # s between the first Gazebo starts of the workers: 4 servers announcing their topics at once lost some (2026-11-09)
+START_TRIES = 5  # Gazebo starts per world: with several servers starting at once a start can time out (2026-11-07)
 
 
 def start_sim(make, name, tries=None, wait=5):
@@ -224,7 +225,7 @@ def start_sim(make, name, tries=None, wait=5):
             if attempt == tries:
                 raise
             print(f"[{name}] Gazebo start {attempt} failed ({e}); trying again", flush=True)
-            time.sleep(wait)
+            time.sleep(wait * attempt)  # a bit longer each time, so a busy moment can pass
 
 
 WORLD_TRIES = 3  # renders of one world: a message that hasn't arrived yet mid-world (joint_state, pose/info) used to end a whole render (2026-11-09)
@@ -257,6 +258,7 @@ def render_worker(args):
     partition, cfg, lcfg, out, jobs = args
     os.environ["GZ_PARTITION"] = partition  # before gzsim / gz.transport is imported (render_world imports it)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))  # so the parent's terminate() runs the finally blocks that stop gz
+    time.sleep(START_STAGGER * int(partition.rsplit("_", 1)[1]))  # worker i starts i x START_STAGGER s later
     run = types.SimpleNamespace(cfg=cfg, lcfg=lcfg, out=out, rng=np.random.default_rng(cfg["seed"]), count=0, rejected=0, t_start=time.time(),
                                 scenes_total=sum(len(s) for (*_, s), _ in jobs), scenes_done=0)
     frames, cam = 0, None
