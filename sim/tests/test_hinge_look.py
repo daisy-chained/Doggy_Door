@@ -38,6 +38,14 @@
 #     only counts when the median valid depth inside its box (box widened to at least 3 px around its centre column, clipped to the
 #     image) is within depth_tol of `depth`. No valid pixel -> that hinge does not count. (Madelief 2026-11-10: a hinge of another door
 #     further back, seen through an open door at the same column, must not count; the caller passes depth = edge_forward(...).)
+#   hinge_look.pick_door_span(dets, cols, score_min=0.5) -> [x1, y1, x2, y2] | None: the "door" box (score >= score_min) with the most
+#     horizontal overlap (pixels) with [min(cols), max(cols)], the image columns of the door's two edges (projected from the robot's
+#     pose). No box overlapping that span by > 0 px -> None. (Claude 2026-11-10, offline test: picks the target door, not a door in the
+#     next room seen through it.)
+#   hinge_look.hinge_side_image(..., depth_img=None, expected=None, depth_tol=1.0): with both depth_img (HxW metres) and expected (the
+#     door's depth, edge_forward of the door centre) given, a handle only counts when its median valid box depth (same as for hinges)
+#     is within depth_tol of expected; no valid depth -> that handle does not count. Without them: as before. (Claude 2026-11-10:
+#     wrong handle guesses 5 -> 2 on the 7 buildings' saved frames; 1.0 m because an open door's handle swings with the leaf.)
 #   hinge_look.score_visits(visits) -> dict, offline score of a tour with hinge looks. Each visit: {"truth": bool (true hinge boxes of
 #     this door in any of the visit's frames), "first": bool (hinge_seen on the first look), "looks": [bool, ...] (every look of the
 #     visit, the first one included)}. Returns {"n_pos", "n_neg", "found_first", "found_any", "false_yes_first", "false_yes_any"}:
@@ -216,3 +224,34 @@ def test_hinge_seen_depth():
     assert not hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)     # no valid depth in the box
     holes[100:110, 318:323] = 0.0; holes[110:140, 318:323] = 2.1
     assert hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)         # zeros ignored, the rest is 2.1
+
+
+# --- handle guess with the door's known edges + depth (Claude 2026-11-10) ---
+def test_pick_door_span():
+    d = dets(("door", 0.9, [300, 0, 340, 300]),                         # small door far back, nearest the image centre
+             ("door", 0.8, [150, 0, 500, 450]),                         # the target door, spanning the projected edges
+             ("door", 0.95, [560, 0, 640, 450]), ("door", 0.3, [140, 0, 520, 450]))
+    assert hl.pick_door(d, 640) == [300, 0, 340, 300]                  # old rule: picks the one in the next room
+    assert hl.pick_door_span(d, [160.0, 490.0]) == [150, 0, 500, 450]
+    assert hl.pick_door_span(d, [490.0, 160.0]) == [150, 0, 500, 450]  # order of the columns does not matter
+    assert hl.pick_door_span(d, [600.0, 630.0]) == [560, 0, 640, 450]
+    assert hl.pick_door_span(d, [0.0, 100.0]) is None                  # nothing overlaps
+    assert hl.pick_door_span(dets(("door", 0.4, [0, 0, 300, 300])), [10.0, 200.0]) is None
+    assert hl.pick_door_span(dets(), [10.0, 200.0]) is None
+
+
+def test_hinge_side_image_depth():
+    door = [100, 0, 300, 400]                                          # centre column 200
+    img = np.full((480, 640), 1.5, np.float32)
+    img[:, 250:300] = 4.0                                               # through the open door: the next room
+    far_big = ("handle", 0.9, [255, 190, 295, 230])                     # right half, 4.0 m away, largest
+    near_small = ("handle", 0.6, [120, 200, 135, 212])                  # left half, 1.5 m
+    d = dets(far_big, near_small)
+    assert hl.hinge_side_image(door, d) == "left"                       # no depth: the big far handle wins
+    assert hl.hinge_side_image(door, d, depth_img=img, expected=1.5) == "right"
+    assert hl.hinge_side_image(door, d, depth_img=img, expected=2.4) == "right"   # within 1.0 m
+    assert hl.hinge_side_image(door, d, depth_img=img, expected=2.6) is None      # neither within 1.0 m
+    assert hl.hinge_side_image(door, d, depth_img=img, expected=2.6, depth_tol=1.5) == "right"
+    assert hl.hinge_side_image(door, d, depth_img=img) == "left"        # expected missing: no depth check
+    holes = img.copy(); holes[200:212, 120:135] = np.nan
+    assert hl.hinge_side_image(door, d, depth_img=holes, expected=1.5) is None    # near one has no depth, far one too far
