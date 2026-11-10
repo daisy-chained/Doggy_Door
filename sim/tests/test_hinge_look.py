@@ -208,21 +208,21 @@ def test_edge_forward():
 
 
 def test_hinge_seen_depth():
-    fx = 420.0
+    fx = 420.0                                                          # boxes 20 px tall = 0.095 m at 2 m: a real knuckle
     img = np.full((480, 640), 2.0, np.float32)
     img[:, 340:360] = 4.5                                               # something further back behind columns 340-359
-    near = dets(("hinge", 0.9, [318, 100, 322, 140]))                    # centre 320, depth 2.0
-    far = dets(("hinge", 0.9, [348, 100, 352, 140]))                     # centre 350, depth 4.5
+    near = dets(("hinge", 0.9, [318, 100, 322, 120]))                    # centre 320, depth 2.0
+    far = dets(("hinge", 0.9, [348, 100, 352, 120]))                     # centre 350, depth 4.5
     assert hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=img)
     assert hl.hinge_seen(near, 320.0, 2.25, fx, depth_img=img)          # within 0.3 m
     assert not hl.hinge_seen(near, 320.0, 2.4, fx, depth_img=img)
     assert hl.hinge_seen(far, 340.0, 2.0, fx, tol=0.2)                  # column only: counts ...
     assert not hl.hinge_seen(far, 340.0, 2.0, fx, tol=0.2, depth_img=img)   # ... but it is 2.5 m further back
-    thin = dets(("hinge", 0.9, [339.5, 100, 340.5, 140]))                # 1 px box on the border: widened to 3 px (339-341), median 4.5
+    thin = dets(("hinge", 0.9, [339.5, 100, 340.5, 120]))                # 1 px box on the border: widened to 3 px (339-341), median 4.5
     assert not hl.hinge_seen(thin, 340.0, 2.0, fx, depth_img=img)
-    holes = img.copy(); holes[100:140, 318:323] = np.nan
+    holes = img.copy(); holes[100:120, 318:323] = np.nan
     assert not hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)     # no valid depth in the box
-    holes[100:110, 318:323] = 0.0; holes[110:140, 318:323] = 2.1
+    holes[100:110, 318:323] = 0.0; holes[110:120, 318:323] = 2.1
     assert hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)         # zeros ignored, the rest is 2.1
 
 

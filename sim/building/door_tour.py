@@ -189,7 +189,8 @@ def main():
                         box = hinge_look.pick_door(dd, IMG_W)
                     if r.get("frame") and (pathlib.Path(a.frames) / r["frame"] / "depth.png").exists():
                         depth = np.asarray(Image.open(pathlib.Path(a.frames) / r["frame"] / "depth.png"), np.float32) / 1000.0
-                    side = hinge_look.hinge_side_image(box, dd, depth_img=depth, expected=expected) if box else None
+                    # size checks are Claude 2026-11-10 decisions (real hinge boxes <= 0.106 m tall, handles >= 0.033 m in the 7-building reruns)
+                    side = hinge_look.hinge_side_image(box, dd, depth_img=depth, expected=expected, fx=fx) if box else None
                     if side and pos:
                         guess, yaw = side, pos[2]
                         break

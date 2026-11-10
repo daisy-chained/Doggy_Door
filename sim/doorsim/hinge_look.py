@@ -54,8 +54,8 @@ def pick_door_span(dets, cols, score_min=0.5):
     return best
 
 
-def hinge_side_image(door_xyxy, dets, score_min=0.3, depth_img=None, expected=None, depth_tol=1.0):
-    """Hinge side in the image ("left" / "right") from the largest handle inside the door box (at depth `expected` +- depth_tol with depth_img); None without one."""
+def hinge_side_image(door_xyxy, dets, score_min=0.3, depth_img=None, expected=None, depth_tol=1.0, fx=None, min_size=0.025):
+    """Hinge side in the image ("left" / "right") from the largest handle inside the door box (at depth `expected` +- depth_tol with depth_img; with fx and depth_img, longest side >= min_size metres); None without one."""
     cx = (door_xyxy[0] + door_xyxy[2]) / 2
     best, best_a = None, -1.0
     for b, s, l in zip(dets["boxes"], dets["scores"], dets["labels"]):
@@ -64,6 +64,10 @@ def hinge_side_image(door_xyxy, dets, score_min=0.3, depth_img=None, expected=No
         if depth_img is not None and expected is not None:
             d = _box_depth(depth_img, b)
             if d is None or abs(d - expected) > depth_tol:
+                continue
+        if depth_img is not None and fx is not None:
+            d = _box_depth(depth_img, b)
+            if d is None or max(b[2] - b[0], b[3] - b[1]) * d / fx < min_size:
                 continue
         hx, hy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
         if not (door_xyxy[0] <= hx <= door_xyxy[2] and door_xyxy[1] <= hy <= door_xyxy[3]):
@@ -139,8 +143,8 @@ def _box_depth(depth_img, box):
     return float(np.median(v)) if v.size else None
 
 
-def hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5, depth_img=None, depth_tol=0.3):
-    """True when a hinge box (score >= score_min) is centred within fx * tol / depth px of column (and, with depth_img, at that depth)."""
+def hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5, depth_img=None, depth_tol=0.3, max_h=0.14):
+    """True when a hinge box (score >= score_min) is centred within fx * tol / depth px of column (and, with depth_img, at that depth and no taller than max_h metres)."""
     if column is None:
         return False
     for b, s, l in zip(dets["boxes"], dets["scores"], dets["labels"]):
@@ -149,6 +153,8 @@ def hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5, depth_img=None,
         if depth_img is not None:
             d = _box_depth(depth_img, b)
             if d is None or abs(d - depth) > depth_tol:
+                continue
+            if (b[3] - b[1]) * d / fx > max_h:
                 continue
         return True
     return False
