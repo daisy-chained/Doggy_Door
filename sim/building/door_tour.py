@@ -14,7 +14,9 @@ the true 2D + 3D boxes (door id per box) and meta.json (stop, reached, robot + c
 """
 import argparse, json, math, pathlib, signal, subprocess, sys, time
 
+import numpy as np
 import rclpy
+from PIL import Image
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from tf2_ros import Buffer, TransformListener
@@ -175,8 +177,19 @@ def main():
                 # camera sees only up to ~1 m, where handles sit), then extra looks aimed at that edge; no handle -> both edges
                 door, guess, yaw = doors[v["door"]], None, None
                 for r, pos, cam, dd in shots:
-                    box = hinge_look.pick_door(dd, IMG_W)
-                    side = hinge_look.hinge_side_image(box, dd) if box else None
+                    # door box by the door's known edges + handle at the door's depth (Claude 2026-11-10: wrong guesses 5 -> 2 offline)
+                    box, depth, expected = None, None, None
+                    if cam:
+                        cols = [hinge_look.edge_column(cam[0], cam[1], cam[2], hinge_look.edge_point(door, sd, cam[2]), fx, cx)
+                                for sd in ("left", "right")]
+                        expected = hinge_look.edge_forward(cam[0], cam[1], cam[2], tuple(door["pos"]))
+                        if None not in cols:
+                            box = hinge_look.pick_door_span(dd, cols)
+                    if box is None and not (cam and None not in cols):
+                        box = hinge_look.pick_door(dd, IMG_W)
+                    if r.get("frame") and (pathlib.Path(a.frames) / r["frame"] / "depth.png").exists():
+                        depth = np.asarray(Image.open(pathlib.Path(a.frames) / r["frame"] / "depth.png"), np.float32) / 1000.0
+                    side = hinge_look.hinge_side_image(box, dd, depth_img=depth, expected=expected) if box else None
                     if side and pos:
                         guess, yaw = side, pos[2]
                         break

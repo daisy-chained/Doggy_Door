@@ -41,13 +41,30 @@ def pick_door(dets, img_w, score_min=0.5):
     return best
 
 
-def hinge_side_image(door_xyxy, dets, score_min=0.3):
-    """Hinge side in the image ("left" / "right") from the largest handle inside the door box; None without one."""
+def pick_door_span(dets, cols, score_min=0.5):
+    """The door box (score >= score_min) overlapping the pixel span of cols the most; None without any overlap."""
+    lo, hi = min(cols), max(cols)
+    best, best_o = None, 0.0
+    for b, s, l in zip(dets["boxes"], dets["scores"], dets["labels"]):
+        if l != "door" or s < score_min:
+            continue
+        o = min(b[2], hi) - max(b[0], lo)
+        if o > best_o:
+            best, best_o = list(b), o
+    return best
+
+
+def hinge_side_image(door_xyxy, dets, score_min=0.3, depth_img=None, expected=None, depth_tol=1.0):
+    """Hinge side in the image ("left" / "right") from the largest handle inside the door box (at depth `expected` +- depth_tol with depth_img); None without one."""
     cx = (door_xyxy[0] + door_xyxy[2]) / 2
     best, best_a = None, -1.0
     for b, s, l in zip(dets["boxes"], dets["scores"], dets["labels"]):
         if l != "handle" or s < score_min:
             continue
+        if depth_img is not None and expected is not None:
+            d = _box_depth(depth_img, b)
+            if d is None or abs(d - expected) > depth_tol:
+                continue
         hx, hy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
         if not (door_xyxy[0] <= hx <= door_xyxy[2] and door_xyxy[1] <= hy <= door_xyxy[3]):
             continue

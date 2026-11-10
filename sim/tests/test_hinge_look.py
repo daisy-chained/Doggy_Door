@@ -251,7 +251,7 @@ def test_hinge_side_image_depth():
     assert hl.hinge_side_image(door, d, depth_img=img, expected=1.5) == "right"
     assert hl.hinge_side_image(door, d, depth_img=img, expected=2.4) == "right"   # within 1.0 m
     assert hl.hinge_side_image(door, d, depth_img=img, expected=2.6) is None      # neither within 1.0 m
-    assert hl.hinge_side_image(door, d, depth_img=img, expected=2.6, depth_tol=1.5) == "right"
+    assert hl.hinge_side_image(door, d, depth_img=img, expected=2.6, depth_tol=1.5) == "left"     # both in range: largest wins
     assert hl.hinge_side_image(door, d, depth_img=img) == "left"        # expected missing: no depth check
     holes = img.copy(); holes[200:212, 120:135] = np.nan
     assert hl.hinge_side_image(door, d, depth_img=holes, expected=1.5) is None    # near one has no depth, far one too far
