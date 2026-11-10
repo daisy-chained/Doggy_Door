@@ -195,14 +195,21 @@ def _plugins(p, name):
     drive = (f'<plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">'
              f'<left_joint>left_wheel_joint</left_joint><right_joint>right_wheel_joint</right_joint>'
              f'<wheel_separation>{_f(w["separation"])}</wheel_separation><wheel_radius>{_f(w["radius"])}</wheel_radius>'
-             f'<topic>cmd_vel</topic><odom_topic>odom</odom_topic><tf_topic>/tf</tf_topic>'
+             f'<topic>cmd_vel</topic>'
+             # wheel odometry drifts when a wheel slips (bumping a door leaf), so it goes to unbridged topics;
+             # /odom + /tf come from the ground-truth OdometryPublisher below (AMCL / SLAM later)
+             f'<odom_topic>wheel_odom</odom_topic><tf_topic>wheel_tf</tf_topic>'
              f'<frame_id>odom</frame_id><child_frame_id>base_link</child_frame_id>'
              f'<odom_publish_frequency>30</odom_publish_frequency>'
              f'<max_velocity>{_f(lim["max_speed"])}</max_velocity>'
              f'<max_angular_velocity>{_f(lim["max_turn"])}</max_angular_velocity></plugin>')
+    truth = ('<plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">'
+             '<odom_frame>odom</odom_frame><robot_base_frame>base_link</robot_base_frame>'
+             '<odom_topic>/odom</odom_topic><tf_topic>/tf</tf_topic><dimensions>2</dimensions>'
+             '<odom_publish_frequency>30</odom_publish_frequency></plugin>')
     joints = ('<plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">'
               '<topic>/joint_states</topic></plugin>')
-    return drive + joints
+    return drive + truth + joints
 
 
 # --- public builders ---

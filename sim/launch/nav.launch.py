@@ -6,7 +6,7 @@
 - map_server with the generator's map (<building>.map.yaml) + its own lifecycle manager;
 - nav2_bringup navigation_launch.py with params from the platform file (doorsim.robot.nav2_params on top of nav2_bringup's
   defaults: footprint, speeds, base_link, sim time);
-- no AMCL: robot.launch.py publishes map -> odom at the spawn pose (ground-truth localisation; AMCL / SLAM later).
+- no AMCL: robot.launch.py publishes map -> odom = identity (odom is the true world pose; AMCL / SLAM later).
 """
 import pathlib, sys
 

@@ -9,7 +9,8 @@ What it starts:
 - the robot from the platform YAML (doorsim.robot.robot_sdf), spawned at x / y / yaw on the floor;
 - ros_gz_bridge for /cmd_vel, /odom, /tf, /clock, /scan, /<name>/rgbd/*, /joint_states (doorsim.robot.bridge_args);
 - static tfs base_link -> camera_link -> camera_optical, base_link -> lidar_link;
-- map -> odom = the spawn pose (ground-truth localisation: the diff drive's odometry starts at the spawn pose; AMCL / SLAM later).
+- map -> odom = identity (ground-truth localisation: Gazebo's OdometryPublisher gives the true world pose as odom -> base_link,
+  so no wheel-slip drift; AMCL / SLAM later).
 """
 import pathlib, sys
 
@@ -47,7 +48,7 @@ def _setup(context):
             arguments=["-name", name, "-file", str(sdf_file), "-x", str(x), "-y", str(y), "-z", "0.0", "-Y", str(yaw)])]),
         Node(package="ros_gz_bridge", executable="parameter_bridge", output="screen",
              arguments=robot.bridge_args(p, name), parameters=[{"use_sim_time": True}]),
-        _tf("map", "odom", [x, y, 0.0], [0.0, 0.0, yaw]),
+        _tf("map", "odom", [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),   # odom = true world pose (robot.py)
     ]
     actions += [_tf(*t) for t in robot.static_tfs(p)]
     return actions

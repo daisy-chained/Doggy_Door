@@ -173,12 +173,24 @@ def test_diff_drive_plugin(plat):
     assert dd.findtext("left_joint") == "left_wheel_joint" and dd.findtext("right_joint") == "right_wheel_joint"
     assert float(dd.findtext("wheel_separation")) == pytest.approx(plat["wheel"]["separation"])
     assert float(dd.findtext("wheel_radius")) == pytest.approx(plat["wheel"]["radius"])
-    assert dd.findtext("topic") == "cmd_vel" and dd.findtext("odom_topic") == "odom" and dd.findtext("tf_topic") == "/tf"
-    assert dd.findtext("frame_id") == "odom" and dd.findtext("child_frame_id") == "base_link"
+    assert dd.findtext("topic") == "cmd_vel"
+    # wheel odometry drifts when the wheels slip (tour 2026-11-10: bumped a door leaf, Nav2 then thought it was in a wall),
+    # so the diff drive's odom / tf go to unbridged topics; the ground-truth OdometryPublisher below owns /odom and /tf
+    assert dd.findtext("odom_topic") not in ("odom", "/odom") and dd.findtext("tf_topic") not in ("tf", "/tf")
     assert float(dd.findtext("max_velocity")) == pytest.approx(plat["limits"]["max_speed"])
     assert float(dd.findtext("max_angular_velocity")) == pytest.approx(plat["limits"]["max_turn"])
     jsp = plugin(m, "gz::sim::systems::JointStatePublisher")
     assert jsp is not None and jsp.findtext("topic") == "/joint_states"   # absolute, so the bridge finds it
+
+
+def test_ground_truth_odometry(plat):
+    m = model(plat)
+    op = plugin(m, "gz::sim::systems::OdometryPublisher")
+    assert op is not None and op.get("filename") == "gz-sim-odometry-publisher-system"
+    assert op.findtext("odom_frame") == "odom" and op.findtext("robot_base_frame") == "base_link"
+    assert op.findtext("odom_topic") == "/odom" and op.findtext("tf_topic") == "/tf"
+    assert op.findtext("dimensions") == "2"
+    assert op.find("gaussian_noise") is None          # truth, no noise (AMCL / SLAM later)
 
 
 def test_robot_is_background(plat):
