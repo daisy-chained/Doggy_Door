@@ -32,6 +32,12 @@
 #     None when forward <= 0.05 m (behind / beside the camera).
 #   hinge_look.hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5) -> bool: some "hinge" box with score >= score_min whose
 #     centre column is within fx * tol / depth pixels of `column` (the edge, give or take tol metres at that depth). column None -> False.
+#   hinge_look.edge_forward(cam_x, cam_y, cam_yaw, edge) -> float | None: how far the edge is IN FRONT of the camera (along cam_yaw,
+#     = the depth image's z distance); None when <= 0.05 m.
+#   hinge_look.hinge_seen(..., depth_img=None, depth_tol=0.3): with a depth image (HxW float metres; 0 / NaN / inf = no depth), a hinge
+#     only counts when the median valid depth inside its box (box widened to at least 3 px around its centre column, clipped to the
+#     image) is within depth_tol of `depth`. No valid pixel -> that hinge does not count. (Madelief 2026-11-10: a hinge of another door
+#     further back, seen through an open door at the same column, must not count; the caller passes depth = edge_forward(...).)
 #   hinge_look.score_visits(visits) -> dict, offline score of a tour with hinge looks. Each visit: {"truth": bool (true hinge boxes of
 #     this door in any of the visit's frames), "first": bool (hinge_seen on the first look), "looks": [bool, ...] (every look of the
 #     visit, the first one included)}. Returns {"n_pos", "n_neg", "found_first", "found_any", "false_yes_first", "false_yes_any"}:
@@ -185,3 +191,28 @@ def test_score_visits():
     assert s["false_yes_first"] == 0.0 and s["false_yes_any"] == pytest.approx(0.5)
     e = hl.score_visits([])
     assert e["found_any"] == 0.0 and e["false_yes_any"] == 0.0 and e["n_pos"] == 0
+
+
+def test_edge_forward():
+    assert hl.edge_forward(0.0, 0.0, 0.0, (2.0, 0.5)) == pytest.approx(2.0)
+    assert hl.edge_forward(1.0, 1.0, math.pi / 2, (1.5, 3.0)) == pytest.approx(2.0)
+    assert hl.edge_forward(0.0, 0.0, 0.0, (0.01, 1.0)) is None
+
+
+def test_hinge_seen_depth():
+    fx = 420.0
+    img = np.full((480, 640), 2.0, np.float32)
+    img[:, 340:360] = 4.5                                               # something further back behind columns 340-359
+    near = dets(("hinge", 0.9, [318, 100, 322, 140]))                    # centre 320, depth 2.0
+    far = dets(("hinge", 0.9, [348, 100, 352, 140]))                     # centre 350, depth 4.5
+    assert hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=img)
+    assert hl.hinge_seen(near, 320.0, 2.25, fx, depth_img=img)          # within 0.3 m
+    assert not hl.hinge_seen(near, 320.0, 2.4, fx, depth_img=img)
+    assert hl.hinge_seen(far, 340.0, 2.0, fx, tol=0.2)                  # column only: counts ...
+    assert not hl.hinge_seen(far, 340.0, 2.0, fx, tol=0.2, depth_img=img)   # ... but it is 2.5 m further back
+    thin = dets(("hinge", 0.9, [339.5, 100, 340.5, 140]))                # 1 px box on the border: widened to 3 px (339-341), median 4.5
+    assert not hl.hinge_seen(thin, 340.0, 2.0, fx, depth_img=img)
+    holes = img.copy(); holes[100:140, 318:323] = np.nan
+    assert not hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)     # no valid depth in the box
+    holes[100:110, 318:323] = 0.0; holes[110:140, 318:323] = 2.1
+    assert hl.hinge_seen(near, 320.0, 2.0, fx, depth_img=holes)         # zeros ignored, the rest is 2.1
