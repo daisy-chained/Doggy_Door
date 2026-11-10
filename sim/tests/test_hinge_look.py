@@ -19,7 +19,8 @@
 #     else "left" (same rule as train/doordet/props.hinge_from_handle). No such handle -> None.
 #   hinge_look.edge_point(door, image_side, robot_yaw) -> (x, y): the door's edge on that side of the IMAGE, for a robot facing the
 #     door with heading robot_yaw. door = {"pos": [x, y], "yaw": normal yaw, "width": m}; the edges are pos +/- width / 2 along the
-#     wall (perpendicular to the normal); image "left" = the robot's left = direction (-sin yaw, cos yaw).
+#     wall (perpendicular to the normal); image "left" = the edge on the robot's left (its left = direction (-sin yaw, cos yaw)),
+#     the edge itself always on the wall line, also when the robot stands a bit skewed.
 #   hinge_look.look_poses(door, edge, stop_xy, free_fn, dist=1.5, angles=(20, 40), fallback=(1.2, 1.0))
 #     -> [{"x", "y", "yaw", "angle", "dist", "toward"}]: one pose per angle (degrees off head-on), aimed at the edge
 #     (yaw = heading from the pose to the edge). n = unit vector from the door centre towards stop_xy projected on the door normal
@@ -53,10 +54,10 @@ def dets(*items):
 # --- map ---
 @pytest.fixture
 def tiny_map(tmp_path):
-    # 20 x 10 cells of 0.1 m, origin (-1, -0.5): free (254) everywhere, a wall (0) in column 10, an unknown (205) block top-left
+    # 20 x 10 cells of 0.1 m, origin (-1, -0.5): free (254) everywhere, a wall (0) in column 10, an unknown (128: occupancy 0.5, between the thresholds) block top-left
     img = np.full((10, 20), 254, np.uint8)
     img[:, 10] = 0
-    img[0:2, 0:2] = 205
+    img[0:2, 0:2] = 128
     Image.fromarray(img).save(tmp_path / "m.pgm")
     (tmp_path / "m.yaml").write_text("image: m.pgm\nresolution: 0.1\norigin: [-1.0, -0.5, 0.0]\nnegate: 0\n"
                                      "occupied_thresh: 0.65\nfree_thresh: 0.25\nmode: trinary\n")
@@ -74,7 +75,7 @@ def test_free(tiny_map):
     # column 10 = x in [0.0, 0.1); row 9 is the bottom (y in [-0.5, -0.4))
     assert hl.free(tiny_map, -0.5, 0.0, 0.1)
     assert not hl.free(tiny_map, 0.05, 0.0, 0.1)                     # on the wall
-    assert not hl.free(tiny_map, -0.15, 0.0, 0.1)                    # wall within the radius
+    assert not hl.free(tiny_map, -0.05, 0.0, 0.1)                    # column 9: the wall (column 10) is within one cell
     assert hl.free(tiny_map, -0.35, 0.0, 0.1)
     assert not hl.free(tiny_map, -0.95, 0.45, 0.05)                  # unknown block, top-left
     assert not hl.free(tiny_map, -0.98, 0.0, 0.1)                    # square sticks out of the map
@@ -114,6 +115,9 @@ def test_edge_point():
     # door normal along x
     d = {"pos": [2.0, 1.0], "yaw": 0.0, "width": 0.8}
     assert hl.edge_point(d, "left", 0.0) == pytest.approx((2.0, 1.4))
+    # a slightly skewed robot (tour heading error up to ~0.23 rad) still gets the edge ON the wall line
+    assert hl.edge_point(DOOR, "left", math.pi / 2 + 0.25) == pytest.approx((-0.5, 0.0))
+    assert hl.edge_point(DOOR, "right", math.pi / 2 - 0.25) == pytest.approx((0.5, 0.0))
 
 
 def test_look_poses_out_first():

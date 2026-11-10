@@ -2,7 +2,8 @@
 # Live test of the robot run (phase 2e): one building, robot + Nav2 headless, door tour over every reachable door side.
 # Everything is stopped at the end (also on errors / timeout). Meant to run alone (no training / render next to it: earlyoom).
 #
-#   bash sim/building/tour_test.sh [building=sim/building/out/bld_train_000] [platform=sim/configs/robots/wheeled_low.yaml] [x=1.0] [y=4.04]
+#   bash sim/building/tour_test.sh [building=sim/building/out/bld_train_000] [platform=sim/configs/robots/wheeled_low.yaml] [x=1.0] [y=4.04] [door_tour options...]
+#   e.g. ... 1.0 4.04 --hinge-look runs/dfine_n960_v7_hw8   (hinge look, option A; score: python3 sim/building/score_hinge_look.py OUT)
 #
 # Output in runs/tours/<building>_<platform>_<time>/: tour.json (per stop: reached, seconds, position / heading error),
 # stops/NNN_door<id>_<side>_<dist>/ (what the robot sees at each stop: rgb / depth / seg + true boxes), robot.log, nav.log, tour.log. No rosbag (camera at 10 Hz for a whole tour = GBs); --bag on door_tour.py when needed.
@@ -34,7 +35,7 @@ setsid ros2 launch sim/launch/nav.launch.py building:="$BLD" platform:="$PLAT" >
 PIDS+=($!)
 echo "robot up, Nav2 starting; tour log in $OUT/tour.log"
 
-timeout 5400 python3 sim/building/door_tour.py "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" 2>&1 | tee "$OUT/tour.log"
+timeout 5400 python3 sim/building/door_tour.py "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${@:5}" 2>&1 | tee "$OUT/tour.log"
 status=${PIPESTATUS[0]}
 echo "door_tour exit $status (124 = 90 min timeout)"
 exit "$status"
