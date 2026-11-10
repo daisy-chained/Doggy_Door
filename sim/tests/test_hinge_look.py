@@ -255,3 +255,37 @@ def test_hinge_side_image_depth():
     assert hl.hinge_side_image(door, d, depth_img=img) == "left"        # expected missing: no depth check
     holes = img.copy(); holes[200:212, 120:135] = np.nan
     assert hl.hinge_side_image(door, d, depth_img=holes, expected=1.5) is None    # near one has no depth, far one too far
+
+
+# --- size checks (Claude 2026-11-10, from the 7-building reruns: real hinge boxes <= 0.106 m tall, 2 false hits 0.155 / 0.160 m;
+#     real handle boxes >= 0.033 m on their longest side, a 0.023 m blob on a glass door's stile gave 006 d8 a wrong guess) ---
+def test_hinge_seen_too_tall():
+    fx = 420.0
+    img = np.full((480, 640), 2.0, np.float32)
+    ok = dets(("hinge", 0.9, [318, 100, 322, 140]))                      # 40 px at 2.0 m = 0.19 m ... too tall at 2 m
+    assert not hl.hinge_seen(ok, 320.0, 2.0, fx, depth_img=img)
+    assert hl.hinge_seen(ok, 320.0, 2.0, fx, depth_img=img, max_h=0.2)  # limit is a parameter
+    assert hl.hinge_seen(ok, 320.0, 2.0, fx)                             # no depth image: no size check (column only)
+    real = dets(("hinge", 0.9, [318, 100, 322, 120]))                    # 20 px at 2.0 m = 0.095 m: a real knuckle
+    assert hl.hinge_seen(real, 320.0, 2.0, fx, depth_img=img)
+    edge = dets(("hinge", 0.9, [318, 100, 322, 129]))                    # 29 px = 0.138 m: just under the default 0.14 m
+    assert hl.hinge_seen(edge, 320.0, 2.0, fx, depth_img=img)
+    tall_then_real = dets(("hinge", 0.95, [318, 100, 322, 160]), ("hinge", 0.6, [319, 200, 321, 215]))
+    assert hl.hinge_seen(tall_then_real, 320.0, 2.0, fx, depth_img=img)  # a too-tall box is skipped, the next one still counts
+
+
+def test_hinge_side_image_too_small():
+    fx = 420.0
+    door = [100, 0, 300, 400]                                          # centre column 200
+    img = np.full((480, 640), 1.4, np.float32)
+    blob = ("handle", 0.8, [264, 135, 269, 142])                        # 5 x 7 px at 1.4 m = 0.017 x 0.023 m: too small
+    lever = ("handle", 0.5, [120, 200, 150, 210])                       # 30 px = 0.10 m wide: a real lever
+    assert hl.hinge_side_image(door, dets(blob), depth_img=img, expected=1.4) == "left"      # handle right of centre -> hinge left; no fx: no size check
+    assert hl.hinge_side_image(door, dets(blob), depth_img=img, expected=1.4, fx=fx) is None
+    assert hl.hinge_side_image(door, dets(blob), depth_img=img, expected=1.4, fx=fx, min_size=0.02) == "left"
+    assert hl.hinge_side_image(door, dets(blob, lever), depth_img=img, expected=1.4, fx=fx) == "right"   # blob dropped: the lever on the left half -> hinge right
+    small_knob = ("handle", 0.5, [270, 200, 278, 208])                  # 8 px = 0.027 m: kept (longest side counts)
+    assert hl.hinge_side_image(door, dets(small_knob), depth_img=img, expected=1.4, fx=fx) == "left"
+    tall_thin = ("handle", 0.5, [270, 200, 272, 210])                   # 2 x 10 px = 0.007 x 0.033 m: kept, longest side >= 0.025
+    assert hl.hinge_side_image(door, dets(tall_thin), depth_img=img, expected=1.4, fx=fx) == "left"
+    assert hl.hinge_side_image(door, dets(blob), fx=fx) == "left"     # no depth image: no size check
