@@ -3,7 +3,8 @@
     python3 sim/building/score_hinge_look.py runs/tours/<run>
 
 Truth per door side = a true hinge box (label 10 * door + 5..7) of that door in any frame of the visit. "first" = the far stop
-(one look, as before), "any" = any look (stops + extra looks). Also: how often the handle gave a guess, and the guessed edge vs the
+(one look, as before), "any" = any look (stops + extra looks). Only looks the robot reached count; a door side whose far stop
+was not reached is left out (it never saw the door). Also: how often the handle gave a guess, and the guessed edge vs the
 true hinge boxes (right image half / left image half at the far stop)."""
 import json, pathlib, sys
 
@@ -17,6 +18,9 @@ visits, guessed = [], 0
 for v in tour["visits"]:
     hl = v.get("hinge_look")
     if not hl:
+        continue
+    hl = {**hl, "looks": [l for l in hl["looks"] if l["result"] == "SUCCEEDED"]}
+    if not hl["looks"] or hl["looks"][0]["kind"] != "stop" or hl["looks"][0]["dist"] != v["stops"][0]["dist"]:
         continue
     truth = False
     for l in hl["looks"]:
