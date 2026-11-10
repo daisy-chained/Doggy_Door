@@ -170,7 +170,7 @@ def main():
                 shots.append((r, pos, cam, detect(r.get("frame"))))
                 rec["stops"].append(r)
                 print(f"door {v['door']} {v['side']} @ {s['dist']:.1f} m: {r}")
-            if det is not None:
+            if det is not None and any(r["result"] == "SUCCEEDED" for r, *_ in shots):   # never got there: nothing to look at
                 # hinge look (option A, Madelief 2026-11-10): handle -> hinge edge (far stop first: from the 1 m stop the 0.4 m
                 # camera sees only up to ~1 m, where handles sit), then extra looks aimed at that edge; no handle -> both edges
                 door, guess, yaw = doors[v["door"]], None, None

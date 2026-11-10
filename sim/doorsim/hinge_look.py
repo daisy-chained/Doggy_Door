@@ -105,13 +105,35 @@ def edge_column(cam_x, cam_y, cam_yaw, edge, fx, cx):
     return cx - fx * left / fwd
 
 
-def hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5):
-    """True when a hinge box (score >= score_min) is centred within fx * tol / depth pixels of column."""
+def edge_forward(cam_x, cam_y, cam_yaw, edge):
+    """How far the edge is in front of the camera along cam_yaw (the depth z); None when <= 0.05 m."""
+    fwd = math.cos(cam_yaw) * (edge[0] - cam_x) + math.sin(cam_yaw) * (edge[1] - cam_y)
+    return fwd if fwd > 0.05 else None
+
+
+def _box_depth(depth_img, box):
+    """Median valid depth in the box (widened to >= 3 px around its centre column, clipped); None without valid pixels."""
+    h, w = depth_img.shape
+    c = int((box[0] + box[2]) / 2)
+    x1, x2 = max(0, min(int(math.floor(box[0])), c - 1)), min(w, max(int(math.ceil(box[2])), c + 2))
+    y1, y2 = max(0, int(math.floor(box[1]))), min(h, int(math.ceil(box[3])))
+    v = np.asarray(depth_img[y1:y2, x1:x2], dtype=float).ravel()
+    v = v[np.isfinite(v) & (v > 0)]
+    return float(np.median(v)) if v.size else None
+
+
+def hinge_seen(dets, column, depth, fx, tol=0.15, score_min=0.5, depth_img=None, depth_tol=0.3):
+    """True when a hinge box (score >= score_min) is centred within fx * tol / depth px of column (and, with depth_img, at that depth)."""
     if column is None:
         return False
     for b, s, l in zip(dets["boxes"], dets["scores"], dets["labels"]):
-        if l == "hinge" and s >= score_min and abs((b[0] + b[2]) / 2 - column) <= fx * tol / depth:
-            return True
+        if l != "hinge" or s < score_min or abs((b[0] + b[2]) / 2 - column) > fx * tol / depth:
+            continue
+        if depth_img is not None:
+            d = _box_depth(depth_img, b)
+            if d is None or abs(d - depth) > depth_tol:
+                continue
+        return True
     return False
 
 
