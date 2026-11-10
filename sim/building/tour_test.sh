@@ -18,11 +18,13 @@ mkdir -p "$OUT"
 
 set +u; source /opt/ros/jazzy/setup.bash; set -u   # ROS setup scripts use unset variables
 export GZ_PARTITION=tour_$$ ROS_DOMAIN_ID=$(( ($$ % 100) + 100 ))   # own Gazebo + ROS network, nothing else gets in
+export PYTHONUNBUFFERED=1   # door_tour lines reach tour.log / the runq log as they happen (piped output was held back)
 PIDS=()
 cleanup() {
   for p in "${PIDS[@]}"; do kill -INT -- -"$p" 2>/dev/null; done
   sleep 5
   for p in "${PIDS[@]}"; do kill -KILL -- -"$p" 2>/dev/null; done
+  ros2 daemon stop >/dev/null 2>&1   # the ROS daemon detaches from the run and was left behind after every tour
 }
 trap cleanup EXIT
 

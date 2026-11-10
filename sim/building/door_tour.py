@@ -164,7 +164,8 @@ def main():
 
     log = {"building": b.get("seed"), "start": a.start, "visits": []}
     try:
-        for v in tour:
+        for i, v in enumerate(tour, 1):
+            print(f"[{i}/{len(tour)}] door {v['door']} {v['side']}")   # progress counter for the run dashboard
             rec = {"door": v["door"], "side": v["side"], "space": v["space"], "stops": []}
             shots = []
             for s in v["stops"]:
