@@ -9,8 +9,9 @@ def _hinged(side, pull_push):
     return {"type": "hinged", "hinge_side": side, "push_pull": pull_push, "sure": False}
 
 
-def answer(looks, handle_guess, p_slide=None, other_side_hinged=False, wrong=()):
-    """Report {"type", "hinge_side", "push_pull", "sure"} from the looks, never an answer in wrong; None when all are wrong."""
+def answer(looks, handle_guess, p_slide=None, other_side_hinged=False, wrong=(), empty_doorway=False):
+    """Report {"type", "hinge_side", "push_pull", "sure"} from the looks, never an answer in wrong; None when all are wrong.
+    empty_doorway: no door box spanned the doorway at any stop (open sliding door) -> sliding first (Madelief 2026-11-11)."""
     count = {e: sum(e in l["seen"] for l in looks) for e in ("left", "right")}
     left = [s for s in ("left", "right") if ("hinged", s) not in wrong]
     cand = [e for e in left if count[e]]
@@ -22,6 +23,8 @@ def answer(looks, handle_guess, p_slide=None, other_side_hinged=False, wrong=())
     any_seen = any(count.values())
     pick = lambda: _hinged(handle_guess if handle_guess in left else left[0],
                            "push" if other_side_hinged and not any_seen else None)
+    if empty_doorway and not any_seen and not other_side_hinged and ("sliding", None) not in wrong:
+        return {"type": "sliding", "hinge_side": None, "push_pull": None, "sure": False}
     if left and (other_side_hinged or any_seen or p_slide is None or p_slide < 0.5):
         return pick()
     if ("sliding", None) not in wrong:
@@ -42,7 +45,7 @@ def next_look(looks, handle_guess, free_fn, n_max):
     return None
 
 
-def visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide=None, other_side_hinged=False):
+def visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide=None, other_side_hinged=False, empty_doorway=False):
     """Run one door side: look until sure, report, check; wrong -> new look, guess again. Returns {"reports", "looks", "first_right", "right", "n_reports"}."""
     looks, wrong, reports = list(stop_looks), [], []
 
@@ -54,7 +57,7 @@ def visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide
         return True
 
     def ask():
-        return answer(looks, handle_guess, p_slide, other_side_hinged, wrong)
+        return answer(looks, handle_guess, p_slide, other_side_hinged, wrong, empty_doorway)
 
     while len(reports) < len(ANSWERS):
         if wrong and not look():

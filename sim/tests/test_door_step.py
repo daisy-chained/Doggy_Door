@@ -20,12 +20,17 @@
 #     3. Else ("sliding", None) if not wrong (push_pull None, sure False); else the hinged answer that is left (as in 2).
 #     Every answer wrong -> None.
 #
+#   empty_doorway=False (answer and visit keyword): no door box spanned the doorway at any stop, so the classifier got no crop (an
+#     open sliding door: its panel is behind the wall). Madelief 2026-11-11 ~12:45 "sliding first": in step 2, when no hinge was seen
+#     at all and not other_side_hinged, empty_doorway -> ("sliding", None) first if not wrong (sure False), before p_slide / the
+#     hinged default. Today's runs: no crop on 3 sliding sides + 2 false doors, never on the 42 hinged sides.
 #   door_step.next_look(looks, handle_guess, free_fn, n_max) -> (edge, angle) | None
 #     extra looks = looks with angle not None. None when len(extra looks) >= n_max. g = handle_guess or "left", o = the other side;
 #     candidates in order (g, 20), (g, 40), (o, 20), (o, 40), (g, 0), (o, 0) (0 = head-on at that edge); skip those already in
 #     looks (same edge and angle) and those with free_fn(edge, angle) False; first one left, else None.
 #
-#   door_step.visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide=None, other_side_hinged=False) -> log
+#   door_step.visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide=None, other_side_hinged=False,
+#                   empty_doorway=False) -> log
 #     stop_looks = the looks from the tour stops (angle None). look_fn(edge, angle) -> set of edges seen, or None when the robot
 #     could not get there (that look still counts as taken, with seen = set()). check_fn(report) -> bool (the sim's truth).
 #     n_max = extra looks before the first report; every wrong report allows one more (look cap = n_max + wrong reports so far).
@@ -182,3 +187,20 @@ def test_truth_and_is_right():
     rep = {"type": "hinged", "hinge_side": "left", "push_pull": "push", "sure": False}
     assert ds.is_right(rep, ("hinged", "left")) and not ds.is_right(rep, ("hinged", "right")) and not ds.is_right(rep, ("sliding", None))
     assert ds.is_right({"type": "sliding", "hinge_side": None, "push_pull": None, "sure": False}, ("sliding", None))
+
+
+# --- empty doorway -> sliding first ---
+def test_empty_doorway_says_sliding_first():
+    assert ds.answer([L()], "left", empty_doorway=True) == {"type": "sliding", "hinge_side": None, "push_pull": None, "sure": False}
+    assert ds.answer([L()], None, p_slide=0.1, empty_doorway=True)["type"] == "sliding"
+
+
+def test_empty_doorway_loses_to_hinges_and_other_side():
+    assert ds.answer([L(seen={"right"})], None, empty_doorway=True)["type"] == "hinged"
+    assert ds.answer([L()], "left", other_side_hinged=True, empty_doorway=True)["type"] == "hinged"
+    assert ds.answer([L()], "left", wrong=[("sliding", None)], empty_doorway=True)["hinge_side"] == "left"
+
+
+def test_visit_empty_doorway_right_first():
+    log = ds.visit([L()], lambda e, a: set(), lambda r: r["type"] == "sliding", None, ALL_FREE, empty_doorway=True)
+    assert log["first_right"] and log["n_reports"] == 1

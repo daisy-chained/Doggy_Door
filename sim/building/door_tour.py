@@ -360,14 +360,15 @@ def main():
             return None
         log_ = door_step.visit([{k: l[k] for k in ("edge", "angle", "seen")} for l in stop_looks], look_fn, check_fn, guess,
                                lambda e, ang: pose_for(e, ang) is not None, n_max=a.step_n, p_slide=p_use,
-                               other_side_hinged=real is not None and real in known_hinged)
+                               other_side_hinged=real is not None and real in known_hinged,
+                               empty_doorway=not ps)             # no crop at any stop: open sliding door (Madelief 2026-11-11 "sliding first")
         if any(r["right"] and r["type"] == "hinged" for r in log_["reports"]) or \
                 any(r["sure"] and r["type"] == "hinged" for r in log_["reports"]):
             if real is not None:
                 known_hinged.add(real)
         for l in log_["looks"]:
             l["seen"] = sorted(l["seen"])
-        return {**log_, "handle_guess": guess, "p_slide": p_mean, "p_slide_frames": ps, "truth": list(tr), "opened": bool(opened),
+        return {**log_, "handle_guess": guess, "p_slide": p_mean, "empty_doorway": not ps, "p_slide_frames": ps, "truth": list(tr), "opened": bool(opened),
                 "stop_frames": [l["frame"] for l in stop_looks]}
 
     def load_map_srv(yaml_path, tries=3, per_call=10.0):
