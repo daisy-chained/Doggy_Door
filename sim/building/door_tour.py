@@ -239,10 +239,14 @@ def main():
         timeout: wall seconds before giving up (default --timeout)."""
         nonlocal n_frame
         t0 = time.time()
+        timed_out = False
         nav.goToPose(goal(nav, s["x"], s["y"], s["yaw"]))
         while not nav.isTaskComplete():
             if time.time() - t0 > (a.timeout if timeout is None else timeout):
                 nav.cancelTask()
+                # getResult() after a cancel can still say SUCCEEDED (005 night run 2026-11-11: stuck 8 min, door step on frames 4 m off);
+                # door-step looks (own short timeout) keep the old label: their frame from wherever the robot got is used on purpose
+                timed_out = timeout is None
                 break
             rclpy.spin_once(nav, timeout_sec=0.1)
             write_live()
@@ -250,7 +254,7 @@ def main():
         stop_pub.publish(Twist())                    # Gazebo's DiffDrive keeps the last command
         wait_sim(nav, a.look)
         pos = where(nav, tf)
-        r = {"dist": s["dist"], "result": res.name if isinstance(res, TaskResult) else str(res),
+        r = {"dist": s["dist"], "result": "TIMEOUT" if timed_out else res.name if isinstance(res, TaskResult) else str(res),
              "seconds": round(time.time() - t0, 1)}
         if pos:
             dyaw = (pos[2] - s["yaw"] + math.pi) % (2 * math.pi) - math.pi
@@ -648,6 +652,8 @@ def main():
                 shots.append((r, pos, cam, detect(r.get("frame"))))
                 rec["stops"].append(r)
                 print(f"door {v['door']} {v['side']} @ {s['dist']:.1f} m: {r}")
+                if a.patrol and r["result"] != "SUCCEEDED":  # can't get there: don't spend another timeout on the nearer stop
+                    break
             if props is not None and any(r["result"] == "SUCCEEDED" for r, *_ in shots):
                 rec["door_step"] = door_step_visit(v, shots)
                 ds_ = rec["door_step"]
