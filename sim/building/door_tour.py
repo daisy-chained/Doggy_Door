@@ -450,7 +450,14 @@ def main():
                 c = cands[k]
                 m_ = patrol.match(c, b["doors"])
                 c["match"] = list(m_) if m_ else None
-                stops = [st for st in patrol.approach(c) if free(st["x"], st["y"])]
+                stops = []                                     # as the tour planner: a stop that doesn't fit moves 0.1 m closer (>= 0.5 m)
+                for dist in (2.0, 1.0):
+                    for u in (round(dist - 0.1 * j, 2) for j in range(int(round((dist - 0.5) / 0.1)) + 1)):
+                        st = patrol.approach(c, (u,))[0]
+                        if free(st["x"], st["y"]):
+                            if not stops or stops[-1]["dist"] - u > 0.3:
+                                stops.append(st)
+                            break
                 if not stops:
                     c["status"] = "no free stop"
                     continue
