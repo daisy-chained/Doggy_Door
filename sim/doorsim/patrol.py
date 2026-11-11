@@ -44,17 +44,24 @@ def reachable(m, start, radius):
     return np.array(seen, bool)
 
 
-def viewpoints(m, start, radius, spacing=1.5, pass_radius=None):
+def viewpoints(m, start, radius, spacing=1.5, pass_radius=None, anchor=None):
     """Grid points (x0 + spacing * (i + 0.5), y0 + spacing * (j + 0.5)) on reachable cells (flood fill with pass_radius, default
-    radius) that are free with radius (room to turn), ordered greedily nearest-first from start."""
+    radius) that are free with radius (room to turn), ordered greedily nearest-first from start. anchor = (ax, ay): the grid is
+    fixed in the world instead, x = ax + spacing * i, y = ay + spacing * j for any integers i, j (a growing SLAM map)."""
     reach = reachable(m, start, radius if pass_radius is None else pass_radius)
     h, w = reach.shape
     x0, y0 = m["origin"]
+    if anchor is None:
+        js, is_, ox, oy = range(int(h * m["res"] / spacing) + 1), range(int(w * m["res"] / spacing) + 1), x0 + spacing * 0.5, y0 + spacing * 0.5
+    else:
+        ox, oy = anchor
+        js = range(int(math.ceil((y0 - oy) / spacing)), int(math.floor((y0 + h * m["res"] - oy) / spacing)) + 1)
+        is_ = range(int(math.ceil((x0 - ox) / spacing)), int(math.floor((x0 + w * m["res"] - ox) / spacing)) + 1)
     pts = []
-    for j in range(int(h * m["res"] / spacing) + 1):
-        y = y0 + spacing * (j + 0.5)
-        for i in range(int(w * m["res"] / spacing) + 1):
-            x = x0 + spacing * (i + 0.5)
+    for j in js:
+        y = oy + spacing * j if anchor is not None else y0 + spacing * (j + 0.5)
+        for i in is_:
+            x = ox + spacing * i if anchor is not None else x0 + spacing * (i + 0.5)
             r, c = _cell(m, x, y)
             if 0 <= r < h and 0 <= c < w and reach[r, c] and (pass_radius is None or hinge_look.free(m, x, y, radius)):
                 pts.append((x, y))
@@ -64,6 +71,101 @@ def viewpoints(m, start, radius, spacing=1.5, pass_radius=None):
         cur = pts.pop(k)
         out.append(cur)
     return out
+
+
+def _box(a, n):
+    """Horizontal dilation of bool array a by n cells each side (sliding window via cumsum)."""
+    h, w = a.shape
+    cs = np.zeros((h, w + 1), np.int32)
+    cs[:, 1:] = a.astype(np.int32).cumsum(1)
+    lo, hi = np.clip(np.arange(w) - n, 0, w), np.clip(np.arange(w) + n + 1, 0, w)
+    return cs[:, hi] - cs[:, lo] > 0
+
+
+def frontiers(m, start, pass_radius, radius, min_len=0.5, reach_out=1.0):
+    """[{"x", "y", "size"}] sorted nearest-first from start. Frontier cells: known-free cells 4-connected to start through known-free
+    cells with an unknown cell among their 8 neighbours; clusters = 8-connected groups, dropped when under min_len / res cells. Goal per
+    cluster: of the reachable(pass_radius) cells that are free(radius) and within reach_out m of a cluster cell, the one nearest the
+    cluster centroid (none -> skipped). size = cells * res (m)."""
+    occ, unk, res = m["occ"], m["unknown"], m["res"]
+    h, w = occ.shape
+    r0, c0 = _cell(m, *start)
+    if not (0 <= r0 < h and 0 <= c0 < w) or occ[r0, c0]:
+        return []
+    f = (~occ).tolist()
+    seen = [[False] * w for _ in range(h)]
+    seen[r0][c0] = True
+    q = deque([(r0, c0)])
+    while q:
+        r, c = q.popleft()
+        for rr, cc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+            if 0 <= rr < h and 0 <= cc < w and f[rr][cc] and not seen[rr][cc]:
+                seen[rr][cc] = True
+                q.append((rr, cc))
+    conn = np.array(seen, bool)
+    up = np.pad(unk, 1)
+    near = np.zeros((h, w), bool)
+    for dr in range(3):
+        for dc in range(3):
+            if (dr, dc) != (1, 1):
+                near |= up[dr:dr + h, dc:dc + w]
+    fr = conn & near
+    if not fr.any():
+        return []
+    reach = reachable(m, start, pass_radius)
+    half = int(math.ceil(radius / res))
+    k = 2 * half + 1
+    fit = np.zeros((h, w), bool)
+    if h >= k and w >= k:
+        ii = np.zeros((h + 1, w + 1), np.int32)
+        ii[1:, 1:] = occ.astype(np.int32).cumsum(0).cumsum(1)
+        fit[half:h - half, half:w - half] = (ii[k:, k:] - ii[:-k, k:] - ii[k:, :-k] + ii[:-k, :-k]) == 0
+    cand = reach & fit
+    n = int(round(reach_out / res))
+    cl = deque()
+    left = fr.copy()
+    for r, c in zip(*np.nonzero(fr)):
+        if not left[r, c]:
+            continue
+        left[r, c] = False
+        cells, q = [(r, c)], deque([(r, c)])
+        while q:
+            a, b = q.popleft()
+            for rr in range(max(a - 1, 0), min(a + 2, h)):
+                for cc in range(max(b - 1, 0), min(b + 2, w)):
+                    if left[rr, cc]:
+                        left[rr, cc] = False
+                        cells.append((rr, cc))
+                        q.append((rr, cc))
+        cl.append(cells)
+    out = []
+    for cells in cl:
+        if len(cells) < min_len / res:
+            continue
+        rs, cs_ = np.array([p[0] for p in cells]), np.array([p[1] for p in cells])
+        ra, rb, ca, cb = max(rs.min() - n, 0), min(rs.max() + n + 1, h), max(cs_.min() - n, 0), min(cs_.max() + n + 1, w)
+        sub = np.zeros((rb - ra, cb - ca), bool)
+        sub[rs - ra, cs_ - ca] = True
+        hd, near_c = {}, np.zeros_like(sub)
+        for dy in range(-n, n + 1):
+            dx = int(math.floor(math.sqrt(max(n * n - dy * dy, 0)) + 1e-9))
+            if dx not in hd:
+                hd[dx] = _box(sub, dx)
+            s = hd[dx]
+            if dy > 0:
+                s = np.vstack((np.zeros((dy, s.shape[1]), bool), s[:-dy]))
+            elif dy < 0:
+                s = np.vstack((s[-dy:], np.zeros((-dy, s.shape[1]), bool)))
+            near_c |= s
+        ok = near_c & cand[ra:rb, ca:cb]
+        gr, gc = np.nonzero(ok)
+        if not gr.size:
+            continue
+        d = (gr + ra - rs.mean()) ** 2 + (gc + ca - cs_.mean()) ** 2
+        i = int(np.argmin(d))
+        r, c = int(gr[i] + ra), int(gc[i] + ca)
+        out.append({"x": m["origin"][0] + (c + 0.5) * res, "y": m["origin"][1] + (h - 1 - r + 0.5) * res, "size": len(cells) * res})
+    return sorted(out, key=lambda g: math.hypot(g["x"] - start[0], g["y"] - start[1]))
 
 
 def view_yaws(n=5, start_yaw=0.0):

@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformListener
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import building as B, door_step, doors as D, fog, hinge_look, patrol, robot  # noqa: E402
+from doorsim import building as B, door_step, doors as D, fog, hinge_look, live_map, patrol, robot, slam_eval  # noqa: E402
 
 REPO = SIM.parent
 IMG_W, HFOV = 640, 1.3          # robot camera = training rig (doorsim.robot)
@@ -115,6 +115,10 @@ def main():
     ap.add_argument("--pass-radius", type=float, default=0.25,
                     help="patrol: m kept free to drive through (half the robot width 0.215 + margin); --look-radius is for turning")
     ap.add_argument("--fog-range", type=float, default=4.0, help="fog of war on the dashboard: camera range in m (0 = off)")
+    ap.add_argument("--slam", action="store_true", help="run 4 (Madelief 2026-11-11): no floor map; patrol on the live SLAM /map "
+                    "(launch with SLAM=1), viewpoint grid fixed at the start, re-planned after every viewpoint; no grid point left -> "
+                    "nearest map edge (frontier). Needs --patrol")
+    ap.add_argument("--frontier-min", type=float, default=0.5, help="--slam: ignore map edges shorter than this (m)")
     ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
                     help="generator config (approach distances, robot_radius, min_door_gap) for the round-2 poses")
@@ -132,7 +136,9 @@ def main():
     tf = Buffer()
     TransformListener(tf, nav)
     stop_pub = nav.create_publisher(Twist, "/cmd_vel", 1)
-    wait_active(nav)   # no AMCL: map -> odom comes from robot.launch.py; own wait with retries (stock one can hang)
+    if a.slam and not a.patrol:
+        sys.exit("--slam needs --patrol")
+    wait_active(nav, nodes=("bt_navigator",) if a.slam else ("map_server", "bt_navigator"))   # no AMCL: map -> odom comes from robot.launch.py; own wait with retries (stock one can hang)
 
     grab = None
     if a.frames:
@@ -154,7 +160,27 @@ def main():
         while (line := det.stdout.readline()) and line.strip() != "READY":
             pass
         doors = {d["id"]: {"pos": d["pos"], "yaw": d["yaw"], "width": d["spec"]["width"]} for d in b["doors"]}
-        occ = [hinge_look.load_map(a.building + ".map.yaml")]    # list: round 2 swaps in the map with the opened doors
+        occ = [None if a.slam else hinge_look.load_map(a.building + ".map.yaml")]    # list: round 2 swaps in the map with the opened doors
+        if a.slam:                                             # run 4: the live SLAM map replaces the floor map (Madelief 2026-11-11)
+            from nav_msgs.msg import OccupancyGrid
+            from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+            slam_msg = [None]
+            nav.create_subscription(OccupancyGrid, "/map", lambda msg: slam_msg.__setitem__(0, msg),
+                                    QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
+
+            def refresh_map():
+                """Latest /map -> occ[0] (occupied or unknown = blocked, as the floor map)."""
+                rclpy.spin_once(nav, timeout_sec=0.1)
+                msg = slam_msg[0]
+                if msg is not None:
+                    i = msg.info
+                    occ[0] = live_map.from_grid(i.width, i.height, i.resolution, (i.origin.position.x, i.origin.position.y), msg.data)
+            t_map = time.time()
+            while occ[0] is None and time.time() - t_map < 120:
+                refresh_map()
+            if occ[0] is None:
+                sys.exit("--slam: no /map from slam_toolbox within 120 s")
+            print(f"slam: first map {occ[0]['occ'].shape[1]} x {occ[0]['occ'].shape[0]} cells")
         free = lambda x, y: hinge_look.free(occ[0], x, y, a.look_radius)
         fx, cx = (IMG_W / 2) / math.tan(HFOV / 2), IMG_W / 2
 
@@ -176,7 +202,8 @@ def main():
     live_path = pathlib.Path(a.out).parent / "live.json" if a.out else None
     live = {"pose": None, "now": None, "opened": [], "reports": []}
     live_t = [0.0]
-    fog_map = (occ[0] if det is not None else hinge_look.load_map(a.building + ".map.yaml")) if a.fog_range > 0 else None
+    # --slam: the fog grid keeps the true map's extent (it's drawn over that map on the dashboard); walls block by the live map
+    fog_map = (occ[0] if det is not None and not a.slam else hinge_look.load_map(a.building + ".map.yaml")) if a.fog_range > 0 else None
     fog_f = fog.new(fog_map) if fog_map is not None else None
 
     def write_live(force=False):
@@ -421,12 +448,18 @@ def main():
             fx0, fy0 = fog_f["origin"]
             j, i = int((g["y"] - fy0) / fog_f["cell"]), int((g["x"] - fx0) / fog_f["cell"])
             return 0 <= j < fog_f["seen"].shape[0] and 0 <= i < fog_f["seen"].shape[1] and bool(fog_f["seen"][j, i])
+        tried_fr = []                                          # --slam: map-edge goals already driven to
         while time.time() < t_end:
             pos = where(nav, tf)
             here = (pos[0], pos[1]) if pos else tuple(a.start)
+            if a.slam:                                         # the map grew since the last viewpoint: plan on the new one
+                refresh_map()
+                if not a.no_map_gaps:
+                    gaps = patrol.map_gaps(occ[0])
             # once planned, a viewpoint stays planned until visited (Claude 2026-11-11: inside a room behind a door it opened, or with
             # opened panels on the map, the reachable set from here shrank and 4 viewpoints were silently dropped); Nav2 decides
-            for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing, pass_radius=a.pass_radius):
+            for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing, pass_radius=a.pass_radius,
+                                       anchor=tuple(a.start) if a.slam else None):   # SLAM map origin moves: grid fixed at the start
                 planned_vp.setdefault((round(q[0], 2), round(q[1], 2)), q)
             left_ = [q for k_, q in planned_vp.items() if k_ not in done_vp]
             vps = []
@@ -436,6 +469,16 @@ def main():
                 vps.append(nq); left_.remove(nq); cur = nq
             live["vps"] = [[round(q[0], 2), round(q[1], 2)] for q in vps]
             write_live(force=True)
+            if not vps and a.slam:                             # no grid point left: nearest edge of the map, if any (Madelief 2026-11-11)
+                fr = [f for f in patrol.frontiers(occ[0], here, a.pass_radius, a.look_radius, min_len=a.frontier_min)
+                      if all(math.hypot(f["x"] - t[0], f["y"] - t[1]) > 0.75 for t in tried_fr)]
+                if fr and len(tried_fr) < 40:
+                    q = (fr[0]["x"], fr[0]["y"])
+                    tried_fr.append(q)
+                    planned_vp[(round(q[0], 2), round(q[1], 2))] = q
+                    print(f"patrol: map edge {q[0]:.1f} {q[1]:.1f} ({fr[0]['size']:.1f} m, {len(fr)} edges)")
+                    continue
+                break
             if not vps:
                 if len(live["opened"]) > opened_at_map:
                     opened_at_map = len(live["opened"])
@@ -527,7 +570,12 @@ def main():
                     opened_here.append({"x": c["x"], "y": c["y"], "yaw": c["yaw"], "width": max(0.6, min(1.2, c["width"]))})
                     # map with this door open right away (Claude 2026-11-11, Madelief spotted rooms without viewpoints): rooms behind
                     # partly open doors are unreachable on the map until then, and used to get viewpoints only after all others
-                    ok, _ = map_with_opened()
+                    if a.slam:                                 # the lidar maps the open doorway itself
+                        wait_sim(nav, 2.5)
+                        refresh_map()
+                        ok = True
+                    else:
+                        ok, _ = map_with_opened()
                     print(f"patrol: map with {len(live['opened'])} opened doors loaded: {ok}")
                     if ok:
                         opened_at_map = len(live["opened"])
@@ -539,6 +587,14 @@ def main():
                 live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
                 write_live(force=True)
         print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
+        if a.slam and a.out:                                   # score the SLAM map against the true floor map (not used by the robot)
+            stem = pathlib.Path(a.out).parent / "slam_map"
+            subprocess.run(["ros2", "run", "nav2_map_server", "map_saver_cli", "-f", str(stem), "--ros-args", "-p", "use_sim_time:=true"],
+                           timeout=60, capture_output=True)
+            if pathlib.Path(f"{stem}.yaml").exists():
+                sc = slam_eval.compare(slam_eval.load(a.building + ".map.yaml"), slam_eval.load(f"{stem}.yaml"))
+                patrol_log["slam_score"] = sc
+                print("slam map: " + ", ".join(f"{k} {v:.3f}" if isinstance(v, float) else f"{k} {v}" for k, v in sc.items()))
 
     def round_two():
         """Doors opened in round 1 -> new map (loaded into Nav2) + the door sides that became reachable, in tour order."""
