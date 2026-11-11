@@ -420,7 +420,7 @@ def main():
             q = vps[0]
             done_vp.add((round(q[0], 2), round(q[1], 2)))
             live["vp_done"] = live.get("vp_done", []) + [[round(q[0], 2), round(q[1], 2)]]
-            pv, seen_n = {"door": "vp", "side": f"{q[0]:.1f}_{q[1]:.1f}"}, 0
+            pv, seen_n = {"door": "vp", "side": f"{q[0]:.1f}_{q[1]:.1f}", "space": None}, 0
             print(f"patrol: viewpoint {q[0]:.1f} {q[1]:.1f} ({len(vps) - 1} left), {len(cands)} candidates so far")
             for yaw in patrol.view_yaws(5, pos[2] if pos else 0.0):
                 if time.time() > t_end:
