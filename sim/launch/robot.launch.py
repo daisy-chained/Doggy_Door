@@ -48,7 +48,8 @@ def _setup(context):
             arguments=["-name", name, "-file", str(sdf_file), "-x", str(x), "-y", str(y), "-z", "0.0", "-Y", str(yaw)])]),
         Node(package="ros_gz_bridge", executable="parameter_bridge", output="screen",
              arguments=robot.bridge_args(p, name), parameters=[{"use_sim_time": True}]),
-        _tf("map", "odom", [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]),   # odom = true world pose (robot.py)
+        *([] if arg("slam").lower() == "true" else
+          [_tf("map", "odom", [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])]),   # odom = true world pose (robot.py); with slam, slam_toolbox publishes it
     ]
     actions += [_tf(*t) for t in robot.static_tfs(p)]
     return actions
@@ -58,6 +59,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("world"),
         DeclareLaunchArgument("platform", default_value=str(SIM / "configs" / "robots" / "wheeled_low.yaml")),
+        DeclareLaunchArgument("slam", default_value="false", description="true: no map -> odom identity (slam_toolbox publishes it)"),
         DeclareLaunchArgument("name", default_value="robot"),
         DeclareLaunchArgument("x", default_value="0.0"),
         DeclareLaunchArgument("y", default_value="0.0"),
