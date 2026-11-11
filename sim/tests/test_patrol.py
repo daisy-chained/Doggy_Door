@@ -28,7 +28,7 @@
 #     where the robot looks from: the door's yaw points from its front space into its back space, est["yaw"] points towards the
 #     robot, so cos(est yaw - door yaw) < 0 -> "front", else "back".
 #   patrol.approach(est, dists=(2.0, 1.0)) -> [{"x", "y", "yaw", "dist"}]: on the normal, dist out from (x, y), facing the door.
-#   patrol.snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.6, 1.4)) -> (x, y): open doors are gaps in the wall on the floor map, and the
+#   patrol.snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)) -> (x, y): open doors are gaps in the wall on the floor map, and the
 #     detector box of an open hinged door includes the swung panel, so its centre lands 0.5-0.8 m beside the doorway (patrol check
 #     2026-11-11 11:15). The wall line through (x, y) runs across yaw (yaw = the wall normal, a multiple of pi / 2 here). Sample it every
 #     m["res"] over along-offsets [-(search + gap[1]), search + gap[1]]; a sample is open when every cell within +-0.15 m across the
