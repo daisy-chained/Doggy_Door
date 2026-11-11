@@ -10,6 +10,9 @@
 #     connect to the start cell through such cells (4-neighbour flood fill). Start not free -> all False.
 #   patrol.viewpoints(m, start, radius, spacing=1.5) -> [(x, y)]: grid points x = x0 + spacing * (i + 0.5), y = y0 + spacing * (j + 0.5)
 #     whose cell is in reachable(...), ordered greedily nearest-first starting from `start`.
+#     viewpoints(..., pass_radius=None): the reachable flood fill uses pass_radius (default: radius), each viewpoint must still be
+#     free with radius. Claude 2026-11-11: driving straight through a doorway needs half the robot's WIDTH (0.215 m + margin = 0.25),
+#     turning on the spot needs the half-diagonal (0.33); with 0.33 for both, no room behind an opened door on 007 was reachable.
 #   patrol.view_yaws(n=5, start_yaw=0.0) -> [start_yaw + k * 2 pi / n for k in range(n)] (camera HFOV 74.5 deg -> 5 views cover 360).
 #   patrol.door_estimate(box, depth, cam, fx, cx, strip=6) -> {"x", "y", "width", "depth"} | None. box = [x1, y1, x2, y2] (pixels),
 #     depth = HxW float metres (0 / nan = invalid), cam = (x, y, yaw) of the camera (planar depth along yaw). depth d = median of the
@@ -297,3 +300,14 @@ def test_map_gaps_ignores_slits_between_furniture():
     fill(m, 1.0, 1.0, 2.0, 1.2); fill(m, 2.5, 1.0, 3.5, 1.2)                  # two boxes with a 0.5 m slit, open floor around them
     g = patrol.map_gaps(m)
     assert len(g) == 1 and abs(g[0]["x"] - 5.0) < 0.06                         # only the real doorway
+
+
+def test_viewpoints_pass_radius_through_narrow_doorway():
+    m = two_rooms(); m["occ"][:] = False
+    fill(m, 0, 0, 10, 0.1); fill(m, 0, 5.9, 10, 6); fill(m, 0, 0, 0.1, 6); fill(m, 9.9, 0, 10, 6)
+    fill(m, 0, 2.95, 4.7, 3.05); fill(m, 5.3, 2.95, 10, 3.05)                 # 0.6 m doorway: 0.25 fits through, 0.33 doesn't
+    assert not any(y > 3 for x, y in patrol.viewpoints(m, (1.0, 1.0), 0.33))
+    vp = patrol.viewpoints(m, (1.0, 1.0), 0.33, pass_radius=0.25)
+    assert any(y > 3 for x, y in vp)
+    import doorsim.hinge_look as hl
+    assert all(hl.free(m, x, y, 0.33) for x, y in vp)                          # every viewpoint still has room to turn

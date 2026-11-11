@@ -112,6 +112,8 @@ def main():
     ap.add_argument("--max-door-depth", type=float, default=4.0, help="patrol: ignore door boxes further than this (m)")
     ap.add_argument("--no-map-gaps", action="store_true",
                     help="patrol: don't add doorways from the map as candidates (Madelief 2026-11-11: open sliding doors show no door box)")
+    ap.add_argument("--pass-radius", type=float, default=0.25,
+                    help="patrol: m kept free to drive through (half the robot width 0.215 + margin); --look-radius is for turning")
     ap.add_argument("--fog-range", type=float, default=4.0, help="fog of war on the dashboard: camera range in m (0 = off)")
     ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
@@ -424,7 +426,7 @@ def main():
             here = (pos[0], pos[1]) if pos else tuple(a.start)
             # once planned, a viewpoint stays planned until visited (Claude 2026-11-11: inside a room behind a door it opened, or with
             # opened panels on the map, the reachable set from here shrank and 4 viewpoints were silently dropped); Nav2 decides
-            for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing):
+            for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing, pass_radius=a.pass_radius):
                 planned_vp.setdefault((round(q[0], 2), round(q[1], 2)), q)
             left_ = [q for k_, q in planned_vp.items() if k_ not in done_vp]
             vps = []

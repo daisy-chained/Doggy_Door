@@ -5,6 +5,8 @@ import math
 from collections import deque
 import numpy as np
 
+from . import hinge_look
+
 
 def _cell(m, x, y):
     """(row, col) of the world point (x, y); may lie outside the map."""
@@ -42,9 +44,10 @@ def reachable(m, start, radius):
     return np.array(seen, bool)
 
 
-def viewpoints(m, start, radius, spacing=1.5):
-    """Grid points (x0 + spacing * (i + 0.5), y0 + spacing * (j + 0.5)) on reachable cells, ordered greedily nearest-first from start."""
-    reach = reachable(m, start, radius)
+def viewpoints(m, start, radius, spacing=1.5, pass_radius=None):
+    """Grid points (x0 + spacing * (i + 0.5), y0 + spacing * (j + 0.5)) on reachable cells (flood fill with pass_radius, default
+    radius) that are free with radius (room to turn), ordered greedily nearest-first from start."""
+    reach = reachable(m, start, radius if pass_radius is None else pass_radius)
     h, w = reach.shape
     x0, y0 = m["origin"]
     pts = []
@@ -53,7 +56,7 @@ def viewpoints(m, start, radius, spacing=1.5):
         for i in range(int(w * m["res"] / spacing) + 1):
             x = x0 + spacing * (i + 0.5)
             r, c = _cell(m, x, y)
-            if 0 <= r < h and 0 <= c < w and reach[r, c]:
+            if 0 <= r < h and 0 <= c < w and reach[r, c] and (pass_radius is None or hinge_look.free(m, x, y, radius)):
                 pts.append((x, y))
     out, cur = [], tuple(start)
     while pts:
