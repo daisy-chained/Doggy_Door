@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformListener
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import building as B, door_step, doors as D, hinge_look, robot  # noqa: E402
+from doorsim import building as B, door_step, doors as D, hinge_look, patrol, robot  # noqa: E402
 
 REPO = SIM.parent
 IMG_W, HFOV = 640, 1.3          # robot camera = training rig (doorsim.robot)
@@ -104,6 +104,11 @@ def main():
     ap.add_argument("--no-open", action="store_true", help="door step: check reports but don't open doors")
     ap.add_argument("--rounds", type=int, default=1, help="2 = after the tour, load a map with the doors it opened and visit the "
                     "door sides that became reachable (Madelief 2026-11-11: two rounds; needs --door-step and --out)")
+    ap.add_argument("--patrol", action="store_true", help="run 3, no markers (Madelief 2026-11-11): no door positions; patrol "
+                    "viewpoints over the floor map, look around, door-step every door it finds (needs --door-step)")
+    ap.add_argument("--vp-spacing", type=float, default=1.5, help="patrol: m between viewpoints")
+    ap.add_argument("--max-door-depth", type=float, default=4.0, help="patrol: ignore door boxes further than this (m)")
+    ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
                     help="generator config (approach distances, robot_radius, min_door_gap) for the round-2 poses")
     a = ap.parse_args()
@@ -288,7 +293,9 @@ def main():
 
     def door_step_visit(v, shots):
         """Reactive door step for one door side (see the module docstring) -> log dict for tour.json."""
-        d, door = bdoors[v["door"]], doors[v["door"]]
+        real = v["real"] if "real" in v else v["door"]          # patrol: the real door it matched (None = no real door there)
+        d = bdoors.get(real) if real is not None else None
+        door = v["est_door"] if "est_door" in v else doors[v["door"]]
         yaw_ref = v["stops"][-1]["yaw"]
         edge_pts = {sd: hinge_look.edge_point(door, sd, yaw_ref) for sd in ("left", "right")}
         guess, stop_looks, ps = None, [], []
@@ -325,7 +332,7 @@ def main():
                 return None
             return seen_sides(cam, detect(r["frame"]), edge_pts, frame_depth(r["frame"]))
 
-        tr = door_step.truth(d["spec"]["door_type"], edge_pts, B.hinge_xy(d))
+        tr = door_step.truth(d["spec"]["door_type"], edge_pts, B.hinge_xy(d)) if d else ("none", None)
         opened = []
 
         def check_fn(rep):
@@ -333,7 +340,7 @@ def main():
             live["reports"].append([v["door"], v["side"], rep["type"], rep["hinge_side"], ok])
             write_live(force=True)
             print(f"  report door {v['door']} {v['side']}: {rep['type']} {rep['hinge_side'] or ''} (sure {rep['sure']}) -> {'right' if ok else 'wrong'}")
-            if ok and gz_node is not None:
+            if ok and gz_node is not None and d is not None:
                 open_door(v, d)
                 opened.append(True)
             return ok
@@ -342,10 +349,11 @@ def main():
             return None
         log_ = door_step.visit([{k: l[k] for k in ("edge", "angle", "seen")} for l in stop_looks], look_fn, check_fn, guess,
                                lambda e, ang: pose_for(e, ang) is not None, n_max=a.step_n, p_slide=p_use,
-                               other_side_hinged=v["door"] in known_hinged)
+                               other_side_hinged=real is not None and real in known_hinged)
         if any(r["right"] and r["type"] == "hinged" for r in log_["reports"]) or \
                 any(r["sure"] and r["type"] == "hinged" for r in log_["reports"]):
-            known_hinged.add(v["door"])
+            if real is not None:
+                known_hinged.add(real)
         for l in log_["looks"]:
             l["seen"] = sorted(l["seen"])
         return {**log_, "handle_guess": guess, "p_slide": p_mean, "p_slide_frames": ps, "truth": list(tr), "opened": bool(opened),
@@ -366,6 +374,85 @@ def main():
                     return True
         nav.destroy_client(cli)
         return False
+
+    def map_with_opened():
+        """Write + load (Nav2) the map with the doors opened so far; the look-spot check uses it too. -> (ok, new building)."""
+        import yaml
+        cfg = yaml.safe_load(pathlib.Path(a.building_config).read_text())
+        nb = B.after_opening(b, live["opened"], cfg)
+        stem = pathlib.Path(a.out).parent / f"opened_{len(live['opened'])}"
+        B.write_map(nb, stem)
+        ok = load_map_srv(f"{stem}.map.yaml")
+        if ok:
+            wait_sim(nav, 3.0)                                 # costmaps pick up the new /map
+            occ[0] = hinge_look.load_map(f"{stem}.map.yaml")
+        return ok, nb
+
+    patrol_log = {"viewpoints": [], "candidates": []}
+
+    def patrol_visits():
+        """Run 3 (no markers): viewpoints over the reachable floor map, 5 views each; door boxes -> candidates on the map; every
+        new candidate (nearest first) -> a door step visit. Out of viewpoints -> if doors were opened, load that map and go on."""
+        t_end = time.time() + a.time_limit * 60
+        cands, handled, done_vp, n, opened_at_map = patrol_log["candidates"], set(), set(), 0, 0
+        while time.time() < t_end:
+            pos = where(nav, tf)
+            here = (pos[0], pos[1]) if pos else tuple(a.start)
+            vps = [q for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing) if (round(q[0], 2), round(q[1], 2)) not in done_vp]
+            live["vps"] = [[round(q[0], 2), round(q[1], 2)] for q in vps]
+            write_live(force=True)
+            if not vps:
+                if len(live["opened"]) > opened_at_map:
+                    opened_at_map = len(live["opened"])
+                    ok, _ = map_with_opened()
+                    print(f"patrol: map with {opened_at_map} opened doors loaded: {ok}")
+                    if ok:
+                        continue
+                break
+            q = vps[0]
+            done_vp.add((round(q[0], 2), round(q[1], 2)))
+            pv, seen_n = {"door": "vp", "side": f"{q[0]:.1f}_{q[1]:.1f}"}, 0
+            print(f"patrol: viewpoint {q[0]:.1f} {q[1]:.1f} ({len(vps) - 1} left), {len(cands)} candidates so far")
+            for yaw in patrol.view_yaws(5, pos[2] if pos else 0.0):
+                if time.time() > t_end:
+                    break
+                r, _, cam = drive(pv, {"x": q[0], "y": q[1], "yaw": yaw, "dist": None}, "look")
+                if r["result"] != "SUCCEEDED":
+                    break                                      # can't get to this viewpoint: next one
+                if not r.get("frame") or not cam:
+                    continue
+                dd, depth = detect(r["frame"]), frame_depth(r["frame"])
+                for box, sc, lab in zip(dd["boxes"], dd["scores"], dd["labels"]):
+                    if lab != "door" or sc < 0.5 or depth is None:
+                        continue
+                    e = patrol.door_estimate(box, depth, cam, fx, cx)
+                    if not e or e["depth"] > a.max_door_depth:
+                        continue
+                    sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
+                    if sn:
+                        patrol.add_candidate(cands, {"x": sn[0], "y": sn[1], "yaw": sn[2], "width": e["width"]})
+                        seen_n += 1
+            patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n})
+            for k in sorted((k for k in range(len(cands)) if k not in handled),
+                            key=lambda k: math.hypot(cands[k]["x"] - here[0], cands[k]["y"] - here[1])):
+                handled.add(k)
+                c = cands[k]
+                m_ = patrol.match(c, b["doors"])
+                c["match"] = list(m_) if m_ else None
+                stops = [st for st in patrol.approach(c) if free(st["x"], st["y"])]
+                if not stops:
+                    c["status"] = "no free stop"
+                    continue
+                n += 1
+                est = {"pos": [c["x"], c["y"]], "yaw": c["yaw"], "width": max(0.6, min(1.2, c["width"]))}
+                yield 1, n, n, {"door": m_[0] if m_ else f"c{k}", "side": m_[1] if m_ else "x", "space": None, "stops": stops,
+                                "real": m_[0] if m_ else None, "est_door": est, "cand": k}
+                last = log["visits"][-1] if log["visits"] else {}
+                st = last.get("door_step") or {}
+                c["status"] = ("false door" if not m_ else "right" if st.get("right") else "wrong" if st else "not reached")
+                live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
+                write_live(force=True)
+        print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
 
     def round_two():
         """Doors opened in round 1 -> new map (loaded into Nav2) + the door sides that became reachable, in tour order."""
@@ -392,7 +479,10 @@ def main():
         return t2
 
     def all_visits():
-        """(round, i, n, visit): the tour, then (--rounds 2) round 2, planned only once round 1 is done."""
+        """(round, i, n, visit): the tour, then (--rounds 2) round 2, planned only once round 1 is done. --patrol: run 3 instead."""
+        if a.patrol:
+            yield from patrol_visits()
+            return
         yield from ((1, i, len(tour), v) for i, v in enumerate(tour, 1))
         if a.rounds > 1 and props is not None:
             t2 = round_two()
@@ -470,6 +560,8 @@ def main():
             bag.wait(timeout=30)
         if a.out:
             pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            if a.patrol:
+                log["patrol"] = patrol_log
             pathlib.Path(a.out).write_text(json.dumps(log, indent=1))
         n = sum(r["result"] == "SUCCEEDED" for v in log["visits"] for r in v["stops"])
         print(f"reached {n} / {sum(len(v['stops']) for v in log['visits'])} stops")

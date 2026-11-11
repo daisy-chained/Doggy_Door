@@ -67,7 +67,7 @@ def test_reachable_through_open_door_not_into_pocket():
     m = two_rooms()
     r = patrol.reachable(m, (2.0, 1.5), 0.3)
     cell = lambda x, y: r[m["occ"].shape[0] - 1 - int(y / m["res"]), int(x / m["res"])]
-    assert cell(2.0, 1.5) and cell(5.0, 4.5) and not cell(9.0, 4.5) and not cell(5.0, 3.0)
+    assert cell(2.0, 1.5) and cell(5.0, 4.5) and cell(5.0, 3.0) and not cell(9.0, 4.5) and not cell(2.0, 3.0)  # doorway yes, wall no
 
 
 def test_closed_door_blocks():
@@ -78,7 +78,7 @@ def test_closed_door_blocks():
 
 def test_start_blocked_all_false():
     m = two_rooms()
-    assert not patrol.reachable(m, (5.0, 3.0), 0.3).any()
+    assert not patrol.reachable(m, (2.0, 3.0), 0.3).any()   # start inside the wall
 
 
 def test_viewpoints_grid_reachable_greedy():
