@@ -25,6 +25,10 @@
 #   building.open_position(d) -> joint value of the door fully open as the sim opens it: hinged 1.2 * swing_x * hinge_y (rad), sliding
 #     0.9 * travel = round(0.9 * (width + 0.15), 3) (m), i.e. doors._layout(spec, SLOT)["open"]. (Reactive door step, 2026-11-11.)
 #   building.door_topic(d) -> gz topic of the door's joint position controller in the building world: "/door_<id>_panel/cmd_pos".
+#   building.after_opening(b, opened, cfg) -> new building dict (b unchanged): doors whose id is in `opened` get state "open",
+#     open_frac 1.0 (fully open, as the door step opens them); poses = approach_poses(layout, new doors, cfg, clutter) (so rooms behind
+#     opened doors become reachable). Round 2 of the tour (Madelief 2026-11-11: two rounds).
+#   building.write_map(b, stem) -> writes stem.map.pgm + stem.map.yaml (image: the pgm's file name) exactly as write() does.
 #   building.door_gap(d) -> clear width (m) the robot can pass with the panel where it stands; 0 when closed. Hinged (turned th = 1.2 *
 #     open_frac rad about a hinge at one jamb, swung out of the wall): width * sin(th) = distance from the far jamb to the panel. Sliding
 #     (panel width + 0.08, shifted 0.9 * (width + 0.15) * open_frac): shift - 0.04, clamped to [0, width].
@@ -504,3 +508,29 @@ def test_hinge_xy_open_position_topic(seed):
             across = (hx - d["pos"][0]) * math.cos(d["yaw"]) + (hy - d["pos"][1]) * math.sin(d["yaw"])
             assert abs(abs(along) - (w - 0.02) / 2) < 0.02 and abs(across) < 0.1
             assert building.open_position(d) == pytest.approx(1.2 * d["spec"]["swing_x"] * d["spec"]["hinge_y"])
+
+
+def test_after_opening_unlocks_rooms():
+    gained = 0
+    for seed in SEEDS:
+        b = building.make_building(CFG, seed)
+        before = json.dumps(b, sort_keys=True)
+        ids = [d["id"] for d in b["doors"]]
+        nb = building.after_opening(b, ids, CFG)
+        assert json.dumps(b, sort_keys=True) == before                      # input untouched
+        for d0, d1 in zip(b["doors"], nb["doors"]):
+            assert d1["state"] == "open" and d1["open_frac"] == 1.0 and d1["spec"] == d0["spec"]
+        assert nb["poses"] == building.approach_poses(nb["layout"], nb["doors"], CFG, nb.get("clutter"))
+        assert all(p["reachable"] for p in nb["poses"])                     # every door fully open -> every space reachable
+        gained += sum(p["reachable"] for p in nb["poses"]) - sum(p["reachable"] for p in b["poses"])
+        same = building.after_opening(b, [], CFG)
+        assert same["doors"] == b["doors"]
+    assert gained > 0
+
+
+def test_write_map_same_as_write(tmp_path):
+    b = building.make_building(CFG, 3)
+    building.write(b, tmp_path / "a", "x")
+    building.write_map(b, tmp_path / "b" / "x")
+    for ext in (".map.pgm", ".map.yaml"):
+        assert (tmp_path / "a" / f"x{ext}").read_bytes() == (tmp_path / "b" / f"x{ext}").read_bytes()
