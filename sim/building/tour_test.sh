@@ -33,9 +33,20 @@ PIDS+=($!)
 echo "waiting for the robot (odom)"
 timeout 120 bash -c 'until ros2 topic echo --once /odom >/dev/null 2>&1; do sleep 2; done' || { echo "robot did not come up"; exit 1; }
 
-setsid ros2 launch sim/launch/nav.launch.py building:="$BLD" platform:="$PLAT" > "$OUT/nav.log" 2>&1 &
-PIDS+=($!)
-echo "robot up, Nav2 starting; tour log in $OUT/tour.log"
+# Nav2 sometimes hangs at startup (a lifecycle change_state call times out and the node never goes active; 007 on 11-10 and the
+# 11-11 check run): wait up to 90 s for bt_navigator to be active, else restart Nav2, at most 2 times (Claude 2026-11-11).
+nav_ok=0
+for try in 1 2 3; do
+  setsid ros2 launch sim/launch/nav.launch.py building:="$BLD" platform:="$PLAT" >> "$OUT/nav.log" 2>&1 &
+  NAV=$!
+  echo "robot up, Nav2 starting (try $try); tour log in $OUT/tour.log"
+  if timeout 90 bash -c 'until ros2 lifecycle get /bt_navigator 2>/dev/null | grep -q "^active"; do sleep 3; done'; then
+    PIDS+=($NAV); nav_ok=1; break
+  fi
+  echo "Nav2 not active after 90 s, restarting it"
+  kill -INT -- -"$NAV" 2>/dev/null; sleep 5; kill -KILL -- -"$NAV" 2>/dev/null; sleep 2
+done
+[ "$nav_ok" = 1 ] || { echo "Nav2 did not come up"; exit 1; }
 
 timeout 5400 python3 sim/building/door_tour.py "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${@:5}" 2>&1 | tee "$OUT/tour.log"
 status=${PIPESTATUS[0]}
