@@ -463,6 +463,8 @@ def main():
                 for box, sc, lab in zip(dd["boxes"], dd["scores"], dd["labels"]):
                     if lab != "door" or sc < 0.5 or depth is None:
                         continue
+                    if patrol.spans_frame(box, depth.shape[1]):     # edge to edge: at a wall, no door edge seen (Claude 2026-11-11)
+                        continue
                     e = patrol.door_estimate(box, depth, cam, fx, cx)
                     if not e or e["depth"] > a.max_door_depth:
                         continue

@@ -348,6 +348,11 @@ def near_opened(est, opened, margin=0.4):
     return False
 
 
+def spans_frame(box, width, margin=8):
+    """True when a box reaches both side edges of the image (within margin px): no door edge in view, so it can't place a door."""
+    return box[0] <= margin and box[2] >= width - 1 - margin
+
+
 def in_front_of_wall(box, depth, strip=6, tol=0.25):
     """True when the middle half of the box (rows and columns) is nearer than the wall strips beside it by more than tol: something
     stands in front of the wall (furniture, a swung panel). No valid inside or wall pixel -> False."""

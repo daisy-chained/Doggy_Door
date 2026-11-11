@@ -311,3 +311,12 @@ def test_viewpoints_pass_radius_through_narrow_doorway():
     assert any(y > 3 for x, y in vp)
     import doorsim.hinge_look as hl
     assert all(hl.free(m, x, y, 0.33) for x, y in vp)                          # every viewpoint still has room to turn
+
+
+def test_spans_frame():
+    # A door box from the left to the right image edge shows no door edge: the robot stands at a wall / panel and the box can't place
+    # a door (Claude 2026-11-11, rooms run: 7 of 12 false doors; never a real door's only box in 7 patrol runs).
+    assert patrol.spans_frame([0, 0, 639, 480], 640)
+    assert patrol.spans_frame([7, 0, 633, 480], 640)
+    assert not patrol.spans_frame([20, 0, 639, 480], 640)          # left door edge visible
+    assert not patrol.spans_frame([0, 0, 600, 480], 640)           # right door edge visible
