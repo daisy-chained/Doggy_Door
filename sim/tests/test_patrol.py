@@ -28,6 +28,12 @@
 #     where the robot looks from: the door's yaw points from its front space into its back space, est["yaw"] points towards the
 #     robot, so cos(est yaw - door yaw) < 0 -> "front", else "back".
 #   patrol.approach(est, dists=(2.0, 1.0)) -> [{"x", "y", "yaw", "dist"}]: on the normal, dist out from (x, y), facing the door.
+#   patrol.snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.6, 1.4)) -> (x, y): open doors are gaps in the wall on the floor map, and the
+#     detector box of an open hinged door includes the swung panel, so its centre lands 0.5-0.8 m beside the doorway (patrol check
+#     2026-11-11 11:15). The wall line through (x, y) runs across yaw (yaw = the wall normal, a multiple of pi / 2 here). Sample it every
+#     m["res"] over along-offsets [-(search + gap[1]), search + gap[1]]; a sample is open when every cell within +-0.15 m across the
+#     wall is free. Gaps = maximal runs of open samples that do NOT touch either end of the sampled range, with length (n samples *
+#     res) within gap; keep those whose centre is within search of (x, y); return the nearest centre (on the wall line), else (x, y).
 import math, pathlib, sys
 import numpy as np
 import pytest
@@ -166,3 +172,27 @@ def test_approach_faces_door():
     assert [p["dist"] for p in ps] == [2.0, 1.0]
     assert ps[0]["x"] == pytest.approx(5.0) and ps[0]["y"] == pytest.approx(1.0) and ps[1]["y"] == pytest.approx(2.0)
     assert math.cos(ps[0]["yaw"] - math.pi / 2) == pytest.approx(1.0)
+
+
+# --- snap to gap (open doors) ---
+def test_snap_to_gap_moves_to_doorway_centre():
+    m = two_rooms()
+    x, y = patrol.snap_to_gap(m, 5.6, 3.0, -math.pi / 2)
+    assert abs(x - 5.0) < 0.06 and y == pytest.approx(3.0)
+    x, y = patrol.snap_to_gap(m, 4.2, 3.0, math.pi / 2)
+    assert abs(x - 5.0) < 0.06
+
+
+def test_snap_to_gap_leaves_far_closed_and_plain_walls():
+    m = two_rooms()
+    assert patrol.snap_to_gap(m, 2.0, 3.0, -math.pi / 2) == (2.0, 3.0)        # doorway 3 m away
+    assert patrol.snap_to_gap(two_rooms(door_open=False), 5.6, 3.0, -math.pi / 2) == (5.6, 3.0)   # closed door = wall on the map
+    assert patrol.snap_to_gap(m, 8.0, 4.5, math.pi) == (8.0, 4.5)              # wall along y, no gap
+
+
+def test_snap_to_gap_ignores_wide_openings():
+    m = two_rooms()
+    m["occ"][:] = False
+    from test_patrol import fill
+    fill(m, 0, 2.95, 4.0, 3.05); fill(m, 6.0, 2.95, 10, 3.05)                # a 2 m opening, not a door
+    assert patrol.snap_to_gap(m, 5.6, 3.0, -math.pi / 2) == (5.6, 3.0)

@@ -127,6 +127,48 @@ def snap_to_wall(m, x, y, cam_xy, search=0.4):
     return mean, y, (0.0 if cam_xy[0] >= mean else math.pi)
 
 
+def snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.6, 1.4)):
+    """Open doors are gaps in the wall on the map. The wall line through (x, y) runs across yaw (a multiple of pi / 2). Sample it every res
+    over +-(search + gap[1]); a sample is open when all cells within +-0.15 m across the wall are free (outside the map = occupied). Gaps =
+    runs of open samples not touching either end, with length within gap and centre within search of (x, y). Returns the nearest centre, else (x, y)."""
+    occ, res = m["occ"], m["res"]
+    h, w = occ.shape
+    along_x = abs(math.cos(yaw)) < 0.5       # normal along y -> wall along x
+    k = int(round((search + gap[1]) / res))
+    ks = np.arange(-k, k + 1)
+    half = int(round(0.15 / res))
+    across = np.arange(-half, half + 1) * res
+    is_open = []
+    for i in ks:
+        free = True
+        for a in across:
+            px, py = (x + i * res, y + a) if along_x else (x + a, y + i * res)
+            r, c = _cell(m, px, py)
+            if not (0 <= r < h and 0 <= c < w) or occ[r, c]:
+                free = False
+                break
+        is_open.append(free)
+    best = None
+    n = len(ks)
+    i = 0
+    while i < n:
+        if not is_open[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and is_open[j + 1]:
+            j += 1
+        length = (j - i + 1) * res
+        if i > 0 and j < n - 1 and gap[0] - 1e-9 <= length <= gap[1] + 1e-9:
+            centre = (ks[i] + ks[j]) / 2 * res
+            if abs(centre) <= search + 1e-9 and (best is None or abs(centre) < abs(best)):
+                best = centre
+        i = j + 1
+    if best is None:
+        return x, y
+    return (x + best, y) if along_x else (x, y + best)
+
+
 def _adiff(a, b):
     return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
 

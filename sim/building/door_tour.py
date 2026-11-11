@@ -439,7 +439,9 @@ def main():
                         continue
                     sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
                     if sn:
-                        patrol.add_candidate(cands, {"x": sn[0], "y": sn[1], "yaw": sn[2], "width": e["width"]})
+                        # open doors are wall gaps on the map; their box includes the swung panel (Claude 2026-11-11: 3 false doors -> matches offline)
+                        gx, gy = patrol.snap_to_gap(occ[0], sn[0], sn[1], sn[2])
+                        patrol.add_candidate(cands, {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"]})
                         seen_n += 1
             patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n})
             for k in sorted((k for k in range(len(cands)) if k not in handled),
