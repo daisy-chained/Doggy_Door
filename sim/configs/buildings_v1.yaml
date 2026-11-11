@@ -20,6 +20,7 @@ heldout:                    # property combos never seen in training (each value
 approach:
   distances: [2.5, 1.0]         # m from the door centre, on both sides (clamped to stay inside the space)
 robot_radius: 0.3
+min_door_gap: 0.6              # m: reachable only through open doors with at least this clear gap (= 2 x robot_radius; Claude 2026-11-11 from the tours)
 clutter:                        # optional: furniture / look-alikes from doorsim/clutter.py POOL (one item at most once per space)
   rooms: {floor_count: [1, 4], wall_count: [0, 2]}       # random count per room, floor items and wall items (frames, whiteboard)
   corridor: {floor_count: [0, 2], wall_count: [0, 3]}

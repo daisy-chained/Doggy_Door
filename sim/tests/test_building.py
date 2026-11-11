@@ -19,10 +19,11 @@
 #     ["distances"] (clamped so the robot (cfg["robot_radius"]) stays inside that space, away from its walls); pose = {"door", "space",
 #     "side" ("front" | "back"), "dist", "x", "y", "yaw" (facing the door centre), "reachable"}. reachable = the space can be reached
 #     from the corridor through open doors only, each with door_gap(d) >= cfg["min_door_gap"] (missing key = 0: any open door; Claude
-#     2026-11-11, research-based: room stops behind a gap < 0.45 m failed in the tours, all 26 with 0.45-0.6 m worked; robot 0.43 m wide).
-#   building.door_gap(d) -> clear width (m) of the doorway with the panel where it stands; 0 when closed. Hinged (panel pw = width -
-#     0.02 about a hinge at one jamb, turned th = 1.2 * open_frac rad): pw / 2 + width / 2 - pw * cos(th). Sliding (panel width + 0.08,
-#     shifted 0.9 * (width + 0.15) * open_frac): shift - 0.04, clamped to [0, width].
+#     2026-11-11, research-based, from the tours: no room stop worked with a gap < 0.45 m, ~1/3 at 0.55-0.6, ~1/2 at 0.6-0.65, 81/85
+#     above 0.65 -> 0.6 m = 2 x robot_radius, the robot's Nav2 size).
+#   building.door_gap(d) -> clear width (m) the robot can pass with the panel where it stands; 0 when closed. Hinged (turned th = 1.2 *
+#     open_frac rad about a hinge at one jamb, swung out of the wall): width * sin(th) = distance from the far jamb to the panel. Sliding
+#     (panel width + 0.08, shifted 0.9 * (width + 0.15) * open_frac): shift - 0.04, clamped to [0, width].
 #   building.occupancy(layout, doors, res) -> (grid uint8 H x W, origin [x, y]): 0 = occupied, 254 = free, row 0 = north edge (map
 #     image convention, like map_server), origin = world xy of the bottom-left cell. Walls occupied (with their thickness), the doorway of
 #     a closed door occupied, of a door with open_frac 1 free.
@@ -49,7 +50,7 @@ V5 = {"p_sliding": 0.35, "p_glass": 0.35, "handle": {"lever": 0.5, "knob": 0.5},
 CFG = {"corridor_length": [12.0, 16.0], "corridor_width": [1.8, 2.4], "room_width": [2.6, 4.5], "room_depth": [3.0, 4.5],
        "p_second_door": 0.25, "p_neighbour_door": 0.3, "corner_margin": 0.3, "p_closed": 0.4, "min_open": 0.3,
        "door": V5, "door_stop": True, "heldout": [{"glass": True, "handle_type": "knob"}, {"door_type": "sliding", "glass": True}],
-       "approach": {"distances": [2.5, 1.0]}, "robot_radius": 0.3, "map_resolution": 0.05, "min_door_gap": 0.45}
+       "approach": {"distances": [2.5, 1.0]}, "robot_radius": 0.3, "map_resolution": 0.05, "min_door_gap": 0.6}
 SEEDS = range(12)
 
 
@@ -437,8 +438,7 @@ def _door(door_type, width, state, frac):
 
 @pytest.mark.parametrize("w,f", [(0.8, 0.3), (0.9, 0.36), (0.9, 0.6), (1.0, 1.0)])
 def test_door_gap_hinged(w, f):
-    pw = w - 0.02
-    assert building.door_gap(_door("hinged", w, "open", f)) == pytest.approx(pw / 2 + w / 2 - pw * math.cos(1.2 * f), abs=1e-6)
+    assert building.door_gap(_door("hinged", w, "open", f)) == pytest.approx(w * math.sin(1.2 * f), abs=1e-6)
     assert building.door_gap(_door("hinged", w, "closed", 0.0)) == 0.0
 
 
@@ -450,8 +450,8 @@ def test_door_gap_sliding(w, f, want):
 
 
 def test_door_gap_small_hinged_too_narrow():
-    # the 007 case: a hinged door 36 % open leaves ~0.2 m, the robot (0.43 m) can't pass
-    assert building.door_gap(_door("hinged", 0.9, "open", 0.364)) < 0.3
+    # 007 door 1: a hinged door 36 % open leaves ~0.38 m, too narrow for the robot (failed in every tour)
+    assert building.door_gap(_door("hinged", 0.9, "open", 0.364)) < 0.45
 
 
 def test_narrow_open_doors_not_reachable():

@@ -169,11 +169,23 @@ def place_doors(rng, layout, cfg, split="train"):
 
 
 # --- approach poses ---
+def door_gap(d):
+    """Clear width (m) the robot can pass with the panel where it stands; 0.0 unless open. Hinged: the panel swings out of the wall
+    about a hinge at one jamb, so the squeeze is the far jamb to the panel = width * sin(th). Matches doors._layout (hinged open
+    angle 1.2 rad, sliding panel width+0.08, travel width+0.15, open = 0.9 * travel)."""
+    if d["state"] != "open":
+        return 0.0
+    w, f = d["spec"]["width"], d["open_frac"]
+    if d["spec"]["door_type"] == "sliding":
+        return float(min(max(0.9 * (w + 0.15) * f - 0.04, 0.0), w))
+    return float(w * math.sin(1.2 * f))
+
+
 def approach_poses(layout, doors_, cfg, clutter=None):
     """One pose per door side and distance in cfg approach.distances: on the door's normal line, `dist` from the door centre into
     that space (clamped to stay robot_radius + WALL_T / 2 inside it), facing the door centre; reachable = space reachable from the
-    corridor through open doors. clear = no occupied map cell (occupancy() at cfg map_resolution) within robot_radius: a blocked pose
-    (e.g. on an open door panel or floor clutter) is moved further back along the normal in 0.1 m steps (staying inside the space), then closer down to
+    corridor through open doors with a clear gap (door_gap) of at least cfg min_door_gap (missing = any open door). clear = no
+    occupied map cell (occupancy() at cfg map_resolution) within robot_radius: a blocked pose (e.g. on an open door panel or floor clutter) is moved further back along the normal in 0.1 m steps (staying inside the space), then closer down to
     0.5 m; dist = the distance used; clear False only if nothing fits."""
     sp, m = _spaces(layout), cfg["robot_radius"] + WALL_T / 2
     res = float(cfg.get("map_resolution", 0.05))
@@ -189,7 +201,7 @@ def approach_poses(layout, doors_, cfg, clutter=None):
         grow = False
         for d in doors_:
             a, b = d["connects"]
-            if d["state"] == "open" and (a in reach) != (b in reach):
+            if d["state"] == "open" and door_gap(d) >= cfg.get("min_door_gap", 0.0) and (a in reach) != (b in reach):
                 reach |= {a, b}
                 grow = True
     out = []
