@@ -509,6 +509,7 @@ def main():
                             break
                 if not stops:
                     c["status"] = "no free stop"
+                    c["tries"] = c.get("tries", 0) + 1
                     continue
                 n += 1
                 est = {"pos": [c["x"], c["y"]], "yaw": c["yaw"], "width": max(0.6, min(1.2, c["width"]))}
@@ -517,8 +518,20 @@ def main():
                 last = log["visits"][-1] if log["visits"] else {}
                 st = last.get("door_step") or {}
                 c["status"] = ("false door" if not m_ else "right" if st.get("right") else "wrong" if st else "not reached")
+                c["tries"] = c.get("tries", 0) + 1
                 if st.get("opened"):
                     opened_here.append({"x": c["x"], "y": c["y"], "yaw": c["yaw"], "width": max(0.6, min(1.2, c["width"]))})
+                    # map with this door open right away (Claude 2026-11-11, Madelief spotted rooms without viewpoints): rooms behind
+                    # partly open doors are unreachable on the map until then, and used to get viewpoints only after all others
+                    ok, _ = map_with_opened()
+                    print(f"patrol: map with {len(live['opened'])} opened doors loaded: {ok}")
+                    if ok:
+                        opened_at_map = len(live["opened"])
+                        if not a.no_map_gaps:
+                            gaps = patrol.map_gaps(occ[0])
+                        for j, cj in enumerate(cands):             # a door it couldn't reach may be reachable now: one more try
+                            if j in handled and cj.get("status") in ("not reached", "no free stop") and cj.get("tries", 0) < 2:
+                                handled.discard(j)
                 live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
                 write_live(force=True)
         print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
