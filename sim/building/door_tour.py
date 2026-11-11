@@ -135,6 +135,23 @@ def main():
             from gz.msgs10.double_pb2 import Double
             gz_node = Node()
 
+    live_path = pathlib.Path(a.out).parent / "live.json" if a.out else None
+    live = {"pose": None, "now": None, "opened": [], "reports": []}
+    live_t = [0.0]
+
+    def write_live(force=False):
+        """OUT/live.json for the run dashboard (Madelief 2026-11-11: show it in real time): robot pose, current door side,
+        opened doors, reports. Written at most every 0.5 s while driving, and on every report / opening."""
+        if live_path is None or (not force and time.time() - live_t[0] < 0.5):
+            return
+        live_t[0] = time.time()
+        pos = where(nav, tf)
+        if pos:
+            live["pose"] = [round(v, 3) for v in pos]
+        tmp = live_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({**live, "time": time.time()}))
+        tmp.replace(live_path)
+
     def detect(frame_dir):
         """Detector output for a saved frame (also written next to it as dets.json); empty when the detector is off / no frame."""
         if det is None or frame_dir is None:
@@ -155,6 +172,7 @@ def main():
                 nav.cancelTask()
                 break
             rclpy.spin_once(nav, timeout_sec=0.1)
+            write_live()
         res = nav.getResult()
         stop_pub.publish(Twist())                    # Gazebo's DiffDrive keeps the last command
         wait_sim(nav, a.look)
@@ -236,6 +254,11 @@ def main():
             door_pubs[topic].publish(msg)
             wait_sim(nav, 0.2)
         wait_sim(nav, 2.0)
+        live["opened"].append(d["id"])
+        write_live(force=True)
+        pos = where(nav, tf)
+        if pos:                                                # proof frame: the door after opening, from where the robot stands
+            drive(v, {"x": pos[0], "y": pos[1], "yaw": pos[2], "dist": None}, "opened")
 
     def door_step_visit(v, shots):
         """Reactive door step for one door side (see the module docstring) -> log dict for tour.json."""
@@ -281,6 +304,8 @@ def main():
 
         def check_fn(rep):
             ok = door_step.is_right(rep, tr)
+            live["reports"].append([v["door"], v["side"], rep["type"], rep["hinge_side"], ok])
+            write_live(force=True)
             print(f"  report door {v['door']} {v['side']}: {rep['type']} {rep['hinge_side'] or ''} (sure {rep['sure']}) -> {'right' if ok else 'wrong'}")
             if ok and gz_node is not None:
                 open_door(v, d)
@@ -304,6 +329,8 @@ def main():
     try:
         for i, v in enumerate(tour, 1):
             print(f"[{i}/{len(tour)}] door {v['door']} {v['side']}")   # progress counter for the run dashboard
+            live["now"] = [v["door"], v["side"]]
+            write_live(force=True)
             rec = {"door": v["door"], "side": v["side"], "space": v["space"], "stops": []}
             shots = []
             for s in v["stops"]:
