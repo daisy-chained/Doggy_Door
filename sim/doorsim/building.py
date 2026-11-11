@@ -72,6 +72,24 @@ def _world(door, lx, ly):
     return door["pos"][0] + dx, door["pos"][1] + dy
 
 
+def hinge_xy(d):
+    """World (x, y) of a hinged door's hinge axis; None for a sliding door."""
+    if d["spec"]["door_type"] == "sliding":
+        return None
+    g = doors._layout(d["spec"], SLOT)
+    return _world(d, g["hinge"][0], g["hinge"][1])
+
+
+def open_position(d):
+    """Joint value of the door fully open as the sim opens it (rad hinged, m sliding)."""
+    return doors._layout(d["spec"], SLOT)["open"]
+
+
+def door_topic(d):
+    """gz topic of the door's joint position controller."""
+    return f"/{_names(d['id'])['door']}/cmd_pos"
+
+
 def _extent(spec, sign):
     """(lo, hi) of opening + trim (+ the slide path of a sliding door) along the wall, relative to the door centre, where `sign` = +1
     if the local y axis points along the wall's +coordinate, else -1."""

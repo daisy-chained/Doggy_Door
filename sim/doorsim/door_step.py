@@ -71,3 +71,19 @@ def visit(stop_looks, look_fn, check_fn, handle_guess, free_fn, n_max=3, p_slide
         wrong.append((rep["type"], rep["hinge_side"]))
     return {"reports": reports, "looks": looks, "first_right": bool(reports) and reports[0]["right"],
             "right": any(r["right"] for r in reports), "n_reports": len(reports)}
+
+
+def truth(door_type, edge_pts, hinge_xy):
+    """("sliding", None) or ("hinged", side): side = the edge_pts key nearest to hinge_xy."""
+    if door_type == "sliding":
+        return ("sliding", None)
+    import math
+    side = min(edge_pts, key=lambda k: math.hypot(edge_pts[k][0] - hinge_xy[0], edge_pts[k][1] - hinge_xy[1]))
+    return ("hinged", side)
+
+
+def is_right(report, truth):
+    """Same type and, for hinged, same hinge side."""
+    if report["type"] != truth[0]:
+        return False
+    return truth[0] == "sliding" or report["hinge_side"] == truth[1]
