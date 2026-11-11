@@ -45,6 +45,17 @@
 #     wall within +-0.3 m (steps of res), the one with the most closed samples (fast3 run: estimates 0.17-0.25 m off the wall
 #     centre searched open floor and found no gap); the returned point is on that line. door_tour never drops a candidate that sits at a gap of its own as "beside an
 #     opened door" (fast run 2026-11-11: real door 5 is 1.40 m from opened door 4 on the same wall and was dropped).
+#   patrol.map_gaps(m, gap=(0.3, 1.4), wall=0.3, clear=0.4) -> [{"x", "y", "axis", "width"}]: doorways on the map (Madelief 2026-11-11
+#     ~13:30 "Yes, map gaps": an open sliding door shows no door box, door 9 was never a candidate). For every map row (axis "x": a
+#     wall along x) and every column (axis "y"): runs of free cells of length within gap, where the cells just beyond both ends are
+#     occupied for at least `wall` m along the line (wall on both sides), and the cells at +-clear across the line from every cell of
+#     the run are free (open floor on both sides of the wall). The same doorway shows on several neighbouring lines (wall thickness):
+#     runs whose centres are within 0.3 m (same axis) are merged into one, at the mean centre; width = the longest run's length.
+#     A doorway must also be the only way between its two sides nearby (on 007's map, 10 of 13 gaps were slits between furniture or
+#     along outer walls): with the run's cells blocked, the free cells at +-clear across the run's centre must NOT connect through free
+#     cells (4-neighbour) within a window of +-`local` m (default 2.5) around the centre; connected -> not a doorway.
+#     Signature: map_gaps(m, gap=(0.3, 1.4), wall=0.3, clear=0.4, local=2.5).
+#     Sorted by (axis, x, y).
 #   patrol.in_front_of_wall(box, depth, strip=6, tol=0.25) -> bool: inside = median valid depth (0 / nan invalid) in the middle half
 #     of the box (rows AND columns); wall = median valid depth in the two strips beside the box as door_estimate. True when
 #     inside < wall - tol (something standing in front of the wall: furniture, a swung-out panel); a closed door is flush, an open
@@ -262,3 +273,27 @@ def test_gap_centre_finds_the_wall_line():
     assert abs(x - 5.0) < 0.06 and abs(y - 3.0) < 0.06
     x, y = patrol.gap_centre(m, 4.3, 2.78, math.pi / 2)
     assert abs(x - 5.0) < 0.06 and abs(y - 3.0) < 0.06
+
+
+# --- doorways from the map ---
+def test_map_gaps_finds_the_doorway_only():
+    g = patrol.map_gaps(two_rooms())
+    assert len(g) == 1
+    assert g[0]["axis"] == "x" and abs(g[0]["x"] - 5.0) < 0.06 and abs(g[0]["y"] - 3.0) < 0.1 and abs(g[0]["width"] - 0.9) < 0.11
+
+
+def test_map_gaps_closed_wide_and_y_walls():
+    assert patrol.map_gaps(two_rooms(door_open=False)) == []
+    m = two_rooms(); m["occ"][:] = False
+    fill(m, 0, 0, 10, 0.1); fill(m, 0, 5.9, 10, 6); fill(m, 0, 0, 0.1, 6); fill(m, 9.9, 0, 10, 6)
+    fill(m, 0, 2.95, 4.0, 3.05); fill(m, 6.0, 2.95, 10, 3.05)                 # 2 m opening: not a door
+    fill(m, 6.95, 0.1, 7.05, 1.0); fill(m, 6.95, 1.8, 7.05, 2.95)             # a wall along y with a 0.8 m doorway at y 1.0..1.8
+    g = patrol.map_gaps(m)
+    assert len(g) == 1 and g[0]["axis"] == "y" and abs(g[0]["x"] - 7.0) < 0.1 and abs(g[0]["y"] - 1.4) < 0.06
+
+
+def test_map_gaps_ignores_slits_between_furniture():
+    m = two_rooms()
+    fill(m, 1.0, 1.0, 2.0, 1.2); fill(m, 2.5, 1.0, 3.5, 1.2)                  # two boxes with a 0.5 m slit, open floor around them
+    g = patrol.map_gaps(m)
+    assert len(g) == 1 and abs(g[0]["x"] - 5.0) < 0.06                         # only the real doorway

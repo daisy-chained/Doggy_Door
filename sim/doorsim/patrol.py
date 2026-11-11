@@ -201,6 +201,94 @@ def _gap_on_line(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
     return (x + best, y) if along_x else (x, y + best)
 
 
+def _gap_runs(b, res, gap, nw, d):
+    """Runs on the lines (rows) of the bool array b (True = occupied; outside = occupied): free runs of length within gap with at least nw
+    occupied cells beyond both ends and free cells d lines above and below every run cell. Yields (line, first pos, last pos)."""
+    pad = nw + d
+    p = np.pad(b, pad, constant_values=True)
+    free = ~p
+    f = np.zeros((free.shape[0], free.shape[1] + 2), np.int8)
+    f[:, 1:-1] = free
+    dif = np.diff(f, axis=1)
+    ls, s = np.nonzero(dif == 1)
+    le, e = np.nonzero(dif == -1)                       # same order: runs are [s, e) on line ls
+    n = e - s
+    keep = (n * res >= gap[0] - 1e-9) & (n * res <= gap[1] + 1e-9) & (ls >= pad) & (ls < p.shape[0] - pad)
+    for line, a, z in zip(ls[keep], s[keep], e[keep]):
+        if p[line, a - nw:a].all() and p[line, z:z + nw].all() and not p[line - d, a:z].any() and not p[line + d, a:z].any():
+            yield int(line) - pad, int(a) - pad, int(z) - 1 - pad
+
+
+def _slit(b, g, nl, d):
+    """True when, with the runs of g [(.., .., .., line, first, last)] blocked, the free cells d lines either side of the centre connect
+    (4-neighbour) inside a +-nl cell window: not the only way between the two sides."""
+    mean_line = sum(r[3] for r in g) / len(g)
+    r0 = min(g, key=lambda r: abs(r[3] - mean_line))
+    cl, cp = r0[3], (r0[4] + r0[5]) // 2
+    pad = nl + d + 1
+    win = np.pad(b, pad, constant_values=True)[cl + pad - nl:cl + pad + nl + 1, cp + pad - nl:cp + pad + nl + 1].copy()
+    for r in g:
+        win[r[3] - cl + nl, max(r[4] - cp + nl, 0):max(r[5] - cp + nl + 1, 0)] = True
+    free = ~win
+    start, goal = (nl - d, nl), (nl + d, nl)
+    if not (free[start] and free[goal]):
+        return False
+    seen = np.zeros_like(free)
+    seen[start] = True
+    q = deque([start])
+    hh, ww = free.shape
+    while q:
+        i, j = q.popleft()
+        if (i, j) == goal:
+            return True
+        for a, c in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+            if 0 <= a < hh and 0 <= c < ww and free[a, c] and not seen[a, c]:
+                seen[a, c] = True
+                q.append((a, c))
+    return False
+
+
+def map_gaps(m, gap=(0.3, 1.4), wall=0.3, clear=0.4, local=2.5):
+    """Doorways on the map: free runs of length within gap along a map row (axis "x") or column (axis "y") with wall (>= wall m occupied) on
+    both ends and open floor at +-clear across the line. Runs on neighbouring lines whose centres are within 0.3 m are merged (mean centre,
+    width of the longest run). A doorway must be the only way between its two sides nearby: with the merged runs blocked, the free cells at
+    +-clear across the centre must not connect (4-neighbour) inside a +-local m window (else a slit between furniture). Returns [{"x", "y", "axis", "width"}] sorted by (axis, x, y)."""
+    occ, res = m["occ"], m["res"]
+    h = occ.shape[0]
+    x0, y0 = m["origin"]
+    nw, d = max(1, int(round(wall / res))), int(round(clear / res))
+    nl = int(round(local / res))
+    out = []
+    for axis, b in (("x", occ), ("y", occ.T)):
+        runs = []                                        # (cx, cy, width)
+        for line, a, z in _gap_runs(b, res, gap, nw, d):
+            width = (z - a + 1) * res
+            mid = (a + z) / 2 + 0.5
+            if axis == "x":
+                runs.append((x0 + mid * res, y0 + (h - 1 - line + 0.5) * res, width, line, a, z))
+            else:
+                runs.append((x0 + (line + 0.5) * res, y0 + (h - mid) * res, width, line, a, z))
+        parent = list(range(len(runs)))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i in range(len(runs)):
+            for j in range(i):
+                if math.hypot(runs[i][0] - runs[j][0], runs[i][1] - runs[j][1]) <= 0.3 + 1e-9:
+                    parent[find(i)] = find(j)
+        groups = {}
+        for i, r in enumerate(runs):
+            groups.setdefault(find(i), []).append(r)
+        for g in groups.values():
+            if _slit(b, g, nl, d):
+                continue
+            out.append({"x": sum(r[0] for r in g) / len(g), "y": sum(r[1] for r in g) / len(g), "axis": axis, "width": max(r[2] for r in g)})
+    return sorted(out, key=lambda g: (g["axis"], g["x"], g["y"]))
+
+
 def _adiff(a, b):
     return abs(math.atan2(math.sin(a - b), math.cos(a - b)))
 

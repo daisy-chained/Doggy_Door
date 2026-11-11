@@ -110,6 +110,8 @@ def main():
                     "viewpoints over the floor map, look around, door-step every door it finds (needs --door-step)")
     ap.add_argument("--vp-spacing", type=float, default=1.5, help="patrol: m between viewpoints")
     ap.add_argument("--max-door-depth", type=float, default=4.0, help="patrol: ignore door boxes further than this (m)")
+    ap.add_argument("--no-map-gaps", action="store_true",
+                    help="patrol: don't add doorways from the map as candidates (Madelief 2026-11-11: open sliding doors show no door box)")
     ap.add_argument("--fog-range", type=float, default=4.0, help="fog of war on the dashboard: camera range in m (0 = off)")
     ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
@@ -407,11 +409,29 @@ def main():
         new candidate (nearest first) -> a door step visit. Out of viewpoints -> if doors were opened, load that map and go on."""
         t_end = time.time() + a.time_limit * 60
         cands, handled, done_vp, n, opened_at_map = patrol_log["candidates"], set(), set(), 0, 0
+        planned_vp = {}
         opened_here = []                                       # the robot's own estimates of the doors it opened (no map needed)
+        gaps = [] if a.no_map_gaps else patrol.map_gaps(occ[0])   # doorways on the map; used once the camera has seen them
+
+        def gap_seen(g):
+            if fog_f is None:
+                return True
+            fx0, fy0 = fog_f["origin"]
+            j, i = int((g["y"] - fy0) / fog_f["cell"]), int((g["x"] - fx0) / fog_f["cell"])
+            return 0 <= j < fog_f["seen"].shape[0] and 0 <= i < fog_f["seen"].shape[1] and bool(fog_f["seen"][j, i])
         while time.time() < t_end:
             pos = where(nav, tf)
             here = (pos[0], pos[1]) if pos else tuple(a.start)
-            vps = [q for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing) if (round(q[0], 2), round(q[1], 2)) not in done_vp]
+            # once planned, a viewpoint stays planned until visited (Claude 2026-11-11: inside a room behind a door it opened, or with
+            # opened panels on the map, the reachable set from here shrank and 4 viewpoints were silently dropped); Nav2 decides
+            for q in patrol.viewpoints(occ[0], here, a.look_radius, a.vp_spacing):
+                planned_vp.setdefault((round(q[0], 2), round(q[1], 2)), q)
+            left_ = [q for k_, q in planned_vp.items() if k_ not in done_vp]
+            vps = []
+            cur = here
+            while left_:                                       # greedy nearest-first from here, as patrol.viewpoints
+                nq = min(left_, key=lambda q: math.hypot(q[0] - cur[0], q[1] - cur[1]))
+                vps.append(nq); left_.remove(nq); cur = nq
             live["vps"] = [[round(q[0], 2), round(q[1], 2)] for q in vps]
             write_live(force=True)
             if not vps:
@@ -419,6 +439,8 @@ def main():
                     opened_at_map = len(live["opened"])
                     ok, _ = map_with_opened()
                     print(f"patrol: map with {opened_at_map} opened doors loaded: {ok}")
+                    if ok and not a.no_map_gaps:
+                        gaps = patrol.map_gaps(occ[0])
                     if ok:
                         continue
                 break
@@ -456,7 +478,18 @@ def main():
                         k_ = patrol.add_candidate(cands, est_)
                         cands[k_]["at_gap"] = bool(cands[k_].get("at_gap")) or est_["at_gap"]   # merges keep the first est's flag
                         seen_n += 1
-            patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n})
+            n_gap = 0
+            for g in gaps:                                     # doorways on the map the camera has now seen, not known yet (any side)
+                if any(math.hypot(c["x"] - g["x"], c["y"] - g["y"]) < 0.6 for c in cands) or not gap_seen(g):
+                    continue
+                if g["axis"] == "x":
+                    gyaw = math.pi / 2 if here[1] >= g["y"] else -math.pi / 2
+                else:
+                    gyaw = 0.0 if here[0] >= g["x"] else math.pi
+                k_ = patrol.add_candidate(cands, {"x": g["x"], "y": g["y"], "yaw": gyaw, "width": g["width"], "at_gap": True, "from_map": True})
+                cands[k_]["at_gap"] = True
+                n_gap += 1
+            patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n, "map_gaps_added": n_gap})
             for k in sorted((k for k in range(len(cands)) if k not in handled),
                             key=lambda k: math.hypot(cands[k]["x"] - here[0], cands[k]["y"] - here[1])):
                 handled.add(k)
