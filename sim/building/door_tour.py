@@ -403,6 +403,7 @@ def main():
         new candidate (nearest first) -> a door step visit. Out of viewpoints -> if doors were opened, load that map and go on."""
         t_end = time.time() + a.time_limit * 60
         cands, handled, done_vp, n, opened_at_map = patrol_log["candidates"], set(), set(), 0, 0
+        opened_here = []                                       # the robot's own estimates of the doors it opened (no map needed)
         while time.time() < t_end:
             pos = where(nav, tf)
             here = (pos[0], pos[1]) if pos else tuple(a.start)
@@ -437,11 +438,16 @@ def main():
                     e = patrol.door_estimate(box, depth, cam, fx, cx)
                     if not e or e["depth"] > a.max_door_depth:
                         continue
+                    if patrol.in_front_of_wall(box, depth):        # furniture / a swung panel stands in front of the wall (Claude 2026-11-11)
+                        continue
                     sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
                     if sn:
                         # open doors are wall gaps on the map; their box includes the swung panel (Claude 2026-11-11: 3 false doors -> matches offline)
                         gx, gy = patrol.snap_to_gap(occ[0], sn[0], sn[1], sn[2])
-                        patrol.add_candidate(cands, {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"]})
+                        est_ = {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"]}
+                        if patrol.near_opened(est_, opened_here):  # beside a door it opened itself: that's its panel (Claude 2026-11-11)
+                            continue
+                        patrol.add_candidate(cands, est_)
                         seen_n += 1
             patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n})
             for k in sorted((k for k in range(len(cands)) if k not in handled),
@@ -450,6 +456,9 @@ def main():
                 c = cands[k]
                 m_ = patrol.match(c, b["doors"])
                 c["match"] = list(m_) if m_ else None
+                if patrol.near_opened(c, opened_here):         # found before the door beside it was opened
+                    c["status"] = "beside opened door"
+                    continue
                 stops = []                                     # as the tour planner: a stop that doesn't fit moves 0.1 m closer (>= 0.5 m)
                 for dist in (2.0, 1.0):
                     for u in (round(dist - 0.1 * j, 2) for j in range(int(round((dist - 0.5) / 0.1)) + 1)):
@@ -468,6 +477,8 @@ def main():
                 last = log["visits"][-1] if log["visits"] else {}
                 st = last.get("door_step") or {}
                 c["status"] = ("false door" if not m_ else "right" if st.get("right") else "wrong" if st else "not reached")
+                if st.get("opened"):
+                    opened_here.append({"x": c["x"], "y": c["y"], "yaw": c["yaw"], "width": max(0.6, min(1.2, c["width"]))})
                 live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
                 write_live(force=True)
         print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
@@ -571,7 +582,15 @@ def main():
                 print(f"door {v['door']} {v['side']} hinge look: guess {guess}, found {rec['hinge_look']['found']}")
             log["visits"].append(rec)
     finally:
-        stop_pub.publish(Twist())
+        if a.out:                                              # save first: on Ctrl-C rclpy's context is already gone (publish raises)
+            pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            if a.patrol:
+                log["patrol"] = patrol_log
+            pathlib.Path(a.out).write_text(json.dumps(log, indent=1))
+        try:
+            stop_pub.publish(Twist())
+        except Exception:
+            pass
         if det is not None:
             det.stdin.close()
             det.wait(timeout=30)
@@ -581,15 +600,13 @@ def main():
         if bag:
             bag.send_signal(signal.SIGINT)
             bag.wait(timeout=30)
-        if a.out:
-            pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-            if a.patrol:
-                log["patrol"] = patrol_log
-            pathlib.Path(a.out).write_text(json.dumps(log, indent=1))
         n = sum(r["result"] == "SUCCEEDED" for v in log["visits"] for r in v["stops"])
         print(f"reached {n} / {sum(len(v['stops']) for v in log['visits'])} stops")
-        nav.destroy_node()
-        rclpy.shutdown()
+        try:
+            nav.destroy_node()
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

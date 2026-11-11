@@ -68,25 +68,31 @@ def view_yaws(n=5, start_yaw=0.0):
     return [start_yaw + k * 2 * math.pi / n for k in range(n)]
 
 
+def _med_valid(depth, ra, rb, c0, c1):
+    """Valid depth pixels (finite, > 0) in rows ra:rb, columns c0..c1 inclusive (clipped to the image)."""
+    a = depth[ra:rb, max(0, c0):min(depth.shape[1], c1 + 1)]
+    return a[np.isfinite(a) & (a > 0)]
+
+
+def _wall_median(box, depth, strip=6):
+    """Median valid depth in the two strips just outside the box, over the middle half of its rows (the wall); None when there is none."""
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    ra, rb = max(0, y1 + (y2 - y1) // 4), min(depth.shape[0], y1 + 3 * (y2 - y1) // 4 + 1)
+    v = np.concatenate((_med_valid(depth, ra, rb, x1 - strip, x1), _med_valid(depth, ra, rb, x2, x2 + strip)))
+    return float(np.median(v)) if v.size else None
+
+
 def door_estimate(box, depth, cam, fx, cx, strip=6):
     """{"x", "y", "width", "depth"} of a door box. Depth = median of the valid depth in strips just outside the box (the wall, not the
     room behind an open door); else inside the box; else None."""
-    x1, y1, x2, y2 = (int(round(v)) for v in box)
-    h, w = depth.shape
-    ra, rb = max(0, y1 + (y2 - y1) // 4), min(h, y1 + 3 * (y2 - y1) // 4 + 1)
-
-    def med(c0, c1):
-        a = depth[ra:rb, max(0, c0):min(w, c1 + 1)]
-        a = a[np.isfinite(a) & (a > 0)]
-        return a
-
-    for parts in ((med(x1 - strip, x1), med(x2, x2 + strip)), (med(x1, x2),)):
-        v = np.concatenate(parts)
-        if v.size:
-            d = float(np.median(v))
-            break
-    else:
-        return None
+    d = _wall_median(box, depth, strip)
+    if d is None:
+        x1, y1, x2, y2 = (int(round(v)) for v in box)
+        ra, rb = max(0, y1 + (y2 - y1) // 4), min(depth.shape[0], y1 + 3 * (y2 - y1) // 4 + 1)
+        v = _med_valid(depth, ra, rb, x1, x2)
+        if not v.size:
+            return None
+        d = float(np.median(v))
     u = (box[0] + box[2]) / 2
     left = d * (cx - u) / fx
     camx, camy, yaw = cam
@@ -209,3 +215,27 @@ def approach(est, dists=(2.0, 1.0)):
     """Poses on the normal, dist out from (x, y), facing the door."""
     return [{"x": est["x"] + d * math.cos(est["yaw"]), "y": est["y"] + d * math.sin(est["yaw"]),
              "yaw": est["yaw"] + math.pi, "dist": d} for d in dists]
+
+
+def near_opened(est, opened, margin=0.4):
+    """True when est ({"x", "y", "yaw"}) is on the same wall as a door the robot opened (opened = [{"x", "y", "yaw", "width"}]): normals
+    parallel (|cos| > 0.7), across-wall offset < 0.3 m, along-wall distance <= 1.5 * width + margin (the panel lies beside the doorway)."""
+    for o in opened:
+        if abs(math.cos(est["yaw"] - o["yaw"])) <= 0.7:
+            continue
+        dx, dy = est["x"] - o["x"], est["y"] - o["y"]
+        across = dx * math.cos(o["yaw"]) + dy * math.sin(o["yaw"])
+        along = -dx * math.sin(o["yaw"]) + dy * math.cos(o["yaw"])
+        if abs(across) < 0.3 and abs(along) <= 1.5 * o["width"] + margin:
+            return True
+    return False
+
+
+def in_front_of_wall(box, depth, strip=6, tol=0.25):
+    """True when the middle half of the box (rows and columns) is nearer than the wall strips beside it by more than tol: something
+    stands in front of the wall (furniture, a swung panel). No valid inside or wall pixel -> False."""
+    wall = _wall_median(box, depth, strip)
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    ra, rb = max(0, y1 + (y2 - y1) // 4), min(depth.shape[0], y1 + 3 * (y2 - y1) // 4 + 1)
+    v = _med_valid(depth, ra, rb, x1 + (x2 - x1) // 4, x1 + 3 * (x2 - x1) // 4)
+    return wall is not None and v.size > 0 and float(np.median(v)) < wall - tol

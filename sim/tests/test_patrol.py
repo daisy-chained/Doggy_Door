@@ -34,6 +34,16 @@
 #     m["res"] over along-offsets [-(search + gap[1]), search + gap[1]]; a sample is open when every cell within +-0.15 m across the
 #     wall is free. Gaps = maximal runs of open samples that do NOT touch either end of the sampled range, with length (n samples *
 #     res) within gap; keep those whose centre is within search of (x, y); return the nearest centre (on the wall line), else (x, y).
+#   False-door filters (patrol check 2026-11-11 ~11:50: 8 false doors were panels of doors the robot had just opened, 4 were
+#   furniture). Both work WITHOUT the floor map (Madelief: the next stage, run 4, gets no map):
+#   patrol.near_opened(est, opened, margin=0.4) -> bool: opened = [{"x", "y", "yaw", "width"}] = where the robot itself opened doors
+#     (its own estimates). True when est is on the same wall as one of them: normals parallel (|cos(est yaw - o yaw)| > 0.7, either
+#     side of the wall), across-wall offset (along the opened door's normal) < 0.3 m, and along-wall distance <= 1.5 * o width + margin
+#     (the swung or slid panel lies within one panel width beside the doorway).
+#   patrol.in_front_of_wall(box, depth, strip=6, tol=0.25) -> bool: inside = median valid depth (0 / nan invalid) in the middle half
+#     of the box (rows AND columns); wall = median valid depth in the two strips beside the box as door_estimate. True when
+#     inside < wall - tol (something standing in front of the wall: furniture, a swung-out panel); a closed door is flush, an open
+#     one shows the room behind (deeper). No valid inside or wall pixel -> False (can't tell, keep it).
 import math, pathlib, sys
 import numpy as np
 import pytest
@@ -196,3 +206,37 @@ def test_snap_to_gap_ignores_wide_openings():
     from test_patrol import fill
     fill(m, 0, 2.95, 4.0, 3.05); fill(m, 6.0, 2.95, 10, 3.05)                # a 2 m opening, not a door
     assert patrol.snap_to_gap(m, 5.6, 3.0, -math.pi / 2) == (5.6, 3.0)
+
+
+# --- false-door filters (map-free) ---
+OPENED = [{"x": 5.0, "y": 3.0, "yaw": -math.pi / 2, "width": 0.8}]
+
+
+def test_near_opened_same_wall_beside_doorway():
+    assert patrol.near_opened({"x": 6.3, "y": 3.05, "yaw": -math.pi / 2}, OPENED)       # 1.3 m along, <= 1.6
+    assert patrol.near_opened({"x": 3.7, "y": 2.9, "yaw": math.pi / 2}, OPENED)         # other side of the wall too
+    assert patrol.near_opened({"x": 5.0, "y": 3.0, "yaw": math.pi / 2}, OPENED)         # the opened doorway itself
+
+
+def test_near_opened_false_cases():
+    assert not patrol.near_opened({"x": 6.8, "y": 3.0, "yaw": -math.pi / 2}, OPENED)    # 1.8 m along: too far
+    assert not patrol.near_opened({"x": 5.5, "y": 3.6, "yaw": -math.pi / 2}, OPENED)    # 0.6 m off the wall line
+    assert not patrol.near_opened({"x": 5.5, "y": 3.0, "yaw": 0.0}, OPENED)             # a wall at right angles
+    assert not patrol.near_opened({"x": 5.5, "y": 3.0, "yaw": -math.pi / 2}, [])
+
+
+def test_in_front_of_wall():
+    wall = np.full((480, 640), 3.0)
+    flush = wall.copy(); flush[50:400, 200:440] = 3.05                                  # closed door, slightly recessed
+    assert not patrol.in_front_of_wall([200, 50, 440, 400], flush)
+    room = wall.copy(); room[50:400, 200:440] = 6.0                                     # open door: room behind
+    assert not patrol.in_front_of_wall([200, 50, 440, 400], room)
+    cab = wall.copy(); cab[50:400, 200:440] = 2.4                                       # cabinet 0.6 m in front of the wall
+    assert patrol.in_front_of_wall([200, 50, 440, 400], cab)
+    edge = room.copy(); edge[50:400, 200:240] = 2.0                                     # a panel edge at the box side: middle half decides
+    assert not patrol.in_front_of_wall([200, 50, 440, 400], edge)
+
+
+def test_in_front_of_wall_cant_tell():
+    d = np.zeros((480, 640)); d[50:400, 200:440] = 2.0                                  # no wall depth beside the box
+    assert not patrol.in_front_of_wall([200, 50, 440, 400], d)
