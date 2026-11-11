@@ -86,8 +86,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("building", help="path without extension, e.g. sim/building/out/bld_train_000")
     ap.add_argument("--start", nargs=2, type=float, required=True, help="spawn x y (same as robot.launch.py)")
-    ap.add_argument("--look", type=float, default=2.0, help="seconds (sim time) standing still at each stop")
+    ap.add_argument("--look", type=float, default=1.0, help="seconds (sim time) standing still at each stop")
     ap.add_argument("--timeout", type=float, default=120.0, help="seconds (wall) per stop before giving up")
+    ap.add_argument("--step-timeout", type=float, default=15.0,
+                    help="seconds (wall) per door-step look; Nav2 crawls up to ~50 s into tight spots by walls, an unreached look is fine")
     ap.add_argument("--max-visits", type=int, default=0)
     ap.add_argument("--bag", default="")
     ap.add_argument("--out", default="")
@@ -201,13 +203,14 @@ def main():
         (p / "dets.json").write_text(json.dumps(out) + "\n")
         return out
 
-    def drive(v, s, tag):
-        """Nav2 to stop s, stand still, measure, save the frame (folder NNN_door<id>_<side>_<tag>) -> record dict."""
+    def drive(v, s, tag, timeout=None):
+        """Nav2 to stop s, stand still, measure, save the frame (folder NNN_door<id>_<side>_<tag>) -> record dict.
+        timeout: wall seconds before giving up (default --timeout)."""
         nonlocal n_frame
         t0 = time.time()
         nav.goToPose(goal(nav, s["x"], s["y"], s["yaw"]))
         while not nav.isTaskComplete():
-            if time.time() - t0 > a.timeout:
+            if time.time() - t0 > (a.timeout if timeout is None else timeout):
                 nav.cancelTask()
                 break
             rclpy.spin_once(nav, timeout_sec=0.1)
@@ -334,7 +337,7 @@ def main():
 
         def look_fn(edge, angle):
             p = pose_for(edge, angle)
-            r, pos, cam = drive(v, p, f"step_{edge}_{angle}")
+            r, pos, cam = drive(v, p, f"step_{edge}_{angle}", timeout=a.step_timeout)   # crawls near walls: give up (Claude 2026-11-11)
             print(f"  step look door {v['door']} {edge} {angle} deg: {r['result']}")
             if r["result"] != "SUCCEEDED" or not r.get("frame"):
                 return None
