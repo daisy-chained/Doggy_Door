@@ -314,7 +314,7 @@ def main():
             if guess is None and cam:
                 cols = [hinge_look.edge_column(cam[0], cam[1], cam[2], edge_pts[sd], fx, cx) for sd in ("left", "right")]
                 box = hinge_look.pick_door_span(dd, cols) if None not in cols else hinge_look.pick_door(dd, IMG_W)
-                expected = hinge_look.edge_forward(cam[0], cam[1], cam[2], tuple(d["pos"]))
+                expected = hinge_look.edge_forward(cam[0], cam[1], cam[2], tuple(door["pos"]))
                 guess = hinge_look.hinge_side_image(box, dd, depth_img=depth, expected=expected, fx=fx) if box else None
             stop_looks.append({"edge": None, "angle": None, "seen": seen_sides(cam, dd, edge_pts, depth), "frame": r["frame"]})
             p = p_slide_of(r["frame"], cam, dd, edge_pts)
