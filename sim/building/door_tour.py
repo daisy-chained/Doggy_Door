@@ -446,11 +446,14 @@ def main():
                     sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
                     if sn:
                         # open doors are wall gaps on the map; their box includes the swung panel (Claude 2026-11-11: 3 false doors -> matches offline)
-                        gx, gy = patrol.snap_to_gap(occ[0], sn[0], sn[1], sn[2])
-                        est_ = {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"]}
-                        if patrol.near_opened(est_, opened_here):  # beside a door it opened itself: that's its panel (Claude 2026-11-11)
+                        gc = patrol.gap_centre(occ[0], sn[0], sn[1], sn[2])
+                        gx, gy = gc or sn[:2]
+                        est_ = {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"], "at_gap": gc is not None}
+                        # beside a door it opened itself: that's its panel, unless it sits at a doorway gap of its own (Claude 2026-11-11)
+                        if not est_["at_gap"] and patrol.near_opened(est_, opened_here):
                             continue
-                        patrol.add_candidate(cands, est_)
+                        k_ = patrol.add_candidate(cands, est_)
+                        cands[k_]["at_gap"] = bool(cands[k_].get("at_gap")) or est_["at_gap"]   # merges keep the first est's flag
                         seen_n += 1
             patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n})
             for k in sorted((k for k in range(len(cands)) if k not in handled),
@@ -459,7 +462,7 @@ def main():
                 c = cands[k]
                 m_ = patrol.match(c, b["doors"])
                 c["match"] = list(m_) if m_ else None
-                if patrol.near_opened(c, opened_here):         # found before the door beside it was opened
+                if not c.get("at_gap") and patrol.near_opened(c, opened_here):   # found before the door beside it was opened
                     c["status"] = "beside opened door"
                     continue
                 stops = []                                     # as the tour planner: a stop that doesn't fit moves 0.1 m closer (>= 0.5 m)

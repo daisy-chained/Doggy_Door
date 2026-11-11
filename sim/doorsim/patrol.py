@@ -134,6 +134,11 @@ def snap_to_wall(m, x, y, cam_xy, search=0.4):
 
 
 def snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
+    """gap_centre(...) if there is one, else (x, y)."""
+    return gap_centre(m, x, y, yaw, search, gap) or (x, y)
+
+
+def gap_centre(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
     """Open doors are gaps in the wall on the map. The wall line through (x, y) runs across yaw (a multiple of pi / 2). Sample it every res
     over +-(search + gap[1]); a sample is open when all cells within +-0.15 m across the wall are free (outside the map = occupied). Gaps =
     runs of open samples not touching either end, with length within gap and centre within search of (x, y). Returns the nearest centre, else (x, y)."""
@@ -171,7 +176,7 @@ def snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
                 best = centre
         i = j + 1
     if best is None:
-        return x, y
+        return None
     return (x + best, y) if along_x else (x, y + best)
 
 

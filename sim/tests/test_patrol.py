@@ -40,6 +40,9 @@
 #     (its own estimates). True when est is on the same wall as one of them: normals parallel (|cos(est yaw - o yaw)| > 0.7, either
 #     side of the wall), across-wall offset (along the opened door's normal) < 0.3 m, and along-wall distance <= 1.5 * o width + margin
 #     (the swung or slid panel lies within one panel width beside the doorway).
+#   patrol.gap_centre(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)) -> (x, y) | None: the gap snap_to_gap would move to, None when there is
+#     none (snap_to_gap(...) == gap_centre(...) or (x, y)). door_tour never drops a candidate that sits at a gap of its own as "beside an
+#     opened door" (fast run 2026-11-11: real door 5 is 1.40 m from opened door 4 on the same wall and was dropped).
 #   patrol.in_front_of_wall(box, depth, strip=6, tol=0.25) -> bool: inside = median valid depth (0 / nan invalid) in the middle half
 #     of the box (rows AND columns); wall = median valid depth in the two strips beside the box as door_estimate. True when
 #     inside < wall - tol (something standing in front of the wall: furniture, a swung-out panel); a closed door is flush, an open
@@ -240,3 +243,12 @@ def test_in_front_of_wall():
 def test_in_front_of_wall_cant_tell():
     d = np.zeros((480, 640)); d[50:400, 200:440] = 2.0                                  # no wall depth beside the box
     assert not patrol.in_front_of_wall([200, 50, 440, 400], d)
+
+
+def test_gap_centre():
+    m = two_rooms()
+    x, y = patrol.gap_centre(m, 5.6, 3.0, -math.pi / 2)
+    assert abs(x - 5.0) < 0.06 and y == pytest.approx(3.0)
+    assert patrol.gap_centre(m, 2.0, 3.0, -math.pi / 2) is None
+    assert patrol.gap_centre(two_rooms(door_open=False), 5.6, 3.0, -math.pi / 2) is None
+    assert patrol.snap_to_gap(m, 5.6, 3.0, -math.pi / 2) == patrol.gap_centre(m, 5.6, 3.0, -math.pi / 2)
