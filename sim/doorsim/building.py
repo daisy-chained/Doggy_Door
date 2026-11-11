@@ -616,6 +616,25 @@ def make_building(cfg, seed, split="train"):
             "map_resolution": float(cfg.get("map_resolution", 0.05))}
 
 
+def after_opening(b, opened, cfg):
+    """Copy of building b with the doors in `opened` fully open (state open, open_frac 1.0, as the door step opens them) and the
+    approach poses recomputed, so rooms behind them become reachable (round 2 of the tour, Madelief 2026-11-11)."""
+    ids = set(opened)
+    ds = [dict(d, state="open", open_frac=1.0) if d["id"] in ids else d for d in b["doors"]]
+    return dict(b, doors=ds, poses=approach_poses(b["layout"], ds, cfg, b.get("clutter")))
+
+
+def write_map(b, stem):
+    """stem.map.pgm (P5) + stem.map.yaml (Nav2 map_server) of building b, at b["map_resolution"] (default 0.05)."""
+    stem = pathlib.Path(stem)
+    stem.parent.mkdir(parents=True, exist_ok=True)
+    res = b.get("map_resolution", 0.05)
+    grid, origin = occupancy(b["layout"], b["doors"], res, b.get("clutter"))
+    pathlib.Path(f"{stem}.map.pgm").write_bytes(f"P5\n{grid.shape[1]} {grid.shape[0]}\n255\n".encode() + grid.tobytes())
+    pathlib.Path(f"{stem}.map.yaml").write_text(f"image: {stem.name}.map.pgm\nresolution: {res}\norigin: [{origin[0]:.4f}, {origin[1]:.4f}, 0.0]\n"
+                                                "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\nmode: trinary\n")
+
+
 def write(b, out_dir, name):
     """Write name.sdf, name.building.json (b + labels per door), name.map.pgm (P5) and name.map.yaml (Nav2 map_server) to out_dir.
     The map resolution is b["map_resolution"] (default 0.05)."""
@@ -625,7 +644,4 @@ def write(b, out_dir, name):
     (out / f"{name}.sdf").write_text(building_sdf(b, name))
     meta = dict(b, doors=[dict(d, labels=door_labels(d)) for d in b["doors"]])
     (out / f"{name}.building.json").write_text(json.dumps(meta, indent=2) + "\n")
-    grid, origin = occupancy(b["layout"], b["doors"], res, b.get("clutter"))
-    (out / f"{name}.map.pgm").write_bytes(f"P5\n{grid.shape[1]} {grid.shape[0]}\n255\n".encode() + grid.tobytes())
-    (out / f"{name}.map.yaml").write_text(f"image: {name}.map.pgm\nresolution: {res}\norigin: [{origin[0]:.4f}, {origin[1]:.4f}, 0.0]\n"
-                                          "negate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\nmode: trinary\n")
+    write_map(b, out / name)

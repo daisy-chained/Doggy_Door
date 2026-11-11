@@ -102,6 +102,10 @@ def main():
     ap.add_argument("--step-n", type=int, default=2, help="door step: extra looks before the first report (Claude 2026-11-11, replay)")
     ap.add_argument("--p-slide-t", type=float, default=0.4, help="door step: mean P(slide) >= this -> sliding (Claude 2026-11-11)")
     ap.add_argument("--no-open", action="store_true", help="door step: check reports but don't open doors")
+    ap.add_argument("--rounds", type=int, default=1, help="2 = after the tour, load a map with the doors it opened and visit the "
+                    "door sides that became reachable (Madelief 2026-11-11: two rounds; needs --door-step and --out)")
+    ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
+                    help="generator config (approach distances, robot_radius, min_door_gap) for the round-2 poses")
     a = ap.parse_args()
 
     b = json.loads(pathlib.Path(a.building + ".building.json").read_text())
@@ -138,8 +142,8 @@ def main():
         while (line := det.stdout.readline()) and line.strip() != "READY":
             pass
         doors = {d["id"]: {"pos": d["pos"], "yaw": d["yaw"], "width": d["spec"]["width"]} for d in b["doors"]}
-        occ = hinge_look.load_map(a.building + ".map.yaml")
-        free = lambda x, y: hinge_look.free(occ, x, y, a.look_radius)
+        occ = [hinge_look.load_map(a.building + ".map.yaml")]    # list: round 2 swaps in the map with the opened doors
+        free = lambda x, y: hinge_look.free(occ[0], x, y, a.look_radius)
         fx, cx = (IMG_W / 2) / math.tan(HFOV / 2), IMG_W / 2
 
     props, gz_node, door_pubs, known_hinged = None, None, {}, set()
@@ -347,13 +351,60 @@ def main():
         return {**log_, "handle_guess": guess, "p_slide": p_mean, "p_slide_frames": ps, "truth": list(tr), "opened": bool(opened),
                 "stop_frames": [l["frame"] for l in stop_looks]}
 
+    def load_map_srv(yaml_path, tries=3, per_call=10.0):
+        """Nav2 map_server load_map (with timeouts + retries, as wait_active) -> True when loaded."""
+        from nav2_msgs.srv import LoadMap
+        cli = nav.create_client(LoadMap, "/map_server/load_map")
+        for _ in range(tries):
+            if cli.wait_for_service(timeout_sec=per_call):
+                req = LoadMap.Request()
+                req.map_url = str(pathlib.Path(yaml_path).resolve())
+                fut = cli.call_async(req)
+                rclpy.spin_until_future_complete(nav, fut, timeout_sec=per_call)
+                if fut.done() and fut.result() is not None and fut.result().result == LoadMap.Response.RESULT_SUCCESS:
+                    nav.destroy_client(cli)
+                    return True
+        nav.destroy_client(cli)
+        return False
+
+    def round_two():
+        """Doors opened in round 1 -> new map (loaded into Nav2) + the door sides that became reachable, in tour order."""
+        import yaml
+        if not live["opened"] or not a.out:
+            return []
+        cfg = yaml.safe_load(pathlib.Path(a.building_config).read_text())
+        nb = B.after_opening(b, live["opened"], cfg)
+        stem = pathlib.Path(a.out).parent / "round2"
+        B.write_map(nb, stem)
+        ok = load_map_srv(f"{stem}.map.yaml")
+        print(f"round 2: {len(live['opened'])} doors opened, map with them open loaded: {ok}")
+        if not ok:
+            return []
+        wait_sim(nav, 3.0)                                     # costmaps pick up the new /map
+        occ[0] = hinge_look.load_map(f"{stem}.map.yaml")
+        done = {(x["door"], x["side"]) for x in log["visits"]}
+        pos = where(nav, tf)
+        here = (pos[0], pos[1]) if pos else tuple(a.start)
+        t2 = robot.door_tour([q for q in nb["poses"] if (q["door"], q["side"]) not in done], here)
+        live["round"], live["plan2"] = 2, [[x["door"], x["side"], x["stops"][0]["x"], x["stops"][0]["y"]] for x in t2]
+        write_live(force=True)
+        print(f"round 2: {len(t2)} new door sides to visit")
+        return t2
+
+    def all_visits():
+        """(round, i, n, visit): the tour, then (--rounds 2) round 2, planned only once round 1 is done."""
+        yield from ((1, i, len(tour), v) for i, v in enumerate(tour, 1))
+        if a.rounds > 1 and props is not None:
+            t2 = round_two()
+            yield from ((2, i, len(t2), v) for i, v in enumerate(t2, 1))
+
     log = {"building": b.get("seed"), "start": a.start, "visits": []}
     try:
-        for i, v in enumerate(tour, 1):
-            print(f"[{i}/{len(tour)}] door {v['door']} {v['side']}")   # progress counter for the run dashboard
+        for rnd, i, n_, v in all_visits():
+            print(f"[{i}/{n_}] door {v['door']} {v['side']}" + (" (round 2)" if rnd > 1 else ""))   # progress counter for the run dashboard
             live["now"] = [v["door"], v["side"]]
             write_live(force=True)
-            rec = {"door": v["door"], "side": v["side"], "space": v["space"], "stops": []}
+            rec = {"door": v["door"], "side": v["side"], "space": v["space"], "round": rnd, "stops": []}
             shots = []
             for s in v["stops"]:
                 r, pos, cam = drive(v, s, f"{s['dist']:.1f}")
