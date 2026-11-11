@@ -138,7 +138,28 @@ def snap_to_gap(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
     return gap_centre(m, x, y, yaw, search, gap) or (x, y)
 
 
-def gap_centre(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
+def gap_centre(m, x, y, yaw, search=1.0, gap=(0.3, 1.4), line_search=0.3):
+    """The wall line first: of the lines parallel to the wall within +-line_search, the one with the most occupied cells over the sampled
+    stretch (ties: nearest); then _gap_on_line there. Returns (x, y) on that line, or None."""
+    occ, res = m["occ"], m["res"]
+    h, w = occ.shape
+    along_x = abs(math.cos(yaw)) < 0.5
+    k = int(round((search + gap[1]) / res))
+    best_o, best_n = 0.0, -1
+    for j in sorted(range(-int(round(line_search / res)), int(round(line_search / res)) + 1), key=abs):
+        o = j * res
+        n = 0
+        for i in range(-k, k + 1):
+            px, py = (x + i * res, y + o) if along_x else (x + o, y + i * res)
+            r, c = _cell(m, px, py)
+            n += (not (0 <= r < h and 0 <= c < w)) or bool(occ[r, c])
+        if n > best_n:
+            best_o, best_n = o, n
+    lx, ly = (x, y + best_o) if along_x else (x + best_o, y)
+    return _gap_on_line(m, lx, ly, yaw, search, gap)
+
+
+def _gap_on_line(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)):
     """Open doors are gaps in the wall on the map. The wall line through (x, y) runs across yaw (a multiple of pi / 2). Sample it every res
     over +-(search + gap[1]); a sample is open when all cells within +-0.15 m across the wall are free (outside the map = occupied). Gaps =
     runs of open samples not touching either end, with length within gap and centre within search of (x, y). Returns the nearest centre, else (x, y)."""

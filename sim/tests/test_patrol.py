@@ -41,7 +41,9 @@
 #     side of the wall), across-wall offset (along the opened door's normal) < 0.3 m, and along-wall distance <= 1.5 * o width + margin
 #     (the swung or slid panel lies within one panel width beside the doorway).
 #   patrol.gap_centre(m, x, y, yaw, search=1.0, gap=(0.3, 1.4)) -> (x, y) | None: the gap snap_to_gap would move to, None when there is
-#     none (snap_to_gap(...) == gap_centre(...) or (x, y)). door_tour never drops a candidate that sits at a gap of its own as "beside an
+#     none (snap_to_gap(...) == gap_centre(...) or (x, y)). The wall line itself is found first: of the lines parallel to the
+#     wall within +-0.3 m (steps of res), the one with the most closed samples (fast3 run: estimates 0.17-0.25 m off the wall
+#     centre searched open floor and found no gap); the returned point is on that line. door_tour never drops a candidate that sits at a gap of its own as "beside an
 #     opened door" (fast run 2026-11-11: real door 5 is 1.40 m from opened door 4 on the same wall and was dropped).
 #   patrol.in_front_of_wall(box, depth, strip=6, tol=0.25) -> bool: inside = median valid depth (0 / nan invalid) in the middle half
 #     of the box (rows AND columns); wall = median valid depth in the two strips beside the box as door_estimate. True when
@@ -252,3 +254,11 @@ def test_gap_centre():
     assert patrol.gap_centre(m, 2.0, 3.0, -math.pi / 2) is None
     assert patrol.gap_centre(two_rooms(door_open=False), 5.6, 3.0, -math.pi / 2) is None
     assert patrol.snap_to_gap(m, 5.6, 3.0, -math.pi / 2) == patrol.gap_centre(m, 5.6, 3.0, -math.pi / 2)
+
+
+def test_gap_centre_finds_the_wall_line():
+    m = two_rooms()
+    x, y = patrol.gap_centre(m, 5.6, 3.25, -math.pi / 2)        # 0.25 m off the wall centre line (y = 3.0)
+    assert abs(x - 5.0) < 0.06 and abs(y - 3.0) < 0.06
+    x, y = patrol.gap_centre(m, 4.3, 2.78, math.pi / 2)
+    assert abs(x - 5.0) < 0.06 and abs(y - 3.0) < 0.06
