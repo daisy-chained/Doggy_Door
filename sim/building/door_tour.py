@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformListener
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import building as B, door_step, doors as D, hinge_look, patrol, robot  # noqa: E402
+from doorsim import building as B, door_step, doors as D, fog, hinge_look, patrol, robot  # noqa: E402
 
 REPO = SIM.parent
 IMG_W, HFOV = 640, 1.3          # robot camera = training rig (doorsim.robot)
@@ -108,6 +108,7 @@ def main():
                     "viewpoints over the floor map, look around, door-step every door it finds (needs --door-step)")
     ap.add_argument("--vp-spacing", type=float, default=1.5, help="patrol: m between viewpoints")
     ap.add_argument("--max-door-depth", type=float, default=4.0, help="patrol: ignore door boxes further than this (m)")
+    ap.add_argument("--fog-range", type=float, default=4.0, help="fog of war on the dashboard: camera range in m (0 = off)")
     ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
                     help="generator config (approach distances, robot_radius, min_door_gap) for the round-2 poses")
@@ -169,6 +170,8 @@ def main():
     live_path = pathlib.Path(a.out).parent / "live.json" if a.out else None
     live = {"pose": None, "now": None, "opened": [], "reports": []}
     live_t = [0.0]
+    fog_map = (occ[0] if det is not None else hinge_look.load_map(a.building + ".map.yaml")) if a.fog_range > 0 else None
+    fog_f = fog.new(fog_map) if fog_map is not None else None
 
     def write_live(force=False):
         """OUT/live.json for the run dashboard (Madelief 2026-11-11: show it in real time): robot pose, current door side,
@@ -179,6 +182,11 @@ def main():
         pos = where(nav, tf)
         if pos:
             live["pose"] = [round(v, 3) for v in pos]
+            if fog_f is not None:                              # fog of war: what the camera (0.20 m ahead of the base) has had in view
+                x, y, yaw = pos
+                fog.look(fog_f, occ[0] if det is not None else fog_map, (x + 0.20 * math.cos(yaw), y + 0.20 * math.sin(yaw)), yaw,
+                         HFOV, a.fog_range)
+                live["fog"] = fog.encode(fog_f)
         tmp = live_path.with_suffix(".tmp")
         tmp.write_text(json.dumps({**live, "time": time.time()}))
         tmp.replace(live_path)
@@ -411,6 +419,7 @@ def main():
                 break
             q = vps[0]
             done_vp.add((round(q[0], 2), round(q[1], 2)))
+            live["vp_done"] = live.get("vp_done", []) + [[round(q[0], 2), round(q[1], 2)]]
             pv, seen_n = {"door": "vp", "side": f"{q[0]:.1f}_{q[1]:.1f}"}, 0
             print(f"patrol: viewpoint {q[0]:.1f} {q[1]:.1f} ({len(vps) - 1} left), {len(cands)} candidates so far")
             for yaw in patrol.view_yaws(5, pos[2] if pos else 0.0):
@@ -491,10 +500,15 @@ def main():
     log = {"building": b.get("seed"), "start": a.start, "visits": []}
     try:
         for rnd, i, n_, v in all_visits():
-            print(f"[{i}/{n_}] door {v['door']} {v['side']}" + (" (round 2)" if rnd > 1 else ""))   # progress counter for the run dashboard
+            if a.patrol:                                       # patrol: progress = viewpoints (dashboard reads live.json)
+                print(f"candidate {v['cand']}: door {v['door']} {v['side']}")
+            else:
+                print(f"[{i}/{n_}] door {v['door']} {v['side']}" + (" (round 2)" if rnd > 1 else ""))   # progress counter for the run dashboard
             live["now"] = [v["door"], v["side"]]
             write_live(force=True)
             rec = {"door": v["door"], "side": v["side"], "space": v["space"], "round": rnd, "stops": []}
+            if "cand" in v:
+                rec["cand"] = v["cand"]
             shots = []
             for s in v["stops"]:
                 r, pos, cam = drive(v, s, f"{s['dist']:.1f}")
