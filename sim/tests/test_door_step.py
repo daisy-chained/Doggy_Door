@@ -35,6 +35,10 @@
 #     At most len(ANSWERS) reports (answer() never repeats a wrong one; None -> stop).
 #     log = {"reports": [report, ...] (each with "right": bool), "looks": [all looks incl. stops], "first_right": bool,
 #            "right": bool (any report right), "n_reports": int}.
+#
+#   door_step.truth(door_type, edge_pts, hinge_xy) -> ("sliding", None) | ("hinged", side): side = the key of edge_pts
+#     ({"left": (x, y), "right": (x, y)}, image sides) nearest to hinge_xy.
+#   door_step.is_right(report, truth) -> bool: same type, and for hinged the same hinge_side (push_pull / sure don't count: 1a).
 import pathlib, sys
 import pytest
 
@@ -168,3 +172,13 @@ def test_visit_at_most_n_max_reports():
     log = ds.visit([L()], lambda e, a: set(), lambda r: False, None, ALL_FREE, n_max=1, p_slide=0.1)
     assert log["n_reports"] == 3  # only 3 answers exist, each wrong one buys one more look
     assert not log["right"]
+
+
+def test_truth_and_is_right():
+    pts = {"left": (0.0, 1.0), "right": (0.0, -1.0)}
+    assert ds.truth("hinged", pts, (0.05, 0.9)) == ("hinged", "left")
+    assert ds.truth("hinged", pts, (0.0, -0.95)) == ("hinged", "right")
+    assert ds.truth("sliding", pts, None) == ("sliding", None)
+    rep = {"type": "hinged", "hinge_side": "left", "push_pull": "push", "sure": False}
+    assert ds.is_right(rep, ("hinged", "left")) and not ds.is_right(rep, ("hinged", "right")) and not ds.is_right(rep, ("sliding", None))
+    assert ds.is_right({"type": "sliding", "hinge_side": None, "push_pull": None, "sure": False}, ("sliding", None))

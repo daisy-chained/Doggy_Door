@@ -21,6 +21,10 @@
 #     from the corridor through open doors only, each with door_gap(d) >= cfg["min_door_gap"] (missing key = 0: any open door; Claude
 #     2026-11-11, research-based, from the tours: no room stop worked with a gap < 0.45 m, ~1/3 at 0.55-0.6, ~1/2 at 0.6-0.65, 81/85
 #     above 0.65 -> 0.6 m = 2 x robot_radius, the robot's Nav2 size).
+#   building.hinge_xy(d) -> (x, y) world point of a hinged door's hinge axis (doors._layout "hinge", via _world); None for sliding.
+#   building.open_position(d) -> joint value of the door fully open as the sim opens it: hinged 1.2 * swing_x * hinge_y (rad), sliding
+#     0.9 * travel = round(0.9 * (width + 0.15), 3) (m), i.e. doors._layout(spec, SLOT)["open"]. (Reactive door step, 2026-11-11.)
+#   building.door_topic(d) -> gz topic of the door's joint position controller in the building world: "/door_<id>_panel/cmd_pos".
 #   building.door_gap(d) -> clear width (m) the robot can pass with the panel where it stands; 0 when closed. Hinged (turned th = 1.2 *
 #     open_frac rad about a hinge at one jamb, swung out of the wall): width * sin(th) = distance from the far jamb to the panel. Sliding
 #     (panel width + 0.08, shifted 0.9 * (width + 0.15) * open_frac): shift - 0.04, clamped to [0, width].
@@ -480,3 +484,23 @@ def test_min_door_gap_missing_means_any_open_door():
                 if d["state"] == "open" and (a in reach) != (c in reach):
                     reach |= {a, c}; grow = True
         assert all(p["reachable"] == (p["space"] in reach) for p in b["poses"])
+
+
+@pytest.mark.parametrize("seed", SEEDS[:4])
+def test_hinge_xy_open_position_topic(seed):
+    b = building.make_building(CFG, seed)
+    sdf = building.building_sdf(b, "t")
+    for d in b["doors"]:
+        assert f"<topic>{building.door_topic(d)}</topic>" in sdf and building.door_topic(d) == f"/door_{d['id']}_panel/cmd_pos"
+        w = d["spec"]["width"]
+        if d["spec"]["door_type"] == "sliding":
+            assert building.hinge_xy(d) is None
+            assert building.open_position(d) == pytest.approx(round(0.9 * (w + 0.15), 3))
+        else:
+            hx, hy = building.hinge_xy(d)
+            # the hinge axis sits at one jamb: about half the panel from the door centre along the wall, within ~0.06 m of the wall line
+            ux, uy = -math.sin(d["yaw"]), math.cos(d["yaw"])
+            along = (hx - d["pos"][0]) * ux + (hy - d["pos"][1]) * uy
+            across = (hx - d["pos"][0]) * math.cos(d["yaw"]) + (hy - d["pos"][1]) * math.sin(d["yaw"])
+            assert abs(abs(along) - (w - 0.02) / 2) < 0.02 and abs(across) < 0.1
+            assert building.open_position(d) == pytest.approx(1.2 * d["spec"]["swing_x"] * d["spec"]["hinge_y"])
