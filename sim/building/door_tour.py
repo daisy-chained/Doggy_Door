@@ -60,6 +60,28 @@ def wait_sim(nav, seconds):
         rclpy.spin_once(nav, timeout_sec=0.05)
 
 
+def wait_active(nav, nodes=("map_server", "bt_navigator"), per_call=5.0, total=300.0):
+    """Like BasicNavigator.waitUntilNav2Active, but every get_state call has a timeout and is retried: a lost service response
+    ("failed to send response to /map_server/get_state (timeout)", 2026-11-11) made the stock wait hang forever."""
+    from lifecycle_msgs.srv import GetState
+    end = time.time() + total
+    for n in nodes:
+        cli = nav.create_client(GetState, f"/{n}/get_state")
+        while True:
+            if time.time() > end:
+                sys.exit(f"Nav2 node {n} not active after {total:.0f} s")
+            if cli.wait_for_service(timeout_sec=per_call):
+                fut = cli.call_async(GetState.Request())
+                rclpy.spin_until_future_complete(nav, fut, timeout_sec=per_call)
+                if fut.done() and fut.result() is not None and fut.result().current_state.label == "active":
+                    break
+                if not fut.done():
+                    fut.cancel()
+            time.sleep(1.0)
+        nav.destroy_client(cli)
+    print("Nav2 is ready (own check)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("building", help="path without extension, e.g. sim/building/out/bld_train_000")
@@ -94,7 +116,7 @@ def main():
     tf = Buffer()
     TransformListener(tf, nav)
     stop_pub = nav.create_publisher(Twist, "/cmd_vel", 1)
-    nav.waitUntilNav2Active(localizer="map_server")   # no AMCL: map -> odom comes from robot.launch.py
+    wait_active(nav)   # no AMCL: map -> odom comes from robot.launch.py; own wait with retries (stock one can hang)
 
     grab = None
     if a.frames:
