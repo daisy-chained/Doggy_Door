@@ -124,3 +124,75 @@ def test_frontiers_drop_small_and_sort_by_distance():
     assert len(fr) == 1 and fr[0]["x"] < 2.0                   # the blob's edge (< 1.0 m of cells) is dropped
     fr2 = patrol.frontiers(m, (8.0, 1.5), 0.25, 0.3, min_len=0.3)
     assert len(fr2) == 2 and fr2[0]["x"] > 7.0                 # nearest first from (8, 1.5): the blob
+
+
+# --- 2026-11-12 SLAM stall fix (Madelief: "Fix it and queue it"; technical rules = Claude decisions, dev log 2026-11-12) ---
+# The ring SLAM patrol stalled: one radar scan gives a spiky free area (unknown wedges between beams), only 0.57 m2 of it was
+# reachable, and the whole edge was ONE frontier whose goal was the robot's own spot.
+#   live_map.fill_gaps(m, cells=2) -> a NEW map dict (input unchanged): known-free mask = ~occ & ~unknown; closing = binary dilation
+#     then erosion with a (2*cells+1) square (cells outside the map count as not free in both steps); every UNKNOWN cell inside the
+#     closing becomes known free (occ False, unknown False). Known occupied cells (occ & ~unknown) never change. Same res / origin.
+#   patrol.frontiers(..., sectors=1, min_dist=0.0): sectors > 1 splits every cluster by direction from start: sector of a cell =
+#     floor((atan2(cell_y - start_y, cell_x - start_x) mod 2pi) / (2pi / sectors)) (cell centres); pieces = 8-connected groups of
+#     cluster cells within one sector; each piece is then treated as a cluster (min_len, goal, size). Goals closer than min_dist m to
+#     start are dropped. Defaults keep the old behaviour.
+
+
+def scan_blob(r_core=1.0, r_spike=2.5, n_spikes=24, size=8.0, res=0.05):
+    """Unknown map size x size m, start in the middle: a free disk of r_core plus n_spikes 1-cell-wide free rays out to r_spike."""
+    n = int(round(size / res))
+    unk = np.ones((n, n), bool)
+    c = n // 2
+    yy, xx = np.mgrid[0:n, 0:n]
+    unk[(yy - c) ** 2 + (xx - c) ** 2 <= (r_core / res) ** 2] = False
+    for k in range(n_spikes):
+        a = 2 * math.pi * k / n_spikes
+        for t in np.arange(0, r_spike / res, 0.5):
+            unk[int(round(c - t * math.sin(a))), int(round(c + t * math.cos(a)))] = False
+    m = {"occ": unk.copy(), "unknown": unk, "res": res, "origin": (0.0, 0.0)}
+    start = ((c + 0.5) * res, (n - 1 - c + 0.5) * res)
+    return m, start
+
+
+def test_fill_gaps_closes_narrow_unknown_keeps_walls_and_big_unknown():
+    m = grid_map(4.0, 4.0)
+    m["unknown"] = np.zeros_like(m["occ"])
+    H, W = m["occ"].shape
+    m["occ"][:, W // 2] = True                                # a known wall down the middle
+    m["unknown"][H // 2, 5:W // 2 - 5] = True                 # a 1-cell unknown line in free space: filled
+    m["unknown"][5:25, W // 2 + 10:W // 2 + 30] = True        # a 20 x 20 unknown block: its inside stays unknown
+    m["occ"] |= m["unknown"]
+    before = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in m.items()}
+    g = live_map.fill_gaps(m, cells=2)
+    assert all(np.array_equal(m[k], before[k]) for k in ("occ", "unknown"))     # input unchanged
+    assert not g["unknown"][H // 2, 10:W // 2 - 10].any() and not g["occ"][H // 2, 10:W // 2 - 10].any()
+    assert g["occ"][:, W // 2].all() and not g["unknown"][:, W // 2].any()      # wall kept
+    assert g["unknown"][10:20, W // 2 + 15:W // 2 + 25].all()                   # big unknown stays
+    assert g["res"] == m["res"] and g["origin"] == m["origin"]
+    assert not (g["occ"] & ~g["unknown"] & ~(m["occ"] & ~m["unknown"])).any()  # no new walls
+
+
+def test_fill_gaps_widens_a_spiky_scan():
+    m, start = scan_blob()
+    g = live_map.fill_gaps(m, cells=2)
+    assert patrol.reachable(g, start, 0.25).sum() > patrol.reachable(m, start, 0.25).sum()
+
+
+def test_frontiers_sectors_split_the_ring_and_min_dist():
+    m, start = scan_blob(r_spike=1.0)                          # a plain free disk: its whole edge is one frontier ring
+    old = patrol.frontiers(m, start, 0.25, 0.3)
+    assert len(old) == 1 and math.hypot(old[0]["x"] - start[0], old[0]["y"] - start[1]) < 0.3   # the stall: goal = start
+    new = patrol.frontiers(m, start, 0.25, 0.3, sectors=8, min_dist=0.5)
+    assert len(new) >= 4
+    assert all(math.hypot(f["x"] - start[0], f["y"] - start[1]) >= 0.5 for f in new)
+    dirs = {round(math.degrees(math.atan2(f["y"] - start[1], f["x"] - start[0])) / 45) % 8 for f in new}
+    assert len(dirs) >= 4                                      # goals in different directions
+    for f in new:
+        assert patrol.reachable(m, start, 0.25)[patrol._cell(m, f["x"], f["y"])]
+    d = [math.hypot(f["x"] - start[0], f["y"] - start[1]) for f in new]
+    assert d == sorted(d)
+
+
+def test_frontiers_defaults_unchanged():
+    m = half_known()
+    assert patrol.frontiers(m, (2.0, 1.5), 0.25, 0.3) == patrol.frontiers(m, (2.0, 1.5), 0.25, 0.3, sectors=1, min_dist=0.0)
