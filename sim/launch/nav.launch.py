@@ -42,7 +42,10 @@ def _setup(context):
         sp["slam_toolbox"]["ros__parameters"].update(
             {"use_sim_time": True, "base_frame": "base_link", "odom_frame": "odom", "map_frame": "map", "scan_topic": "/scan",
              "resolution": 0.05, "max_laser_range": float((p.get("lidar") or p["radar"])["range"][1]), "map_update_interval": 2.0,
-             "minimum_travel_distance": 0.2, "minimum_travel_heading": 0.3})
+             "minimum_travel_distance": 0.2, "minimum_travel_heading": 0.3,
+             # map->odom is stamped scan time + transform_timeout; scans land every 0.5 s, so the default 0.2 left gaps where Nav2
+             # failed goals ("extrapolation into the future", dev log 2026-11-12). 1.0 s covers two missed scans.
+             "transform_timeout": 1.0})
         slam_file = pathlib.Path("/tmp") / f"slam_{p['name']}.yaml"
         slam_file.write_text(yaml.safe_dump(sp, sort_keys=False))
         return [IncludeLaunchDescription(
