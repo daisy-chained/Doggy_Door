@@ -14,9 +14,11 @@ PLAT=${2:-sim/configs/robots/wheeled_low.yaml}
 X=${3:-1.0}
 Y=${4:-4.04}
 SLAM=${SLAM:-0}                                    # SLAM=1: slam_toolbox maps live, no given floor map (run 4)
+ODOM_NOISE=${ODOM_NOISE:-0}                        # ODOM_NOISE=1: drifting wheel odometry instead of the true pose (run 5)
 SCRIPT=${TOUR_SCRIPT:-sim/building/door_tour.py}   # what drives the robot (same arguments as door_tour.py)
 SL=false; [ "$SLAM" = 1 ] && SL=true
-OUT=runs/tours/$(basename "$BLD")_$(basename "$PLAT" .yaml)$([ "$SLAM" = 1 ] && echo _slam)_$(date +%Y%m%d_%H%M)
+ON=false; [ "$ODOM_NOISE" = 1 ] && ON=true
+OUT=runs/tours/$(basename "$BLD")_$(basename "$PLAT" .yaml)$([ "$SLAM" = 1 ] && echo _slam)$([ "$ODOM_NOISE" = 1 ] && echo _drift)_$(date +%Y%m%d_%H%M)
 mkdir -p "$OUT"
 
 set +u; source /opt/ros/jazzy/setup.bash; set -u   # ROS setup scripts use unset variables
@@ -31,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setsid ros2 launch sim/launch/robot.launch.py world:="$BLD.sdf" platform:="$PLAT" x:="$X" y:="$Y" slam:="$SL" > "$OUT/robot.log" 2>&1 &
+setsid ros2 launch sim/launch/robot.launch.py world:="$BLD.sdf" platform:="$PLAT" x:="$X" y:="$Y" slam:="$SL" odom_noise:="$ON" > "$OUT/robot.log" 2>&1 &
 PIDS+=($!)
 echo "waiting for the robot (odom)"
 timeout 120 bash -c 'until ros2 topic echo --once /odom >/dev/null 2>&1; do sleep 2; done' || { echo "robot did not come up"; exit 1; }

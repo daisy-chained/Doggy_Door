@@ -247,7 +247,7 @@ def _lidar_link(p):
             f'<visual name="visual">{_geom(_cylinder(r, h))}{_material(0.1, 0.1, 0.1)}</visual>{sensor}</link>')
 
 
-def _plugins(p, name):
+def _plugins(p, name, odom_truth=False):
     w, lim = p["wheel"], p["limits"]
     drive = (f'<plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">'
              f'<left_joint>left_wheel_joint</left_joint><right_joint>right_wheel_joint</right_joint>'
@@ -260,9 +260,10 @@ def _plugins(p, name):
              f'<odom_publish_frequency>30</odom_publish_frequency>'
              f'<max_velocity>{_f(lim["max_speed"])}</max_velocity>'
              f'<max_angular_velocity>{_f(lim["max_turn"])}</max_angular_velocity></plugin>')
+    o_topic, t_topic = ("/odom_truth", "/tf_truth") if odom_truth else ("/odom", "/tf")   # odom_truth: odom_noise_node.py makes /odom + /tf
     truth = ('<plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">'
              '<odom_frame>odom</odom_frame><robot_base_frame>base_link</robot_base_frame>'
-             '<odom_topic>/odom</odom_topic><tf_topic>/tf</tf_topic><dimensions>2</dimensions>'
+             f'<odom_topic>{o_topic}</odom_topic><tf_topic>{t_topic}</tf_topic><dimensions>2</dimensions>'
              '<odom_publish_frequency>30</odom_publish_frequency></plugin>')
     joints = ('<plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">'
               '<topic>/joint_states</topic></plugin>')
@@ -270,7 +271,7 @@ def _plugins(p, name):
 
 
 # --- public builders ---
-def robot_sdf(p, name="robot"):
+def robot_sdf(p, name="robot", odom_truth=False):
     """SDF text for the robot model (not static; spawn it with a model pose on the floor)."""
     axis = "<axis><xyz>0 1 0</xyz></axis>"
     ring_links, ring_joints = _ring_links(p, name)
@@ -288,7 +289,7 @@ def robot_sdf(p, name="robot"):
         *ring_joints,
         _joint("lidar_joint", "fixed", "base_link", "lidar_link") if "lidar" in p
         else _joint("radar_joint", "fixed", "base_link", "radar_link"),
-        _plugins(p, name),
+        _plugins(p, name, odom_truth),
     ]
     body = "\n    ".join(parts)
     return (f'<?xml version="1.0"?>\n<sdf version="1.9">\n  <model name="{name}">\n    <static>false</static>\n'
@@ -321,13 +322,14 @@ def static_tfs(p):
     return out
 
 
-def bridge_args(p, name="robot"):
+def bridge_args(p, name="robot", odom_truth=False):
     """ros_gz_bridge parameter_bridge arguments: /cmd_vel ROS -> GZ, everything else GZ -> ROS."""
     out = ["/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist"]
     for topic, ros, gz in [
         ("/clock", "rosgraph_msgs/msg/Clock", "gz.msgs.Clock"),
-        ("/odom", "nav_msgs/msg/Odometry", "gz.msgs.Odometry"),
-        ("/tf", "tf2_msgs/msg/TFMessage", "gz.msgs.Pose_V"),
+        *([("/odom_truth", "nav_msgs/msg/Odometry", "gz.msgs.Odometry")] if odom_truth else
+          [("/odom", "nav_msgs/msg/Odometry", "gz.msgs.Odometry"),
+           ("/tf", "tf2_msgs/msg/TFMessage", "gz.msgs.Pose_V")]),
         ("/scan" if "lidar" in p else "/radar_raw", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan"),
         (f"/{name}/rgbd/image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
         (f"/{name}/rgbd/depth_image", "sensor_msgs/msg/Image", "gz.msgs.Image"),

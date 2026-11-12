@@ -460,6 +460,21 @@ def main():
         return ok, nb
 
     patrol_log = {"viewpoints": [], "candidates": []}
+    # drift run (Madelief 2026-11-12: "remove its perfect position"): Gazebo's true pose on /odom_truth, only to score the robot's own
+    from nav_msgs.msg import Odometry
+    truth = [None]
+    nav.create_subscription(Odometry, "/odom_truth", lambda msg: truth.__setitem__(0, msg.pose.pose), 10)
+
+    def pose_error():
+        """[position error m, heading error deg] of the robot's own map pose vs the true pose; None without /odom_truth."""
+        rclpy.spin_once(nav, timeout_sec=0.05)
+        est, t = where(nav, tf), truth[0]
+        if est is None or t is None:
+            return None
+        o = t.orientation
+        ty = math.atan2(2 * (o.w * o.z + o.x * o.y), 1 - 2 * (o.y ** 2 + o.z ** 2))
+        return [round(math.hypot(est[0] - t.position.x, est[1] - t.position.y), 3),
+                round(math.degrees(math.atan2(math.sin(est[2] - ty), math.cos(est[2] - ty))), 1)]
 
     def patrol_visits():
         """Run 3 (no markers): viewpoints over the reachable floor map, 5 views each; door boxes -> candidates on the map; every
@@ -569,7 +584,10 @@ def main():
                 k_ = patrol.add_candidate(cands, {"x": g["x"], "y": g["y"], "yaw": gyaw, "width": g["width"], "at_gap": True, "from_map": True})
                 cands[k_]["at_gap"] = True
                 n_gap += 1
-            patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n, "map_gaps_added": n_gap})
+            pe = pose_error()
+            patrol_log["viewpoints"].append({"xy": list(q), "door_boxes_used": seen_n, "map_gaps_added": n_gap, "pose_err": pe})
+            if pe:
+                print(f"pose error {pe[0]:.2f} m, {pe[1]:.1f} deg")
             for k in sorted((k for k in range(len(cands)) if k not in handled),
                             key=lambda k: math.hypot(cands[k]["x"] - here[0], cands[k]["y"] - here[1])):
                 handled.add(k)
@@ -620,6 +638,11 @@ def main():
                 live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
                 write_live(force=True)
         print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
+        pes = [v["pose_err"] for v in patrol_log["viewpoints"] if v.get("pose_err")]
+        if pes:
+            patrol_log["pose_error"] = {"mean_m": round(sum(e[0] for e in pes) / len(pes), 3), "max_m": max(e[0] for e in pes),
+                                        "last_m": pes[-1][0], "max_deg": max(abs(e[1]) for e in pes)}
+            print("pose error: " + ", ".join(f"{k} {v}" for k, v in patrol_log["pose_error"].items()))
         if a.slam and a.out:                                   # score the SLAM map against the true floor map (not used by the robot)
             stem = pathlib.Path(a.out).parent / "slam_map"
             subprocess.run(["ros2", "run", "nav2_map_server", "map_saver_cli", "-f", str(stem), "--ros-args", "-p", "use_sim_time:=true"],
