@@ -178,7 +178,8 @@ def main():
                 msg = slam_msg[0]
                 if msg is not None:
                     i = msg.info
-                    occ[0] = live_map.from_grid(i.width, i.height, i.resolution, (i.origin.position.x, i.origin.position.y), msg.data)
+                    occ[0] = live_map.fill_gaps(   # close the unknown wedges between radar beams (2026-11-12 stall: a spiky first scan)
+                        live_map.from_grid(i.width, i.height, i.resolution, (i.origin.position.x, i.origin.position.y), msg.data))
             t_map = time.time()
             while occ[0] is None and time.time() - t_map < 120:
                 refresh_map()
@@ -500,7 +501,8 @@ def main():
             live["vps"] = [[round(q[0], 2), round(q[1], 2)] for q in vps]
             write_live(force=True)
             if not vps and a.slam:                             # no grid point left: nearest edge of the map, if any (Madelief 2026-11-11)
-                fr = [f for f in patrol.frontiers(occ[0], here, a.pass_radius, a.look_radius, min_len=a.frontier_min)
+                fr = [f for f in patrol.frontiers(occ[0], here, a.pass_radius, a.look_radius, min_len=a.frontier_min,
+                                                 sectors=8, min_dist=0.5)   # 2026-11-12: one ring-shaped edge gave a goal on the robot's own spot
                       if all(math.hypot(f["x"] - t[0], f["y"] - t[1]) > 0.75 for t in tried_fr)]
                 if fr and len(tried_fr) < 40:
                     q = (fr[0]["x"], fr[0]["y"])

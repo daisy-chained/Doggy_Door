@@ -82,11 +82,14 @@ def _box(a, n):
     return cs[:, hi] - cs[:, lo] > 0
 
 
-def frontiers(m, start, pass_radius, radius, min_len=0.5, reach_out=1.0):
+def frontiers(m, start, pass_radius, radius, min_len=0.5, reach_out=1.0, sectors=1, min_dist=0.0):
     """[{"x", "y", "size"}] sorted nearest-first from start. Frontier cells: known-free cells 4-connected to start through known-free
     cells with an unknown cell among their 8 neighbours; clusters = 8-connected groups, dropped when under min_len / res cells. Goal per
     cluster: of the reachable(pass_radius) cells that are free(radius) and within reach_out m of a cluster cell, the one nearest the
-    cluster centroid (none -> skipped). size = cells * res (m)."""
+    cluster centroid (none -> skipped). size = cells * res (m). sectors > 1: every cluster is first split by direction from start
+    (sector of a cell centre = floor((atan2(dy, dx) mod 2pi) / (2pi / sectors))) into pieces = 8-connected groups of its cells in
+    one sector; each piece then goes through min_len / goal / size like a cluster. Goals under min_dist m (straight line) from
+    start are dropped. Defaults give the old output."""
     occ, unk, res = m["occ"], m["unknown"], m["res"]
     h, w = occ.shape
     r0, c0 = _cell(m, *start)
@@ -138,6 +141,29 @@ def frontiers(m, start, pass_radius, radius, min_len=0.5, reach_out=1.0):
                         cells.append((rr, cc))
                         q.append((rr, cc))
         cl.append(cells)
+    if sectors > 1:
+        pieces = deque()
+        for cells in cl:
+            sec = {}
+            for a, b in cells:
+                ang = math.atan2(m["origin"][1] + (h - 1 - a + 0.5) * res - start[1], m["origin"][0] + (b + 0.5) * res - start[0])
+                sec[(a, b)] = int(math.floor((ang % (2 * math.pi)) / (2 * math.pi / sectors))) % sectors
+            left_p = set(cells)
+            for cell in cells:
+                if cell not in left_p:
+                    continue
+                left_p.discard(cell)
+                grp, q = [cell], deque([cell])
+                while q:
+                    a, b = q.popleft()
+                    for rr in range(a - 1, a + 2):
+                        for cc in range(b - 1, b + 2):
+                            if (rr, cc) in left_p and sec[(rr, cc)] == sec[cell]:
+                                left_p.discard((rr, cc))
+                                grp.append((rr, cc))
+                                q.append((rr, cc))
+                pieces.append(grp)
+        cl = pieces
     out = []
     for cells in cl:
         if len(cells) < min_len / res:
@@ -164,7 +190,10 @@ def frontiers(m, start, pass_radius, radius, min_len=0.5, reach_out=1.0):
         d = (gr + ra - rs.mean()) ** 2 + (gc + ca - cs_.mean()) ** 2
         i = int(np.argmin(d))
         r, c = int(gr[i] + ra), int(gc[i] + ca)
-        out.append({"x": m["origin"][0] + (c + 0.5) * res, "y": m["origin"][1] + (h - 1 - r + 0.5) * res, "size": len(cells) * res})
+        g = {"x": m["origin"][0] + (c + 0.5) * res, "y": m["origin"][1] + (h - 1 - r + 0.5) * res, "size": len(cells) * res}
+        if min_dist > 0 and math.hypot(g["x"] - start[0], g["y"] - start[1]) < min_dist:
+            continue
+        out.append(g)
     return sorted(out, key=lambda g: math.hypot(g["x"] - start[0], g["y"] - start[1]))
 
 
