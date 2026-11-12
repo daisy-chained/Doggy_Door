@@ -118,6 +118,9 @@ def main():
     ap.add_argument("--slam", action="store_true", help="run 4 (Madelief 2026-11-11): no floor map; patrol on the live SLAM /map "
                     "(launch with SLAM=1), viewpoint grid fixed at the start, re-planned after every viewpoint; no grid point left -> "
                     "nearest map edge (frontier). Needs --patrol")
+    ap.add_argument("--ring", type=int, default=0, help="patrol: the robot has a camera ring of this many cameras (platform "
+                    "camera_ring.count, e.g. wheeled_ring.yaml; Madelief 2026-11-12): one stop per viewpoint, all cameras at once, "
+                    "instead of 5 turning views")
     ap.add_argument("--frontier-min", type=float, default=0.5, help="--slam: ignore map edges shorter than this (m)")
     ap.add_argument("--time-limit", type=float, default=80.0, help="patrol: minutes (tour_test.sh kills at 90)")
     ap.add_argument("--building-config", default=str(REPO / "sim/configs/buildings_v1.yaml"),
@@ -140,10 +143,11 @@ def main():
         sys.exit("--slam needs --patrol")
     wait_active(nav, nodes=("bt_navigator",) if a.slam else ("map_server", "bt_navigator"))   # no AMCL: map -> odom comes from robot.launch.py; own wait with retries (stock one can hang)
 
-    grab = None
+    grab, ring_grab = None, {}
     if a.frames:
         from doorsim import stop_frames
         grab = stop_frames.Grabber(a.name)
+        ring_grab = {k: stop_frames.Grabber(a.name, k) for k in range(1, a.ring)}   # camera 0 = grab (the front camera)
     n_frame = 0
 
     bag = None
@@ -217,8 +221,9 @@ def main():
             live["pose"] = [round(v, 3) for v in pos]
             if fog_f is not None:                              # fog of war: what the camera (0.20 m ahead of the base) has had in view
                 x, y, yaw = pos
-                fog.look(fog_f, occ[0] if det is not None else fog_map, (x + 0.20 * math.cos(yaw), y + 0.20 * math.sin(yaw)), yaw,
-                         HFOV, a.fog_range)
+                for k in range(max(1, a.ring)):               # camera ring: every camera's cone (same head on the mast)
+                    fog.look(fog_f, occ[0] if det is not None else fog_map, (x + 0.20 * math.cos(yaw), y + 0.20 * math.sin(yaw)),
+                             yaw + 2 * math.pi * k / max(1, a.ring), HFOV, a.fog_range)
                 live["fog"] = fog.encode(fog_f)
         tmp = live_path.with_suffix(".tmp")
         tmp.write_text(json.dumps({**live, "time": time.time()}))
@@ -273,6 +278,24 @@ def main():
                 r["frame"] = d.name
                 n_frame += 1
         return r, pos, where(nav, tf, "camera_link")   # camera_link: x forward, y left (for the edge column)
+
+    def grab_ring(v):
+        """Camera ring (--ring): frames of cameras 1..N-1 where the robot stands now -> [(frame folder name, camera pose)]."""
+        nonlocal n_frame
+        out, after = [], nav.get_clock().now().nanoseconds
+        for k, g in ring_grab.items():
+            shot = g.grab(after, timeout=10)
+            cam = where(nav, tf, f"camera_link_{k}")
+            if shot is None or cam is None:
+                continue
+            pos = where(nav, tf)
+            d = pathlib.Path(a.frames) / f"{n_frame:03d}_door{v['door']}_{v['side']}_look_c{k}"
+            meta = {"building": a.building, "door": v["door"], "side": v["side"], "space": v["space"], "dist": None, "camera": k,
+                    "robot_pose": pos, "camera_xy_yaw": where(nav, tf, f"camera_optical_{k}"), "stamp_ns": shot["stamp_ns"]}
+            stop_frames.save_stop(d, shot["rgb"], shot["depth"], shot["seg"], shot["boxes"], shot["boxes3d"], meta)
+            n_frame += 1
+            out.append((d.name, cam))
+        return out
 
     def seen(cam, dets, edges):
         """Hinge near any of the edges in this look (edge column from the camera pose, give or take 0.15 m at that depth)."""
@@ -458,6 +481,9 @@ def main():
             here = (pos[0], pos[1]) if pos else tuple(a.start)
             if a.slam:                                         # the map grew since the last viewpoint: plan on the new one
                 refresh_map()
+                kn = int((~occ[0]["unknown"]).sum())
+                print(f"slam: map {occ[0]['occ'].shape[1]} x {occ[0]['occ'].shape[0]}, known {kn * occ[0]['res'] ** 2:.1f} m2, "
+                      f"stamp {slam_msg[0].header.stamp.sec if slam_msg[0] else None}")   # 2026-11-12: first SLAM patrol's map never grew
                 if not a.no_map_gaps:
                     gaps = patrol.map_gaps(occ[0])
             # once planned, a viewpoint stays planned until visited (Claude 2026-11-11: inside a room behind a door it opened, or with
@@ -498,37 +524,38 @@ def main():
             live["vp_done"] = live.get("vp_done", []) + [[round(q[0], 2), round(q[1], 2)]]
             pv, seen_n = {"door": "vp", "side": f"{q[0]:.1f}_{q[1]:.1f}", "space": None}, 0
             print(f"patrol: viewpoint {q[0]:.1f} {q[1]:.1f} ({len(vps) - 1} left), {len(cands)} candidates so far")
-            for yaw in patrol.view_yaws(5, pos[2] if pos else 0.0):
+            # camera ring (Madelief 2026-11-12): one stop, keep the heading, all cameras; else 5 turning views
+            for yaw in patrol.view_yaws(1 if a.ring > 1 else 5, pos[2] if pos else 0.0):
                 if time.time() > t_end:
                     break
                 r, _, cam = drive(pv, {"x": q[0], "y": q[1], "yaw": yaw, "dist": None}, "look")
                 if r["result"] != "SUCCEEDED":
                     break                                      # can't get to this viewpoint: next one
-                if not r.get("frame") or not cam:
-                    continue
-                dd, depth = detect(r["frame"]), frame_depth(r["frame"])
-                for box, sc, lab in zip(dd["boxes"], dd["scores"], dd["labels"]):
-                    if lab != "door" or sc < 0.5 or depth is None:
-                        continue
-                    if patrol.spans_frame(box, depth.shape[1]):     # edge to edge: at a wall, no door edge seen (Claude 2026-11-11)
-                        continue
-                    e = patrol.door_estimate(box, depth, cam, fx, cx)
-                    if not e or e["depth"] > a.max_door_depth:
-                        continue
-                    if patrol.in_front_of_wall(box, depth):        # furniture / a swung panel stands in front of the wall (Claude 2026-11-11)
-                        continue
-                    sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
-                    if sn:
-                        # open doors are wall gaps on the map; their box includes the swung panel (Claude 2026-11-11: 3 false doors -> matches offline)
-                        gc = patrol.gap_centre(occ[0], sn[0], sn[1], sn[2])
-                        gx, gy = gc or sn[:2]
-                        est_ = {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"], "at_gap": gc is not None}
-                        # beside a door it opened itself: that's its panel, unless it sits at a doorway gap of its own (Claude 2026-11-11)
-                        if not est_["at_gap"] and patrol.near_opened(est_, opened_here):
+                views = ([(r["frame"], cam)] if r.get("frame") and cam else []) + (grab_ring(pv) if a.ring > 1 else [])
+                for frame_, cam in views:
+                    dd, depth = detect(frame_), frame_depth(frame_)
+                    for box, sc, lab in zip(dd["boxes"], dd["scores"], dd["labels"]):
+                        if lab != "door" or sc < 0.5 or depth is None:
                             continue
-                        k_ = patrol.add_candidate(cands, est_)
-                        cands[k_]["at_gap"] = bool(cands[k_].get("at_gap")) or est_["at_gap"]   # merges keep the first est's flag
-                        seen_n += 1
+                        if patrol.spans_frame(box, depth.shape[1]):     # edge to edge: at a wall, no door edge seen (Claude 2026-11-11)
+                            continue
+                        e = patrol.door_estimate(box, depth, cam, fx, cx)
+                        if not e or e["depth"] > a.max_door_depth:
+                            continue
+                        if patrol.in_front_of_wall(box, depth):        # furniture / a swung panel stands in front of the wall (Claude 2026-11-11)
+                            continue
+                        sn = patrol.snap_to_wall(occ[0], e["x"], e["y"], cam[:2])
+                        if sn:
+                            # open doors are wall gaps on the map; their box includes the swung panel (Claude 2026-11-11: 3 false doors -> matches offline)
+                            gc = patrol.gap_centre(occ[0], sn[0], sn[1], sn[2])
+                            gx, gy = gc or sn[:2]
+                            est_ = {"x": gx, "y": gy, "yaw": sn[2], "width": e["width"], "at_gap": gc is not None}
+                            # beside a door it opened itself: that's its panel, unless it sits at a doorway gap of its own (Claude 2026-11-11)
+                            if not est_["at_gap"] and patrol.near_opened(est_, opened_here):
+                                continue
+                            k_ = patrol.add_candidate(cands, est_)
+                            cands[k_]["at_gap"] = bool(cands[k_].get("at_gap")) or est_["at_gap"]   # merges keep the first est's flag
+                            seen_n += 1
             n_gap = 0
             for g in gaps:                                     # doorways on the map the camera has now seen, not known yet (any side)
                 if any(math.hypot(c["x"] - g["x"], c["y"] - g["y"]) < 0.6 for c in cands) or not gap_seen(g):

@@ -1,0 +1,15 @@
+# Wheeled base + 360 degree radar + camera ring (Madelief 2026-11-12: radar replaces lidar, it works in smoke; camera ring so the
+# robot does not turn at viewpoints). Same as wheeled_low_fast but no lidar. Radar specs = Claude, research-based: Navtech
+# CTS350-X style spinning radar, 400 azimuths per turn at 4 Hz, ~2 deg beam, 4 cm range bins = c / 2B for 4 GHz bandwidth at
+# 77-81 GHz; mounted on top of the base at the centre. Raw ring -> /radar_raw, sim/building/radar_node.py makes /scan from it.
+name: wheeled_ring
+footprint: {length: 0.50, width: 0.43}   # m, x (forward) by y; also the Nav2 footprint
+base: {height: 0.20, clearance: 0.06, mass: 15.0}   # m body box height, m floor to body bottom, kg
+wheel: {radius: 0.10, width: 0.05, separation: 0.37, mass: 0.5}   # separation = centre to centre of the two drive wheels
+caster: {radius: 0.04}                  # two passive ball casters, front + back (diff drive needs them to stay level)
+mast_height: 0.40                       # m, camera optical centre above the floor (training range 0.3 - 1.5 m)
+camera: {forward: 0.20}                 # m, camera ahead of the base centre
+limits: {max_speed: 0.8, max_turn: 1.8} # m/s, rad/s (fast variant, Claude 2026-11-11: frames are taken standing still, so no blur)
+camera_ring: {count: 5}             # cameras around the mast head, yaw 2 pi k / 5 (k = 0 = the front camera)
+# radar min range 0.3 m: the mast (x 0.20, visual only) is 0.2 m from the radar and would show as an obstacle inside the robot (Claude 2026-11-12)
+radar: {height: 0.32, forward: 0.0, range: [0.3, 15.0], azimuths: 400, rate: 4, beam_deg: 2.0, range_res: 0.04, noise: 0.02}

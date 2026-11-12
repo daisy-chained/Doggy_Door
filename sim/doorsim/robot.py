@@ -2,7 +2,9 @@
 
 Frames: base_link x forward, y left, z up; the model origin sits on the floor under the base centre, so every link pose in the
 SDF is in that model frame. Wheeled differential-drive base: two drive wheels on revolute joints (axis y), two frictionless ball
-casters (front + back) on fixed joints, a camera on a mast and a planar lidar. The camera carries the same four sensors as the
+casters (front + back) on fixed joints, a camera on a mast and a planar lidar OR a 360 degree radar (Madelief 2026-11-12: radar
+replaces lidar, works in smoke; its raw ring goes to /radar_raw, sim/building/radar_node.py makes /scan). Optional camera_ring:
+count N cameras around the mast head (yaw 2 pi k / N, k >= 1 on topics <name>/cam<k>/..., RING_RATE Hz). The camera carries the same four sensors as the
 training rig in door_room_v3.sdf (rgbd, 2d boxes, 3d boxes, instance segmentation; fov 1.3, 640 x 480, clip 0.1-12, 10 Hz).
 The robot has no Label plugin: it is background for the segmentation camera. Also gives the Nav2 footprint string, the static TFs
 (Gazebo does not publish the fixed sensor frames) and the ros_gz_bridge arguments. Only stdlib + PyYAML."""
@@ -15,6 +17,7 @@ import yaml
 CASTER_MASS = 0.2      # kg per ball caster (not in the YAML)
 SENSOR_MASS = 0.1      # kg for camera_link / lidar_link, so the physics engine has something to work with
 MAST_RADIUS = 0.01     # m, mast visual only (no collision)
+RING_RATE = 2          # Hz of the ring cameras k >= 1 (frames are only grabbed standing still)
 FOV, IMG_W, IMG_H, CLIP, RATE = 1.3, 640, 480, (0.1, 12), 10   # the training rig (door_room_v3.sdf)
 
 _REQUIRED = {
@@ -25,11 +28,10 @@ _REQUIRED = {
     "caster": ("radius",),
     "mast_height": None,
     "camera": ("forward",),
-    "lidar": ("height", "forward", "range", "samples"),
     "limits": ("max_speed", "max_turn"),
 }
 _POSITIVE = ["footprint.length", "footprint.width", "base.height", "base.mass", "wheel.radius", "wheel.width",
-             "wheel.separation", "wheel.mass", "caster.radius", "mast_height", "lidar.height", "lidar.samples",
+             "wheel.separation", "wheel.mass", "caster.radius", "mast_height",
              "limits.max_speed", "limits.max_turn"]
 
 
@@ -57,9 +59,27 @@ def load_platform(path):
             raise ValueError(f"{path}: '{dotted}' must be a positive number, got {v!r}")
     if p["base"]["clearance"] < 0:
         raise ValueError(f"{path}: 'base.clearance' must not be negative")
-    rng = p["lidar"]["range"]
-    if not (isinstance(rng, (list, tuple)) and len(rng) == 2 and 0 < rng[0] < rng[1]):
-        raise ValueError(f"{path}: 'lidar.range' must be [min, max] with 0 < min < max, got {rng!r}")
+    if "lidar" not in p and "radar" not in p:
+        raise ValueError(f"{path}: needs a 'lidar' or a 'radar' key")
+    for key, subs, pos in (("lidar", ("height", "forward", "range", "samples"), ("height", "samples")),
+                           ("radar", ("height", "forward", "range", "azimuths", "rate", "beam_deg", "range_res", "noise"),
+                            ("height", "azimuths", "rate", "beam_deg", "range_res", "noise"))):
+        if key not in p:
+            continue
+        for sub in subs:
+            if not isinstance(p[key], dict) or sub not in p[key]:
+                raise ValueError(f"{path}: missing key '{key}.{sub}'")
+        for sub in pos:
+            v = p[key][sub]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                raise ValueError(f"{path}: '{key}.{sub}' must be a positive number, got {v!r}")
+        rng = p[key]["range"]
+        if not (isinstance(rng, (list, tuple)) and len(rng) == 2 and 0 < rng[0] < rng[1]):
+            raise ValueError(f"{path}: '{key}.range' must be [min, max] with 0 < min < max, got {rng!r}")
+    if "camera_ring" in p:
+        n = p["camera_ring"].get("count") if isinstance(p["camera_ring"], dict) else None
+        if isinstance(n, bool) or not isinstance(n, int) or n < 2:
+            raise ValueError(f"{path}: 'camera_ring.count' must be an integer >= 2, got {n!r}")
     w = p["wheel"]
     if w["separation"] + w["width"] > p["footprint"]["width"]:
         raise ValueError(f"{path}: wheels stick out past the base (separation {w['separation']} + wheel width {w['width']}"
@@ -150,11 +170,21 @@ def _caster_link(p, name, sign):
             f'<visual name="visual">{_geom(_sphere(r))}{_material(0.3, 0.3, 0.3)}</visual></link>')
 
 
-def _camera(name, topic, kind, extra=""):
-    return (f'<sensor name="{name}" type="{kind}"><topic>{topic}</topic><update_rate>{RATE}</update_rate>'
-            f'<always_on>true</always_on><gz_frame_id>camera_optical</gz_frame_id><camera>{extra}'
+def _camera(name, topic, kind, extra="", frame="camera_optical", rate=RATE):
+    return (f'<sensor name="{name}" type="{kind}"><topic>{topic}</topic><update_rate>{rate}</update_rate>'
+            f'<always_on>true</always_on><gz_frame_id>{frame}</gz_frame_id><camera>{extra}'
             f'<horizontal_fov>{FOV}</horizontal_fov><image><width>{IMG_W}</width><height>{IMG_H}</height></image>'
             f'<clip><near>{CLIP[0]}</near><far>{CLIP[1]}</far></clip></camera></sensor>')
+
+
+def _camera_sensors(topic, sfx="", frame="camera_optical", rate=RATE):
+    """The four sensors of one camera: topic = <name> (camera 0) or <name>/cam<k>; sfx = "" or "_<k>"."""
+    return "".join([
+        _camera(f"rgbd{sfx}", f"{topic}/rgbd", "rgbd_camera", "", frame, rate),
+        _camera(f"boxes{sfx}", f"{topic}/boxes", "boundingbox_camera", "<box_type>2d</box_type>", frame, rate),
+        _camera(f"boxes3d{sfx}", f"{topic}/boxes3d", "boundingbox_camera", "<box_type>3d</box_type>", frame, rate),
+        _camera(f"seg{sfx}", f"{topic}/seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>", frame, rate),
+    ])
 
 
 def _camera_link(p, name="robot"):
@@ -165,15 +195,42 @@ def _camera_link(p, name="robot"):
         mast = (f'<visual name="mast">{_pose(z=-mast_len / 2)}{_geom(_cylinder(MAST_RADIUS, mast_len))}'
                 f'{_material(0.4, 0.4, 0.4)}</visual>')
     body = "<box><size>0.0400 0.0800 0.0400</size></box>"
-    sensors = "".join([
-        _camera("rgbd", f"{name}/rgbd", "rgbd_camera"),
-        _camera("boxes", f"{name}/boxes", "boundingbox_camera", "<box_type>2d</box_type>"),
-        _camera("boxes3d", f"{name}/boxes3d", "boundingbox_camera", "<box_type>3d</box_type>"),
-        _camera("seg", f"{name}/seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>"),
-    ])
     return (f'<link name="camera_link">{_pose(x=p["camera"]["forward"], z=p["mast_height"])}'
             f'{_inertial(SENSOR_MASS, _box_inertia(SENSOR_MASS, 0.04, 0.08, 0.04))}'
-            f'<visual name="body">{_geom(body)}{_material(0.1, 0.1, 0.1)}</visual>{mast}{sensors}</link>')
+            f'<visual name="body">{_geom(body)}{_material(0.1, 0.1, 0.1)}</visual>{mast}{_camera_sensors(name)}</link>')
+
+
+def ring_yaws(p):
+    """Yaw of each camera of the ring (camera 0 = front, yaw 0); [0.0] without a camera_ring."""
+    n = p["camera_ring"]["count"] if "camera_ring" in p else 1
+    return [2 * math.pi * k / n for k in range(n)]
+
+
+def _ring_links(p, name):
+    links, joints = [], []
+    for k, yaw in enumerate(ring_yaws(p)):
+        if k == 0:
+            continue
+        links.append(f'<link name="camera_link_{k}">{_pose(x=p["camera"]["forward"], z=p["mast_height"], yaw=yaw)}'
+                     f'{_inertial(SENSOR_MASS, _box_inertia(SENSOR_MASS, 0.04, 0.08, 0.04))}'
+                     f'<visual name="body">{_geom("<box><size>0.0400 0.0800 0.0400</size></box>")}{_material(0.1, 0.1, 0.1)}</visual>'
+                     f'{_camera_sensors(f"{name}/cam{k}", f"_{k}", f"camera_optical_{k}", RING_RATE)}</link>')
+        joints.append(_joint(f"camera_joint_{k}", "fixed", "base_link", f"camera_link_{k}"))
+    return links, joints
+
+
+def _radar_link(p):
+    rad = p["radar"]
+    lo, hi = rad["range"]
+    r, h = 0.05, 0.06
+    sensor = (f'<sensor name="radar" type="gpu_lidar"><topic>radar_raw</topic><update_rate>{rad["rate"]}</update_rate>'
+              f'<always_on>true</always_on><gz_frame_id>radar_link</gz_frame_id><lidar><scan><horizontal>'
+              f'<samples>{int(rad["azimuths"])}</samples><resolution>1</resolution><min_angle>{_f(-math.pi)}</min_angle>'
+              f'<max_angle>{_f(math.pi)}</max_angle></horizontal></scan>'
+              f'<range><min>{_f(lo)}</min><max>{_f(hi)}</max><resolution>0.0100</resolution></range></lidar></sensor>')
+    return (f'<link name="radar_link">{_pose(x=rad["forward"], z=rad["height"])}'
+            f'{_inertial(SENSOR_MASS, _cyl_inertia(SENSOR_MASS, r, h))}'
+            f'<visual name="visual">{_geom(_cylinder(r, h))}{_material(0.1, 0.1, 0.1)}</visual>{sensor}</link>')
 
 
 def _lidar_link(p):
@@ -216,17 +273,21 @@ def _plugins(p, name):
 def robot_sdf(p, name="robot"):
     """SDF text for the robot model (not static; spawn it with a model pose on the floor)."""
     axis = "<axis><xyz>0 1 0</xyz></axis>"
+    ring_links, ring_joints = _ring_links(p, name)
     parts = [
         _base_link(p),
         _wheel_link(p, "left_wheel", +1), _wheel_link(p, "right_wheel", -1),
         _caster_link(p, "front_caster", +1), _caster_link(p, "rear_caster", -1),
-        _camera_link(p, name), _lidar_link(p),
+        _camera_link(p, name), *ring_links,
+        _lidar_link(p) if "lidar" in p else _radar_link(p),
         _joint("left_wheel_joint", "revolute", "base_link", "left_wheel", axis),
         _joint("right_wheel_joint", "revolute", "base_link", "right_wheel", axis),
         _joint("front_caster_joint", "fixed", "base_link", "front_caster"),
         _joint("rear_caster_joint", "fixed", "base_link", "rear_caster"),
         _joint("camera_joint", "fixed", "base_link", "camera_link"),
-        _joint("lidar_joint", "fixed", "base_link", "lidar_link"),
+        *ring_joints,
+        _joint("lidar_joint", "fixed", "base_link", "lidar_link") if "lidar" in p
+        else _joint("radar_joint", "fixed", "base_link", "radar_link"),
         _plugins(p, name),
     ]
     body = "\n    ".join(parts)
@@ -242,12 +303,22 @@ def nav2_footprint(p):
 
 def static_tfs(p):
     """[(parent, child, [x, y, z], [roll, pitch, yaw])] for the fixed sensor frames (z = height above the floor)."""
-    lid = p["lidar"]
-    return [
-        ("base_link", "camera_link", [p["camera"]["forward"], 0.0, p["mast_height"]], [0.0, 0.0, 0.0]),
+    cam = [p["camera"]["forward"], 0.0, p["mast_height"]]
+    out = [
+        ("base_link", "camera_link", cam, [0.0, 0.0, 0.0]),
         ("camera_link", "camera_optical", [0.0, 0.0, 0.0], [-math.pi / 2, 0.0, -math.pi / 2]),
-        ("base_link", "lidar_link", [lid["forward"], 0.0, lid["height"]], [0.0, 0.0, 0.0]),
     ]
+    for k, yaw in enumerate(ring_yaws(p)):
+        if k:
+            out += [("base_link", f"camera_link_{k}", list(cam), [0.0, 0.0, yaw]),
+                    (f"camera_link_{k}", f"camera_optical_{k}", [0.0, 0.0, 0.0], [-math.pi / 2, 0.0, -math.pi / 2])]
+    if "lidar" in p:
+        lid = p["lidar"]
+        out.append(("base_link", "lidar_link", [lid["forward"], 0.0, lid["height"]], [0.0, 0.0, 0.0]))
+    else:
+        rad = p["radar"]
+        out.append(("base_link", "radar_link", [rad["forward"], 0.0, rad["height"]], [0.0, 0.0, 0.0]))
+    return out
 
 
 def bridge_args(p, name="robot"):
@@ -257,7 +328,7 @@ def bridge_args(p, name="robot"):
         ("/clock", "rosgraph_msgs/msg/Clock", "gz.msgs.Clock"),
         ("/odom", "nav_msgs/msg/Odometry", "gz.msgs.Odometry"),
         ("/tf", "tf2_msgs/msg/TFMessage", "gz.msgs.Pose_V"),
-        ("/scan", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan"),
+        ("/scan" if "lidar" in p else "/radar_raw", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan"),
         (f"/{name}/rgbd/image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
         (f"/{name}/rgbd/depth_image", "sensor_msgs/msg/Image", "gz.msgs.Image"),
         (f"/{name}/rgbd/camera_info", "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo"),

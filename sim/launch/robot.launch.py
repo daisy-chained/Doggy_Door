@@ -7,8 +7,9 @@
 What it starts:
 - Gazebo (server only unless gui:=true), the world running;
 - the robot from the platform YAML (doorsim.robot.robot_sdf), spawned at x / y / yaw on the floor;
-- ros_gz_bridge for /cmd_vel, /odom, /tf, /clock, /scan, /<name>/rgbd/*, /joint_states (doorsim.robot.bridge_args);
-- static tfs base_link -> camera_link -> camera_optical, base_link -> lidar_link;
+- ros_gz_bridge for /cmd_vel, /odom, /tf, /clock, /scan (lidar platform) or /radar_raw (radar platform), /<name>/rgbd/*, /joint_states (doorsim.robot.bridge_args);
+- radar platform: sim/building/radar_node.py turns /radar_raw into /scan (beam, range bins, noise);
+- static tfs base_link -> camera_link -> camera_optical (+ ring cameras), base_link -> lidar_link / radar_link;
 - map -> odom = identity (ground-truth localisation: Gazebo's OdometryPublisher gives the true world pose as odom -> base_link,
   so no wheel-slip drift; AMCL / SLAM later).
 """
@@ -51,6 +52,9 @@ def _setup(context):
         *([] if arg("slam").lower() == "true" else
           [_tf("map", "odom", [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])]),   # odom = true world pose (robot.py); with slam, slam_toolbox publishes it
     ]
+    if "radar" in p:
+        actions.append(ExecuteProcess(cmd=["python3", str(SIM / "building" / "radar_node.py"), "--platform", arg("platform")],
+                                      output="screen"))
     actions += [_tf(*t) for t in robot.static_tfs(p)]
     return actions
 

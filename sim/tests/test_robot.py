@@ -94,7 +94,8 @@ def test_load_platform_rejects_bad_files(tmp_path, bad):
 
 def test_links_and_joints(plat):
     m = model(plat)
-    for n in ["base_link", "left_wheel", "right_wheel", "front_caster", "rear_caster", "camera_link", "lidar_link"]:
+    for n in ["base_link", "left_wheel", "right_wheel", "front_caster", "rear_caster", "camera_link",
+              "lidar_link" if "lidar" in plat else "radar_link"]:
         link(m, n)
     for side, sign in [("left", 1), ("right", -1)]:
         j = m.find(f"joint[@name='{side}_wheel_joint']")
@@ -155,6 +156,8 @@ def test_camera_height_and_rig(plat):
 
 
 def test_lidar(plat):
+    if "lidar" not in plat:
+        pytest.skip("radar platform (test_radar_ring.py)")
     m = model(plat)
     lid = link(m, "lidar_link")
     assert pose_of(lid)[2] == pytest.approx(plat["lidar"]["height"])
@@ -217,15 +220,17 @@ def test_static_tfs(plat):
     assert xyz == pytest.approx([plat["camera"]["forward"], 0, plat["mast_height"]])
     xyz, rpy = tfs[("camera_link", "camera_optical")]
     assert xyz == pytest.approx([0, 0, 0]) and rpy == pytest.approx([-math.pi / 2, 0, -math.pi / 2])
-    xyz, rpy = tfs[("base_link", "lidar_link")]
-    assert xyz == pytest.approx([plat["lidar"]["forward"], 0, plat["lidar"]["height"]])
+    if "lidar" in plat:
+        xyz, rpy = tfs[("base_link", "lidar_link")]
+        assert xyz == pytest.approx([plat["lidar"]["forward"], 0, plat["lidar"]["height"]])
 
 
 def test_bridge_args(plat):
     args = robot.bridge_args(plat)
     assert "/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist" in args
     want = {"/clock": "rosgraph_msgs/msg/Clock[gz.msgs.Clock", "/odom": "nav_msgs/msg/Odometry[gz.msgs.Odometry",
-            "/tf": "tf2_msgs/msg/TFMessage[gz.msgs.Pose_V", "/scan": "sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
+            "/tf": "tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+            "/scan" if "lidar" in plat else "/radar_raw": "sensor_msgs/msg/LaserScan[gz.msgs.LaserScan",
             "/robot/rgbd/image": "sensor_msgs/msg/Image[gz.msgs.Image", "/robot/rgbd/depth_image": "sensor_msgs/msg/Image[gz.msgs.Image",
             "/robot/rgbd/camera_info": "sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/joint_states": "sensor_msgs/msg/JointState[gz.msgs.Model"}

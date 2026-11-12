@@ -9,10 +9,11 @@ from doorsim import glass
 from doorsim.frames import boxes_from_msg
 
 
-def TOPICS(name="robot"):
-    """gz topics of the robot model's camera sensors."""
-    return {"rgb": f"/{name}/rgbd/image", "depth": f"/{name}/rgbd/depth_image", "seg": f"/{name}/seg/labels_map",
-            "boxes": f"/{name}/boxes", "boxes3d": f"/{name}/boxes3d"}
+def TOPICS(name="robot", cam=0):
+    """gz topics of the robot model's camera sensors; cam k >= 1 = ring camera k (/<name>/cam<k>/...)."""
+    b = f"/{name}" if cam == 0 else f"/{name}/cam{cam}"
+    return {"rgb": f"{b}/rgbd/image", "depth": f"{b}/rgbd/depth_image", "seg": f"{b}/seg/labels_map",
+            "boxes": f"{b}/boxes", "boxes3d": f"{b}/boxes3d"}
 
 
 def door_of(label):
@@ -36,9 +37,9 @@ def save_stop(d, rgb, depth, seg, boxes2d, boxes3d, meta):
 
 
 class Grabber:
-    """Subscribes the robot's camera topics; grab() returns the newest set of messages stamped at or after a time."""
+    """Subscribes the robot's camera topics (cam = ring camera index, 0 = front); grab() returns the newest set of messages stamped at or after a time."""
 
-    def __init__(self, name="robot"):
+    def __init__(self, name="robot", cam=0):
         # gz imports here so the module (door_of, save_stop) works without gz-transport
         from doorsim.gzsim import Node
         from gz.msgs10.annotated_axis_aligned_2d_box_v_pb2 import AnnotatedAxisAligned2DBox_V
@@ -47,7 +48,7 @@ class Grabber:
         types = {"rgb": GzImage, "depth": GzImage, "seg": GzImage,
                  "boxes": AnnotatedAxisAligned2DBox_V, "boxes3d": AnnotatedOriented3DBox_V}
         self.node, self.latest, self.lock = Node(), {}, threading.Lock()
-        for key, topic in TOPICS(name).items():
+        for key, topic in TOPICS(name, cam).items():
             self.node.subscribe(types[key], topic, self._cb(key))
 
     def _cb(self, key):
