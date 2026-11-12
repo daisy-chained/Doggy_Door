@@ -396,6 +396,10 @@ def load(run_dir, device="cpu"):
     meta = json.loads((run_dir / "best" / "heads.json").read_text())
     meta["min_px"] = json.loads((run_dir / "config.json").read_text())["min_px"]
     meta["input"] = meta.get("input", "rgb")  # runs from before the input option
+    if (run_dir / "ensemble.json").exists():  # ensemble.build output: members pooled, meta of the ensemble
+        from . import ensemble
+        members = json.loads((run_dir / "ensemble.json").read_text())["members"]
+        return ensemble.Ensemble([load(m, device)[0] for m in members]).to(device).eval(), meta
     model = Model(meta["backbone"], meta["heads"], pretrained=False, in_ch=CHANNELS[meta["input"]])
     model.load_state_dict(torch.load(run_dir / "best" / "model.pt", map_location="cpu"))
     return model.to(device).eval(), meta
