@@ -5,7 +5,7 @@
 Per real door of the building: found = some candidate matched it (patrol.match, within 0.5 m) and its door step got a right report
 (any try); first try = the first report was right. Per door side the same. Candidates that match no real door = false doors
 (the robot ran a door step at a wall / opening that isn't a door). Doors the robot never put a candidate on = missed."""
-import json, pathlib, sys
+import re, json, pathlib, sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -15,8 +15,8 @@ def score(run):
     pl = t.get("patrol")
     if pl is None:
         return None
-    bid = run.name.split("bld_train_")[1][:3]
-    b = json.loads((REPO / f"sim/building/out/bld_train_{bid}.building.json").read_text())
+    split, bid = re.match(r"bld_([a-z]+)_(\d{3})", run.name).groups()   # bld_train_007_..., bld_test_100_...
+    b = json.loads((REPO / f"sim/building/out/bld_{split}_{bid}.building.json").read_text())
     steps = {v.get("cand"): v.get("door_step") or {} for v in t["visits"] if v.get("cand") is not None}
     sides = {}                                                  # (door, side) -> {"first": bool, "right": bool}
     false = 0
