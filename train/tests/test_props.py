@@ -48,7 +48,7 @@ def test_labels_from_attributes():
     assert props.labels(DOOR_B, "door") == {"opening": "slide", "hinge_side": "none", "glass": "no", "door_type": "sliding"}  # sliding: no hinge
     assert props.labels({"handle_type": "knob"}, "handle") == {"handle_type": "knob"}
     assert set(props.HEADS["door"]) == {"opening", "hinge_side", "glass", "door_type", "state"} and set(props.HEADS["handle"]) == {"handle_type"}
-    assert props.HEADS["handle"]["handle_type"] == ["lever", "knob", "flush_pull"]
+    assert props.HEADS["handle"]["handle_type"] == ["lever", "knob", "flush_pull", "pull_bar", "push_plate"]  # v8 (2026-11-13): new types appended
 
 
 # --- crops ---
