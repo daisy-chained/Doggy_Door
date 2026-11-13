@@ -92,7 +92,7 @@ def test_dataset_jitter_only_when_training(export_dir):
 def test_model_one_head_per_property_and_subset():
     m = props.Model("resnet18", props.HEADS["door"], pretrained=False)
     out = m(torch.zeros(2, 3, 64, 64))
-    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2), "door_type": (2, 2), "state": (2, 2)}
+    assert {k: v.shape for k, v in out.items()} == {"opening": (2, 3), "hinge_side": (2, 3), "glass": (2, 2), "door_type": (2, 3), "state": (2, 2)}
     one = props.Model("resnet18", {"glass": props.HEADS["door"]["glass"]}, pretrained=False)
     assert set(one(torch.zeros(1, 3, 64, 64))) == {"glass"}        # a single head = a separate model
 
