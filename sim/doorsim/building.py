@@ -531,7 +531,7 @@ def door_labels(d):
     """{part: label id} of one door (see the module docstring)."""
     base, spec = 10 * d["id"], d["spec"]
     out = {"panel": base + 1, "handle_front": base + 2, "handle_back": base + 4}
-    if spec["glass"]:
+    if doors.has_pane(spec):
         out["glass"] = base + 3
     if doors._has_hinges(spec):
         out.update({f"hinge_{i}": base + 5 + i for i in range(3)})
@@ -553,8 +553,8 @@ def _door_models(d):
     g, nm = doors._layout(spec, SLOT), _names(i)
     start = g["open"] * d["open_frac"] if d["state"] == "open" else 0.0
     parts = [_place(doors._door_model(SLOT, i, spec, g, nm, initial=start), d)]
-    if spec["glass"]:
-        parts.append(_place(doors._glass_model(SLOT, i, g, nm), d))
+    if doors.has_pane(spec):
+        parts.append(_place(doors._glass_model(SLOT, i, g, nm, spec), d))
     parts += [_place(doors._handle_model(SLOT, i, spec, g, f, nm), d) for f in ("front", "back")]
     if doors._has_hinges(spec):
         parts += [_place(doors._hinge_model(SLOT, i, spec, g, k, nm), d) for k in range(3)]

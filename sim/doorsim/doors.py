@@ -42,7 +42,10 @@ def sample_door(rng, cfg, slot, force=None):
         sliding = force["door_type"] == "sliding"
     if "glass" in force:
         glass = bool(force["glass"])
-    handle = "flush_pull" if sliding else _pick(rng, cfg["handle"])
+    if sliding:
+        handle = _pick(rng, cfg["sliding_handle"]) if "sliding_handle" in cfg else "flush_pull"  # new key: draws only when present
+    else:
+        handle = _pick(rng, cfg["handle"])
     if not sliding and "handle_type" in force:
         handle = force["handle_type"]
     spec = {"slot": slot, "door_type": "sliding" if sliding else "hinged", "glass": glass, "handle_type": handle,
@@ -58,7 +61,37 @@ def sample_door(rng, cfg, slot, force=None):
         spec["slide_y"] = -1 if SLOT_Y[slot] < 0 else 1
     else:
         spec["hinge_y"], spec["swing_x"] = int(rng.choice([-1, 1])), int(rng.choice([-1, 1]))
+    if "glazing" in cfg:  # v8: after every other draw; glass doors always "none" (the draw is still made)
+        gl = _pick(rng, cfg["glazing"])
+        spec["glazing"] = "none" if glass else gl
     return spec
+
+
+def face_handle(spec, face):
+    """Handle type on the `face` ("front" | "back"): push_plate doors have a plate on the push face and a pull bar on the pull face."""
+    if spec["handle_type"] == "push_plate":
+        return "push_plate" if seen_from(spec, face)["opening"] == "push" else "pull_bar"
+    return spec["handle_type"]
+
+
+def has_pane(spec):
+    """True if the door has a glass pane model: a glass door or a partly glazed (strip / panel) door."""
+    return bool(spec["glass"]) or spec.get("glazing", "none") != "none"
+
+
+def glass_rect(spec, g):
+    """Glass pane in the panel's link frame: (dy, dz, w, h) = centre offset along y and z, size. Deterministic from the spec."""
+    pw, ph = g["pw"], g["ph"]
+    kind = "none" if spec["glass"] else spec.get("glazing", "none")
+    frac = (round(spec["width"] * 1000) % 9) / 8  # 0..1, a stable pseudo-random number per door (no rng draw)
+    if kind == "strip":
+        w, h = 0.12 + 0.08 * frac, 0.6 * ph
+        lock = 1 if g["lock_y"] > g["y"] else -1
+        return (lock * (pw / 2 - 0.1 - w / 2), 0.05, w, h)
+    if kind == "panel":
+        h = (0.5 + 0.4 * frac) * ph / 2
+        return (0.0, ph / 2 - 0.1 - h / 2, pw - 0.3, h)
+    return (0.0, 0.02, pw - 0.2, ph - 0.24)
 
 
 def seen_from(spec, side):
@@ -310,6 +343,8 @@ def attributes(world, name):
         held, sliding = world["doors_heldout"][slot], spec["door_type"] == "sliding"
         d = {"id": 10 * k + 1, "class": 1, "door_type": spec["door_type"], "glass": spec["glass"], "heldout": held,
              "width": spec["width"], "height": spec["height"], "frame_style": spec["frame_style"]}
+        if "glazing" in spec:
+            d["glazing"] = spec["glazing"]
         if sliding:
             d["hangs_on"] = spec["hangs_on"]
         d["seen_from"] = {s: seen_from(spec, s) for s in ("front", "back")}
@@ -326,12 +361,12 @@ def attributes(world, name):
         d["keep_out"] = _keep_out(spec, g)
         objs[f"door_{slot}"] = d
         for suffix, face, hid in (("", "front", 10 * k + 2), ("_back", "back", 10 * k + 4)):
-            objs[f"handle_{slot}{suffix}"] = {"id": hid, "class": 2, "handle_type": spec["handle_type"], "door": f"door_{slot}",
+            objs[f"handle_{slot}{suffix}"] = {"id": hid, "class": 2, "handle_type": face_handle(spec, face), "door": f"door_{slot}",
                                               "face": face, "heldout": held}
         if _has_hinges(spec):
             for i in range(3):
                 objs[f"hinge_{slot}_{i}"] = {"id": 10 * k + 5 + i, "class": 3, "door": f"door_{slot}", "heldout": held}
-        if spec["glass"]:
+        if has_pane(spec):
             objs[f"glass_{slot}"] = {"id": 10 * k + 3, "class": None, "part": "glass_pane", "part_of": f"door_{slot}",
                                      "detach_topic": f"/glass_{slot}/detach", "attach_topic": f"/glass_{slot}/attach"}
     for p in clutter.POOL:
@@ -432,8 +467,18 @@ def _detach(model, topics=None):
 
 
 def _panel_visuals(spec, g):
-    """Visuals of the door panel in its link frame: one coloured box, or a frame (stiles + rails) around the glass pane."""
+    """Visuals of the door panel in its link frame: one coloured box, solid boxes around the pane of a partly glazed door, or a
+    frame (stiles + rails) around the glass pane."""
     pw, ph, t = g["pw"], g["ph"], 0.04
+    if not spec["glass"] and spec.get("glazing", "none") != "none":
+        dy, dz, w, h = glass_rect(spec, g)
+        y0, y1, z0, z1 = dy - w / 2, dy + w / 2, dz - h / 2, dz + h / 2
+        out = []
+        for n, ya, yb, za, zb in (("left", -pw / 2, y0, -ph / 2, ph / 2), ("right", y1, pw / 2, -ph / 2, ph / 2),
+                                  ("top", y0, y1, z1, ph / 2), ("bottom", y0, y1, -ph / 2, z0)):
+            if yb - ya > 1e-6 and zb - za > 1e-6:
+                out.append(_vis(f"part_{n}", (0, (ya + yb) / 2, (za + zb) / 2), _box(t, yb - ya, zb - za), spec["colour"]))
+        return out
     if not spec["glass"]:
         return [_vis("v", (0, 0, 0), _box(t, pw, ph), spec["colour"])]
     f, spec_f = spec["frame_colour"], "0.5 0.5 0.5 1"
@@ -481,7 +526,7 @@ def _door_model(slot, k, spec, g, names=None, initial=None):
         joint = (f'<joint name="slide" type="prismatic"><parent>frame_anchor</parent><child>panel</child><axis><xyz>0 {spec["slide_y"]} 0</xyz>'
                  f'<limit><lower>0</lower><upper>{g["travel"]}</upper></limit><dynamics><damping>20.0</damping></dynamics></axis></joint>')
         ctrl, gains, jname = "slide", "<p_gain>200</p_gain><i_gain>0.5</i_gain><d_gain>40</d_gain>", "slide"
-    children = [_detach(nm["handle_front"]), _detach(nm["handle_back"])] + ([_detach(nm["glass"], topics=True)] if spec["glass"] else [])
+    children = [_detach(nm["handle_front"]), _detach(nm["handle_back"])] + ([_detach(nm["glass"], topics=True)] if has_pane(spec) else [])
     children += [_detach(nm["hinge"].format(i)) for i in range(3) if _has_hinges(spec)]  # knuckles: own models so they get own labels
     body = "\n".join("        " + v for v in vis)
     start = "" if initial is None else f"<initial_position>{_g(initial)}</initial_position>"
@@ -507,14 +552,15 @@ def _door_model(slot, k, spec, g, names=None, initial=None):
 """
 
 
-def _glass_model(slot, k, g, names=None):
+def _glass_model(slot, k, g, names=None, spec=None):
+    dy, dz, w, h = glass_rect(spec, g) if spec is not None else (0, 0.02, g["pw"] - 0.2, g["ph"] - 0.24)
     return f"""    <model name="{_names(slot, names)["glass"]}">
-      <pose>{_pose(g["xc"], g["y"], g["zc"] + 0.02)} 0 0 0</pose>
+      <pose>{_pose(g["xc"], g["y"] + dy, g["zc"] + dz)} 0 0 0</pose>
       <link name="link">
         <gravity>false</gravity>
-        {_inertial(0.5, 0.01, g["pw"] - 0.2, g["ph"] - 0.24)}
+        {_inertial(0.5, 0.01, w, h)}
         <visual name="glass">
-          {_box(0.01, g["pw"] - 0.2, g["ph"] - 0.24)}
+          {_box(0.01, w, h)}
           <material><diffuse>0.75 0.88 0.92 1</diffuse><specular>0.9 0.9 0.9 1</specular></material>
           <transparency>0.85</transparency>
           <visibility_flags>2</visibility_flags>
@@ -532,6 +578,12 @@ def _handle_visuals(kind, bar):
     if kind == "flush_pull":
         return [_vis("plate", (-0.001, 0, 0), _box(0.002, 0.04, 0.16), (0.2, 0.2, 0.22), "0.4 0.4 0.4 1"),
                 _vis("grip", (-0.0025, 0, 0), _box(0.002, 0.025, 0.13), (0.05, 0.05, 0.05))]
+    if kind == "pull_bar":  # vertical bar on two standoffs
+        return [_vis("standoff_0", (-0.0125, 0, 0.12), _box(0.025, 0.02, 0.02), metal, spec),
+                _vis("standoff_1", (-0.0125, 0, -0.12), _box(0.025, 0.02, 0.02), metal, spec),
+                _vis("bar", (-0.035, 0, 0), _box(0.02, 0.02, 0.36), metal, spec)]
+    if kind == "push_plate":  # thin flat plate
+        return [_vis("plate", (-0.002, 0, 0), _box(0.004, 0.1, 0.3), metal, spec)]
     if kind == "knob":
         return [_vis("rose", rose_pose, "<geometry><cylinder><radius>0.03</radius><length>0.01</length></cylinder></geometry>", metal, spec),
                 _vis("neck", (-0.025, 0, 0, 0, 1.5708, 0), "<geometry><cylinder><radius>0.01</radius><length>0.03</length></cylinder></geometry>", metal, spec),
@@ -545,7 +597,7 @@ def _handle_model(slot, k, spec, g, face, names=None):
     front = face == "front"
     x = g["xc"] + (-0.02 if front else 0.02)  # the panel's face on that side
     bar = g["bar"] if front else -g["bar"]  # yaw pi turns local y around
-    vis = "\n".join("        " + v for v in _handle_visuals(spec["handle_type"], bar))
+    vis = "\n".join("        " + v for v in _handle_visuals(face_handle(spec, face), bar))
     name = _names(slot, names)["handle_front" if front else "handle_back"]
     return f"""    <model name="{name}">
       <pose>{_pose(x, g["lock_y"], 1.0)} 0 0 {0 if front else 3.14159}</pose>
@@ -647,8 +699,8 @@ def world_sdf(world, name):
         spec = world["doors"][slot]
         g = _layout(spec, slot)
         parts += ["\n", _door_model(slot, k, spec, g)]
-        if spec["glass"]:
-            parts.append(_glass_model(slot, k, g))
+        if has_pane(spec):
+            parts.append(_glass_model(slot, k, g, spec=spec))
         parts += [_handle_model(slot, k, spec, g, "front"), _handle_model(slot, k, spec, g, "back")]
         if _has_hinges(spec):
             parts += [_hinge_model(slot, k, spec, g, i) for i in range(3)]
