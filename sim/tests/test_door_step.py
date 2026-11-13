@@ -204,3 +204,20 @@ def test_empty_doorway_loses_to_hinges_and_other_side():
 def test_visit_empty_doorway_right_first():
     log = ds.visit([L()], lambda e, a: set(), lambda r: r["type"] == "sliding", None, ALL_FREE, empty_doorway=True)
     assert log["first_right"] and log["n_reports"] == 1
+
+
+# --- confidence option C (Madelief 2026-11-13, "A+b+c"): an unfamiliar-looking door's slide guess is not trusted ---
+# door_step.p_slide_trusted(frames) -> {"p": mean | None, "used": int, "unfamiliar": int}: frames = [{"p": P(slide) | None,
+#   "unfamiliar": bool}] from the property model per stop frame. Mean over frames with a p that are NOT unfamiliar; "p" None when
+#   none is left, so the door step falls back to its looks and trying the door (rule 2 above: p_slide None -> hinged first).
+#   "unfamiliar" = number of frames with a p that were flagged (frames without a p are not counted anywhere).
+def test_p_slide_trusted_drops_unfamiliar_frames():
+    fr = [{"p": 0.9, "unfamiliar": True}, {"p": 0.2, "unfamiliar": False}, {"p": 0.4, "unfamiliar": False}, {"p": None, "unfamiliar": True}]
+    r = ds.p_slide_trusted(fr)
+    assert r["p"] == pytest.approx(0.3) and r["used"] == 2 and r["unfamiliar"] == 1
+
+
+def test_p_slide_trusted_all_unfamiliar_or_empty():
+    assert ds.p_slide_trusted([{"p": 0.95, "unfamiliar": True}]) == {"p": None, "used": 0, "unfamiliar": 1}
+    assert ds.p_slide_trusted([]) == {"p": None, "used": 0, "unfamiliar": 0}
+    assert ds.p_slide_trusted([{"p": 0.7, "unfamiliar": False}])["p"] == pytest.approx(0.7)
