@@ -346,12 +346,13 @@ def occupancy(layout, doors_, res, clutter=None):
             fill(_opening_rect(d), False)
             continue
         spec, g = d["spec"], doors._layout(d["spec"], SLOT)
-        if spec["door_type"] == "hinged":
+        if doors.is_hinged_like(spec):
             th = g["open"] * d["open_frac"]
             hy, hx = spec["hinge_y"], g["hinge"][0]
-            y0 = g["hinge"][1]
-            for t in np.linspace(0, g["pw"], int(g["pw"] / res * 4) + 2):  # centre line of the panel, hinge -> lock edge
-                mark(*_world(d, hx + hy * t * math.sin(th), y0 - hy * t * math.cos(th)))
+            leaves = [(hy, th, g["hinge"][1])] + ([(-hy, -th, g["hinge_b"][1])] if doors.is_double(spec) else [])  # double: both leaves swing to swing_x
+            for hy_, th_, y0 in leaves:
+                for t in np.linspace(0, g["pw"], int(g["pw"] / res * 4) + 2):  # centre line of the panel, hinge -> lock edge
+                    mark(*_world(d, hx + hy_ * t * math.sin(th_), y0 - hy_ * t * math.cos(th_)))
         else:
             s, shift = spec["slide_y"], g["open"] * d["open_frac"]
             for t in np.linspace(-g["pw"] / 2, g["pw"] / 2, int(g["pw"] / res * 2) + 2):

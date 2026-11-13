@@ -13,7 +13,7 @@ from .data import load_input
 from .loop import flatten, git_info
 
 HEADS = {"door": {"opening": ["push", "pull", "slide"], "hinge_side": ["left", "right", "none"], "glass": ["no", "yes"],
-                  "door_type": ["hinged", "sliding"],  # door_type: opt-in head (cascade step A), not in the default heads
+                  "door_type": ["hinged", "sliding", "double"],  # door_type: opt-in head (cascade step A), not in the default heads
                   "state": ["closed", "open"]},  # state: opt-in head (closed-doors-only hinge rule), label only when the attributes have it
          "handle": {"handle_type": ["lever", "knob", "flush_pull", "pull_bar", "push_plate"]}}
 DEFAULT_HEADS = {"door": ["opening", "hinge_side", "glass"]}  # crops not listed: all their heads

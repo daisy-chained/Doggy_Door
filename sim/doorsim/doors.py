@@ -64,8 +64,21 @@ def sample_door(rng, cfg, slot, force=None):
     if "glazing" in cfg:  # v8: after every other draw; glass doors always "none" (the draw is still made)
         gl = _pick(rng, cfg["glazing"])
         spec["glazing"] = "none" if glass else gl
+    if "double" in cfg:  # v9: after every other draw, both always drawn (the stream doesn't depend on the outcome)
+        r, wd = rng.random(), rng.uniform(*cfg["double"]["width"])
+        if not sliding and (force.get("door_type") == "double" or ("door_type" not in force and r < cfg["double"]["p"])):
+            spec["door_type"], spec["width"] = "double", round(float(wd), 3)
     return spec
 
+
+def is_double(spec):
+    """True for a double door (a pair of hinged leaves in one opening, reported as one door)."""
+    return spec["door_type"] == "double"
+
+
+def is_hinged_like(spec):
+    """True for doors that swing on hinges: hinged and double (hinge_y / swing_x / door stop / knuckles apply to both)."""
+    return spec["door_type"] in ("hinged", "double")
 
 def face_handle(spec, face):
     """Handle type on the `face` ("front" | "back"): push_plate doors have a plate on the push face and a pull bar on the pull face."""
@@ -79,14 +92,17 @@ def has_pane(spec):
     return bool(spec["glass"]) or spec.get("glazing", "none") != "none"
 
 
-def glass_rect(spec, g):
-    """Glass pane in the panel's link frame: (dy, dz, w, h) = centre offset along y and z, size. Deterministic from the spec."""
+def glass_rect(spec, g, leaf=0):
+    """Glass pane in the panel's link frame: (dy, dz, w, h) = centre offset along y and z, size. Deterministic from the spec.
+    `leaf` = 0 (active leaf) or 1 (other leaf of a double door, mirrored)."""
     pw, ph = g["pw"], g["ph"]
     kind = "none" if spec["glass"] else spec.get("glazing", "none")
     frac = (round(spec["width"] * 1000) % 9) / 8  # 0..1, a stable pseudo-random number per door (no rng draw)
     if kind == "strip":
         w, h = 0.12 + 0.08 * frac, 0.6 * ph
         lock = 1 if g["lock_y"] > g["y"] else -1
+        if is_double(spec):  # the lock edges of a double door face the middle of the opening
+            lock = -spec["hinge_y"] * (1 if leaf == 0 else -1)
         return (lock * (pw / 2 - 0.1 - w / 2), 0.05, w, h)
     if kind == "panel":
         h = (0.5 + 0.4 * frac) * ph / 2
@@ -97,7 +113,7 @@ def glass_rect(spec, g):
 def seen_from(spec, side):
     """What the camera on `side` sees of the door's operation (push / pull and left / right flip with the side)."""
     flip = side == "back"
-    if spec["door_type"] == "hinged":
+    if is_hinged_like(spec):
         push = (spec["swing_x"] > 0) != flip
         right = (spec["hinge_y"] < 0) != flip
         return {"opening": "push" if push else "pull", "hinge_side": "right" if right else "left"}
@@ -297,14 +313,23 @@ def _layout(spec, slot):
     w, h, y = spec["width"], spec["height"], SLOT_Y[slot]
     tw, proud = TRIM[spec["frame_style"]]
     g = {"y": y, "w": w, "h": h, "tw": tw, "proud": proud}
-    if spec["door_type"] == "hinged":
+    if is_hinged_like(spec):
         stop = bool(spec.get("door_stop"))
         sx = spec["swing_x"]
-        g.update(pw=w - 0.02, ph=h - 0.02, xc=WALL_X + 0.03 * sx if stop else WALL_X, zc=h / 2)  # faces at WALL_X + 0.01 s .. + 0.05 s
+        double = is_double(spec)
+        g.update(pw=(w - 0.03) / 2 if double else w - 0.02, ph=h - 0.02, xc=WALL_X + 0.03 * sx if stop else WALL_X, zc=h / 2)  # faces at WALL_X + 0.01 s .. + 0.05 s
         g["open"] = 1.2 * spec["swing_x"] * spec["hinge_y"]  # revolute about +z: the lock edge moves to -lock*sin(theta) in x
         g["range"] = [-1.6, 0.0] if g["open"] < 0 else [0.0, 1.6]
-        g["hinge"] = [WALL_X + (0.05 if stop else 0.02) * sx, y + spec["hinge_y"] * g["pw"] / 2, g["zc"]]
-        g["lock_y"] = y - spec["hinge_y"] * (g["pw"] / 2 - 0.08)  # handle: 0.08 in from the lock edge
+        hx = WALL_X + (0.05 if stop else 0.02) * sx
+        if double:  # two leaves, each hinged at its outer edge (0.01 clear of the jamb), 0.01 gap in the middle
+            g["leaves"] = 2
+            g["leaf_y"] = [y + spec["hinge_y"] * (w - 0.01) / 4, y - spec["hinge_y"] * (w - 0.01) / 4]
+            g["hinge"] = [hx, y + spec["hinge_y"] * (w - 0.02) / 2, g["zc"]]
+            g["hinge_b"] = [hx, y - spec["hinge_y"] * (w - 0.02) / 2, g["zc"]]
+            g["lock_y"] = y + spec["hinge_y"] * 0.09  # handle on the active leaf, next to the meeting stiles
+        else:
+            g["hinge"] = [hx, y + spec["hinge_y"] * g["pw"] / 2, g["zc"]]
+            g["lock_y"] = y - spec["hinge_y"] * (g["pw"] / 2 - 0.08)  # handle: 0.08 in from the lock edge
         g["bar"] = spec["hinge_y"]  # lever bar points toward the hinge (world y sign)
     else:
         sgn = 1 if spec["hangs_on"] == "back" else -1
@@ -326,7 +351,7 @@ def _keep_out(spec, g):
         return {"x": [round(x0, 3), round(x1, 3)], "y": [round(y0, 3), round(y1, 3)]}
     strip = lambda side: rect(side, 0.3, y - w / 2 - g["tw"] - 0.1, y + w / 2 + g["tw"] + 0.1)  # opening + trim + handle margin
     out = {"front": [strip("front")], "back": [strip("back")]}
-    if spec["door_type"] == "hinged":
+    if is_hinged_like(spec):
         side = "back" if spec["swing_x"] > 0 else "front"
         out[side].append(rect(side, w + 0.05, y - w / 2 - 0.15, y + w / 2 + 0.15))
     else:
@@ -355,6 +380,8 @@ def attributes(world, name):
         else:
             d["joint"] = {"name": "hinge", "type": "revolute", "unit": "rad", "open": g["open"], "range": g["range"]}
             d["hinge_world"] = {"point": [round(v, 4) for v in g["hinge"]], "direction": [0, 0, 1]}
+            if is_double(spec):
+                d["joint_b"] = {"name": "hinge_b", "type": "revolute", "unit": "rad", "open": -g["open"], "range": [-g["range"][1], -g["range"][0]]}
         # approach, not *_world: frames.build_frame converts every *_world key into the camera frame
         d["approach"] = {"front": {"point": [WALL_X - 0.05, g["y"], 1.05], "direction": [-1, 0, 0]},
                          "back": {"point": [WALL_X + 0.05, g["y"], 1.05], "direction": [1, 0, 0]}}
@@ -364,11 +391,12 @@ def attributes(world, name):
             objs[f"handle_{slot}{suffix}"] = {"id": hid, "class": 2, "handle_type": face_handle(spec, face), "door": f"door_{slot}",
                                               "face": face, "heldout": held}
         if _has_hinges(spec):
-            for i in range(3):
+            for i in range(6 if is_double(spec) else 3):
                 objs[f"hinge_{slot}_{i}"] = {"id": 10 * k + 5 + i, "class": 3, "door": f"door_{slot}", "heldout": held}
         if has_pane(spec):
-            objs[f"glass_{slot}"] = {"id": 10 * k + 3, "class": None, "part": "glass_pane", "part_of": f"door_{slot}",
-                                     "detach_topic": f"/glass_{slot}/detach", "attach_topic": f"/glass_{slot}/attach"}
+            for suffix in ("", "_b") if is_double(spec) else ("",):
+                objs[f"glass_{slot}{suffix}"] = {"id": 10 * k + 3, "class": None, "part": "glass_pane", "part_of": f"door_{slot}",
+                                                 "detach_topic": f"/glass_{slot}{suffix}/detach", "attach_topic": f"/glass_{slot}{suffix}/attach"}
     for p in clutter.POOL:
         objs[p["name"]] = {"id": p["id"], "class": None, "role": p["role"], "kind": p["kind"], "place": p["place"], "size": p["size"]}
     win = world.get("window")
@@ -460,18 +488,18 @@ def _names(slot, names=None):
                      "glass": f"glass_{slot}", "hinge": f"hinge_{slot}_{{}}"}
 
 
-def _detach(model, topics=None):
+def _detach(model, topics=None, parent="panel"):
     t = f"<detach_topic>/{model}/detach</detach_topic><attach_topic>/{model}/attach</attach_topic>" if topics else ""
     return (f'<plugin filename="gz-sim-detachable-joint-system" name="gz::sim::systems::DetachableJoint">'
-            f"<parent_link>panel</parent_link><child_model>{model}</child_model><child_link>link</child_link>{t}</plugin>")
+            f"<parent_link>{parent}</parent_link><child_model>{model}</child_model><child_link>link</child_link>{t}</plugin>")
 
 
-def _panel_visuals(spec, g):
+def _panel_visuals(spec, g, leaf=0):
     """Visuals of the door panel in its link frame: one coloured box, solid boxes around the pane of a partly glazed door, or a
     frame (stiles + rails) around the glass pane."""
     pw, ph, t = g["pw"], g["ph"], 0.04
     if not spec["glass"] and spec.get("glazing", "none") != "none":
-        dy, dz, w, h = glass_rect(spec, g)
+        dy, dz, w, h = glass_rect(spec, g, leaf)
         y0, y1, z0, z1 = dy - w / 2, dy + w / 2, dz - h / 2, dz + h / 2
         out = []
         for n, ya, yb, za, zb in (("left", -pw / 2, y0, -ph / 2, ph / 2), ("right", y1, pw / 2, -ph / 2, ph / 2),
@@ -487,13 +515,15 @@ def _panel_visuals(spec, g):
 
 
 def _has_hinges(spec):
-    return spec["door_type"] == "hinged" and bool(spec.get("door_stop"))
+    return is_hinged_like(spec) and bool(spec.get("door_stop"))
 
 
 def _hinge_model(slot, k, spec, g, i, names=None):
     """One hinge knuckle (door_stop worlds): a metal cylinder on the hinge axis at the hinge edge, own label 10 k + 5 + i, held on the panel."""
-    z = (0.25, g["h"] / 2, g["h"] - 0.25)[i]
+    z = (0.25, g["h"] / 2, g["h"] - 0.25)[i % 3]
     x, y = g["xc"] + 0.02 * spec["swing_x"], g["y"] + spec["hinge_y"] * (g["pw"] / 2 + 0.005)
+    if is_double(spec):  # knuckles 0-2 on the active leaf's hinge edge, 3-5 on the other leaf's
+        y = g["hinge"][1] + spec["hinge_y"] * 0.005 if i < 3 else g["hinge_b"][1] - spec["hinge_y"] * 0.005
     return f"""    <model name="{_names(slot, names)["hinge"].format(i)}">
       <pose>{_pose(x, y, z)} 0 0 0</pose>
       <link name="link">
@@ -510,7 +540,7 @@ def _door_model(slot, k, spec, g, names=None, initial=None):
     """Door model (panel + joint + controller + detachable joints). `names` = see _names; `initial` = joint position the controller
     starts at (the door is open by that much as built), None = no initial_position (v5)."""
     nm = _names(slot, names)
-    hinged = spec["door_type"] == "hinged"
+    hinged, double = is_hinged_like(spec), is_double(spec)
     pw, ph = g["pw"], g["ph"]
     vis = _panel_visuals(spec, g)
     if hinged:
@@ -527,9 +557,49 @@ def _door_model(slot, k, spec, g, names=None, initial=None):
                  f'<limit><lower>0</lower><upper>{g["travel"]}</upper></limit><dynamics><damping>20.0</damping></dynamics></axis></joint>')
         ctrl, gains, jname = "slide", "<p_gain>200</p_gain><i_gain>0.5</i_gain><d_gain>40</d_gain>", "slide"
     children = [_detach(nm["handle_front"]), _detach(nm["handle_back"])] + ([_detach(nm["glass"], topics=True)] if has_pane(spec) else [])
-    children += [_detach(nm["hinge"].format(i)) for i in range(3) if _has_hinges(spec)]  # knuckles: own models so they get own labels
+    if double and has_pane(spec):
+        children.append(_detach(nm["glass"] + "_b", topics=True, parent="panel_b"))
+    if _has_hinges(spec):  # knuckles: own models so they get own labels
+        children += [_detach(nm["hinge"].format(i), parent="panel_b" if i >= 3 else "panel") for i in range(6 if double else 3)]
     body = "\n".join("        " + v for v in vis)
     start = "" if initial is None else f"<initial_position>{_g(initial)}</initial_position>"
+    if double:  # second leaf: own link, joint, controller (opens the opposite way round so both swing to swing_x)
+        body_b = "\n".join("        " + v for v in _panel_visuals(spec, g, 1))
+        lo, hi = -g["range"][1], -g["range"][0]
+        joint_b = (f'<joint name="hinge_b" type="revolute"><parent>frame_anchor</parent><child>panel_b</child>'
+                   f'<pose>{_pose(0.02 * spec["swing_x"], -spec["hinge_y"] * pw / 2, 0)} 0 0 0</pose><axis><xyz>0 0 1</xyz>'
+                   f'<limit><lower>{lo}</lower><upper>{hi}</upper></limit><dynamics><damping>2.0</damping></dynamics></axis></joint>')
+        start_b = "" if initial is None else f"<initial_position>{_g(-initial)}</initial_position>"
+        # the active leaf's link / joint sit at its own centre, not on the model origin
+        return f"""    <model name="{nm["door"]}">
+      <pose>{_pose(g["xc"], g["y"], 0)} 0 0 0</pose>
+      <link name="frame_anchor"><inertial><mass>1</mass></inertial></link>
+      <joint name="anchor" type="fixed"><parent>world</parent><child>frame_anchor</child></joint>
+      <link name="panel">
+        <pose>0 {_g(g["leaf_y"][0] - g["y"])} {_g(g["zc"])} 0 0 0</pose>
+        {inertial}
+        <collision name="c">{_box(0.04, pw, ph)}</collision>
+{body}
+      </link>
+      <link name="panel_b">
+        <pose>0 {_g(g["leaf_y"][1] - g["y"])} {_g(g["zc"])} 0 0 0</pose>
+        {inertial}
+        <collision name="c">{_box(0.04, pw, ph)}</collision>
+{body_b}
+      </link>
+      {joint}
+      {joint_b}
+      <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+        <joint_name>hinge</joint_name><topic>/{nm["door"]}/cmd_pos</topic>{gains}{start}
+      </plugin>
+      <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+        <joint_name>hinge_b</joint_name><topic>/{nm["door"]}/cmd_pos_b</topic>{gains}{start_b}
+      </plugin>
+      {chr(10).join("      " + c for c in children).strip()}
+      <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
+      {_label(10 * k + 1)}
+    </model>
+"""
     # the order of links / joints follows door_room_v3: anchor link fixed to the world, panel link on the joint
     return f"""    <model name="{nm["door"]}">
       <pose>{_pose(g["xc"], g["y"], 0)} 0 0 0</pose>
@@ -552,10 +622,11 @@ def _door_model(slot, k, spec, g, names=None, initial=None):
 """
 
 
-def _glass_model(slot, k, g, names=None, spec=None):
-    dy, dz, w, h = glass_rect(spec, g) if spec is not None else (0, 0.02, g["pw"] - 0.2, g["ph"] - 0.24)
-    return f"""    <model name="{_names(slot, names)["glass"]}">
-      <pose>{_pose(g["xc"], g["y"] + dy, g["zc"] + dz)} 0 0 0</pose>
+def _glass_model(slot, k, g, names=None, spec=None, leaf=0):
+    dy, dz, w, h = glass_rect(spec, g, leaf) if spec is not None else (0, 0.02, g["pw"] - 0.2, g["ph"] - 0.24)
+    cy = g["leaf_y"][leaf] if "leaf_y" in g else g["y"]
+    return f"""    <model name="{_names(slot, names)["glass"] + ("_b" if leaf else "")}">
+      <pose>{_pose(g["xc"], cy + dy, g["zc"] + dz)} 0 0 0</pose>
       <link name="link">
         <gravity>false</gravity>
         {_inertial(0.5, 0.01, w, h)}
@@ -640,7 +711,7 @@ def _door_wall_visuals(spec, g, slot):
             visuals += [_vis(f"trim_{slot}_{side}_l", (x, y - (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
                         _vis(f"trim_{slot}_{side}_r", (x, y + (w / 2 + tw / 2), h / 2), _box(p, tw, h), c),
                         _vis(f"trim_{slot}_{side}_t", (x, y, h + tw / 2), _box(p, w + 2 * tw, tw), c)]
-    if spec["door_type"] == "hinged" and spec.get("door_stop"):  # stop on the push side, against the panel's push face
+    if is_hinged_like(spec) and spec.get("door_stop"):  # stop on the push side, against the panel's push face
         s, y, w, h = spec["swing_x"], g["y"], g["w"], g["h"]
         c = spec["trim_colour"] if g["tw"] else WALL_RGB
         xs, dx = 0.0025 * s, 0.015  # x from -0.005 s to +0.01 s
@@ -701,9 +772,11 @@ def world_sdf(world, name):
         parts += ["\n", _door_model(slot, k, spec, g)]
         if has_pane(spec):
             parts.append(_glass_model(slot, k, g, spec=spec))
+            if is_double(spec):
+                parts.append(_glass_model(slot, k, g, spec=spec, leaf=1))
         parts += [_handle_model(slot, k, spec, g, "front"), _handle_model(slot, k, spec, g, "back")]
         if _has_hinges(spec):
-            parts += [_hinge_model(slot, k, spec, g, i) for i in range(3)]
+            parts += [_hinge_model(slot, k, spec, g, i) for i in range(6 if is_double(spec) else 3)]
     if world.get("window"):
         parts.append(_window_models(world["window"]))
     return "".join(parts) + "\n" + rig_and_pool + _room_shell() + "  </world>\n</sdf>\n"

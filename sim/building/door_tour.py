@@ -340,7 +340,7 @@ def main():
 
     def open_door(v, d):
         """Open door d fully. Hinged, robot on the swing side within reach of the panel -> back off to the far stop first."""
-        if d["spec"]["door_type"] == "hinged":
+        if D.is_hinged_like(d["spec"]):
             g = D._layout(d["spec"], B.SLOT)
             hx, hy = B.hinge_xy(d)
             th, sy = B.open_position(d), d["spec"]["hinge_y"]   # panel tip when fully open (same geometry as occupancy())
