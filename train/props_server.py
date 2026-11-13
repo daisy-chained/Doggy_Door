@@ -4,8 +4,9 @@ Starts once under train/.venv (the tour's ROS python has no torch); one JSON lin
   in:  {"rgb": path, "depth": path (uint16 png), "box": [x1, y1, x2, y2], "K": [9 floats], "camera": {"world_position": [x, y, z], "world_rpy": [r, p, y]}}
   out: {"opening": {"push": p, ...}, "hinge_side": {...}, "glass": {...}} (softmax of logits / temperature), or {"skip": "small"}
        when max(box w, h) < meta["min_px"]; {"error": ...} on failure.
+       With --familiar the answer also has "familiar": {"score": float, "flag": bool} (unfamiliar-door check on the backbone features).
 
-  train/.venv/bin/python train/props_server.py runs/props_door_v7_dha_448 [--device cuda]
+  train/.venv/bin/python train/props_server.py runs/props_door_v7_dha_448 [--device cuda] [--familiar FAMILIAR_DIR]
 """
 import argparse, json, pathlib, sys
 import numpy as np
@@ -16,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from doordet import props, data
 
 
-def classify(model, meta, heads, T, dev, req):
+def classify(model, meta, heads, T, dev, req, checker=None):
     x1, y1, x2, y2 = req["box"]
     if max(x2 - x1, y2 - y1) < meta["min_px"]:
         return {"skip": "small"}
@@ -29,13 +30,19 @@ def classify(model, meta, heads, T, dev, req):
         parts.append(props.crop_tensor(dha, crop, meta["imgsz"], props.DHA_MEAN, props.DHA_STD))
     xin = torch.cat(parts)[None].to(dev)
     with torch.no_grad():
-        logits = model(xin)
+        if hasattr(model, "backbone"):   # features once: heads and the familiar score share the forward pass
+            f = model.backbone(xin)
+            logits = {h: m(f) for h, m in model.heads.items()}
+        else:                            # ensemble (no checker possible)
+            f, logits = None, model(xin)
     out = {}
     for h in heads:
         lg = logits[h] if isinstance(logits, dict) else logits[heads.index(h)]
         t = T.get(h, 1.0) if isinstance(T, dict) else 1.0
         p = torch.softmax(lg[0] / t, -1).cpu().tolist()
         out[h] = dict(zip(meta["heads"][h], p))
+    if checker is not None:
+        out["familiar"] = {"score": float(checker.score(f.double().cpu().numpy())[0]), "flag": bool(checker.flag(f.double().cpu().numpy())[0])}
     return out
 
 
@@ -43,8 +50,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--familiar", help="dir from build_familiar.py: add the unfamiliar-door check (single model runs only)")
     a = ap.parse_args()
     model, meta = props.load(a.run, a.device)
+    checker = None
+    if a.familiar:
+        if not hasattr(model, "backbone"):
+            sys.exit(f"--familiar needs a single model run, {a.run} is an ensemble")
+        from doordet import familiar
+        checker = familiar.load(a.familiar)
     heads = list(meta["heads"])
     T = meta.get("temperature") or {}
     print("READY", flush=True)
@@ -52,7 +66,7 @@ def main():
         if not line.strip():
             continue
         try:
-            print(json.dumps(classify(model, meta, heads, T, a.device, json.loads(line))), flush=True)
+            print(json.dumps(classify(model, meta, heads, T, a.device, json.loads(line), checker)), flush=True)
         except Exception as e:   # keep serving
             print(json.dumps({"error": repr(e)}), flush=True)
 

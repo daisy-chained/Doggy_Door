@@ -103,6 +103,8 @@ def main():
                     "+ open the door on a right report (needs --hinge-look)")
     ap.add_argument("--step-n", type=int, default=2, help="door step: extra looks before the first report (Claude 2026-11-11, replay)")
     ap.add_argument("--p-slide-t", type=float, default=0.4, help="door step: mean P(slide) >= this -> sliding (Claude 2026-11-11)")
+    ap.add_argument("--familiar", default="", help="door step: unfamiliar-door check dir (train/build_familiar.py); a frame whose door "
+                    "looks unfamiliar gives no P(slide), so the robot relies on its looks and trying the door (Madelief 2026-11-13, option C)")
     ap.add_argument("--no-open", action="store_true", help="door step: check reports but don't open doors")
     ap.add_argument("--rounds", type=int, default=1, help="2 = after the tour, load a map with the doors it opened and visit the "
                     "door sides that became reachable (Madelief 2026-11-11: two rounds; needs --door-step and --out)")
@@ -193,7 +195,8 @@ def main():
     if a.door_step:
         if det is None:
             sys.exit("--door-step needs --hinge-look (detector) and --frames")
-        props = subprocess.Popen([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "props_server.py"), a.door_step],
+        props = subprocess.Popen([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "props_server.py"), a.door_step,
+                                  *(["--familiar", str(pathlib.Path(a.familiar).resolve())] if a.familiar else [])],
                                  cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         while (line := props.stdout.readline()) and line.strip() != "READY":
             pass
@@ -321,7 +324,8 @@ def main():
         return out
 
     def p_slide_of(frame, cam, dets, edge_pts):
-        """Door-crop classifier P(slide) for one saved frame (door box picked by the door's edges); None when no usable box."""
+        """Door-crop classifier for one saved frame (door box picked by the door's edges) -> {"p": P(slide), "unfamiliar": bool}; None
+        when no usable box. "unfamiliar" only with --familiar (else False)."""
         if not frame or not cam:
             return None
         cols = [hinge_look.edge_column(cam[0], cam[1], cam[2], edge_pts[sd], fx, cx) for sd in ("left", "right")]
@@ -332,7 +336,7 @@ def main():
         props.stdin.write(json.dumps({"rgb": str(f / "rgb.png"), "depth": str(f / "depth.png"), "box": box, "K": K,
                                       "camera": {"world_position": [cam[0], cam[1], 0.40], "world_rpy": [0.0, 0.0, cam[2]]}}) + "\n")
         out = json.loads(props.stdout.readline())
-        return out["opening"]["slide"] if "opening" in out else None
+        return {"p": out["opening"]["slide"], "unfamiliar": bool(out.get("familiar", {}).get("flag", False))} if "opening" in out else None
 
     def open_door(v, d):
         """Open door d fully. Hinged, robot on the swing side within reach of the panel -> back off to the far stop first."""
@@ -382,7 +386,9 @@ def main():
             p = p_slide_of(r["frame"], cam, dd, edge_pts)
             if p is not None:
                 ps.append(p)
-        p_mean = sum(ps) / len(ps) if ps else None
+        trusted = door_step.p_slide_trusted(ps)              # option C: unfamiliar-looking frames give no P(slide)
+        p_mean = trusted["p"]
+        ps = [f["p"] for f in ps]
         # door_step.answer uses 0.5: rescale so --p-slide-t maps to 0.5
         p_use = None if p_mean is None else (0.5 * p_mean / a.p_slide_t if p_mean < a.p_slide_t else 0.5 + 0.5 * (p_mean - a.p_slide_t) / (1 - a.p_slide_t))
         near = v["stops"][-1]
@@ -427,7 +433,7 @@ def main():
                 known_hinged.add(real)
         for l in log_["looks"]:
             l["seen"] = sorted(l["seen"])
-        return {**log_, "handle_guess": guess, "p_slide": p_mean, "empty_doorway": not ps, "p_slide_frames": ps, "truth": list(tr), "opened": bool(opened),
+        return {**log_, "handle_guess": guess, "p_slide": p_mean, "empty_doorway": not ps, "p_slide_frames": ps, "unfamiliar_frames": trusted["unfamiliar"], "truth": list(tr), "opened": bool(opened),
                 "stop_frames": [l["frame"] for l in stop_looks]}
 
     def load_map_srv(yaml_path, tries=3, per_call=10.0):
@@ -711,7 +717,8 @@ def main():
                 ds_ = rec["door_step"]
                 if ds_:
                     print(f"door {v['door']} {v['side']} door step: first {'right' if ds_['first_right'] else 'wrong'}, "
-                          f"{ds_['n_reports']} report(s), opened {ds_['opened']}, P(slide) {ds_['p_slide']}")
+                          f"{ds_['n_reports']} report(s), opened {ds_['opened']}, P(slide) {ds_['p_slide']}, "
+                          f"unfamiliar frames {ds_['unfamiliar_frames']}/{len(ds_['p_slide_frames'])}")
             elif det is not None and any(r["result"] == "SUCCEEDED" for r, *_ in shots):   # never got there: nothing to look at
                 # hinge look (option A, Madelief 2026-11-10): handle -> hinge edge (far stop first: from the 1 m stop the 0.4 m
                 # camera sees only up to ~1 m, where handles sit), then extra looks aimed at that edge; no handle -> both edges

@@ -90,3 +90,11 @@ def is_right(report, truth):
     if report["type"] != truth[0]:
         return False
     return truth[0] == "sliding" or report["hinge_side"] == truth[1]
+
+
+def p_slide_trusted(frames):
+    """frames = [{"p": P(slide) | None, "unfamiliar": bool}] -> {"p": mean over frames with a p that are not unfamiliar | None, "used", "unfamiliar"}.
+    p None when nothing is left: the door step then falls back to its looks and trying the door (Madelief 2026-11-13, option C)."""
+    withp = [f for f in frames if f.get("p") is not None]
+    keep = [f["p"] for f in withp if not f.get("unfamiliar")]
+    return {"p": sum(keep) / len(keep) if keep else None, "used": len(keep), "unfamiliar": len(withp) - len(keep)}
