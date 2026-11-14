@@ -187,7 +187,18 @@ def _camera_sensors(topic, sfx="", frame="camera_optical", rate=RATE):
     ])
 
 
-def _camera_link(p, name="robot"):
+def _headlight(k, h):
+    """Spot light on a camera link (headlight_<k>, same spot / attenuation as the training rig), pointing along the camera."""
+    from doorsim.conditions import HEADLIGHT   # lazy: conditions pulls in numpy / PIL, this module stays stdlib + PyYAML
+    rng_, (c, li, q), (inner, outer, fall) = HEADLIGHT["range"], HEADLIGHT["attenuation"], HEADLIGHT["spot"]
+    return (f'<light type="spot" name="headlight_{k}">{_pose(z=0.05)}<cast_shadows>true</cast_shadows>'
+            f'<diffuse>{_f(h)} {_f(h)} {_f(0.95 * h)} 1</diffuse><specular>0.1 0.1 0.1 1</specular>'
+            f'<attenuation><range>{_f(rng_)}</range><constant>{_f(c)}</constant><linear>{_f(li)}</linear>'
+            f'<quadratic>{_f(q)}</quadratic></attenuation><direction>1 0 0</direction>'
+            f'<spot><inner_angle>{_f(inner)}</inner_angle><outer_angle>{_f(outer)}</outer_angle><falloff>{_f(fall)}</falloff></spot></light>')
+
+
+def _camera_link(p, name="robot", headlight=0.0):
     top = p["base"]["clearance"] + p["base"]["height"]
     mast_len = p["mast_height"] - top
     mast = ""
@@ -197,7 +208,8 @@ def _camera_link(p, name="robot"):
     body = "<box><size>0.0400 0.0800 0.0400</size></box>"
     return (f'<link name="camera_link">{_pose(x=p["camera"]["forward"], z=p["mast_height"])}'
             f'{_inertial(SENSOR_MASS, _box_inertia(SENSOR_MASS, 0.04, 0.08, 0.04))}'
-            f'<visual name="body">{_geom(body)}{_material(0.1, 0.1, 0.1)}</visual>{mast}{_camera_sensors(name)}</link>')
+            f'<visual name="body">{_geom(body)}{_material(0.1, 0.1, 0.1)}</visual>{mast}{_camera_sensors(name)}'
+            f'{_headlight(0, headlight) if headlight > 0 else ""}</link>')
 
 
 def ring_yaws(p):
@@ -206,7 +218,7 @@ def ring_yaws(p):
     return [2 * math.pi * k / n for k in range(n)]
 
 
-def _ring_links(p, name):
+def _ring_links(p, name, headlight=0.0):
     links, joints = [], []
     for k, yaw in enumerate(ring_yaws(p)):
         if k == 0:
@@ -214,7 +226,8 @@ def _ring_links(p, name):
         links.append(f'<link name="camera_link_{k}">{_pose(x=p["camera"]["forward"], z=p["mast_height"], yaw=yaw)}'
                      f'{_inertial(SENSOR_MASS, _box_inertia(SENSOR_MASS, 0.04, 0.08, 0.04))}'
                      f'<visual name="body">{_geom("<box><size>0.0400 0.0800 0.0400</size></box>")}{_material(0.1, 0.1, 0.1)}</visual>'
-                     f'{_camera_sensors(f"{name}/cam{k}", f"_{k}", f"camera_optical_{k}", RING_RATE)}</link>')
+                     f'{_camera_sensors(f"{name}/cam{k}", f"_{k}", f"camera_optical_{k}", RING_RATE)}'
+                     f'{_headlight(k, headlight) if headlight > 0 else ""}</link>')
         joints.append(_joint(f"camera_joint_{k}", "fixed", "base_link", f"camera_link_{k}"))
     return links, joints
 
@@ -271,15 +284,16 @@ def _plugins(p, name, odom_truth=False):
 
 
 # --- public builders ---
-def robot_sdf(p, name="robot", odom_truth=False):
-    """SDF text for the robot model (not static; spawn it with a model pose on the floor)."""
+def robot_sdf(p, name="robot", odom_truth=False, headlight=0.0):
+    """SDF text for the robot model (not static; spawn it with a model pose on the floor). headlight > 0: a spot light of that
+    brightness on every camera (front + ring); 0 = no light elements."""
     axis = "<axis><xyz>0 1 0</xyz></axis>"
-    ring_links, ring_joints = _ring_links(p, name)
+    ring_links, ring_joints = _ring_links(p, name, headlight)
     parts = [
         _base_link(p),
         _wheel_link(p, "left_wheel", +1), _wheel_link(p, "right_wheel", -1),
         _caster_link(p, "front_caster", +1), _caster_link(p, "rear_caster", -1),
-        _camera_link(p, name), *ring_links,
+        _camera_link(p, name, headlight), *ring_links,
         _lidar_link(p) if "lidar" in p else _radar_link(p),
         _joint("left_wheel_joint", "revolute", "base_link", "left_wheel", axis),
         _joint("right_wheel_joint", "revolute", "base_link", "right_wheel", axis),

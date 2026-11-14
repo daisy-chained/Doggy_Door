@@ -5,6 +5,13 @@
 #   bash sim/building/tour_test.sh [building=sim/building/out/bld_train_000] [platform=sim/configs/robots/wheeled_low.yaml] [x=1.0] [y=4.04] [door_tour options...]
 #   e.g. ... 1.0 4.04 --hinge-look runs/dfine_n960_v7_hw8   (hinge look, option A; score: python3 sim/building/score_hinge_look.py OUT)
 #
+# Dark / smoke conditions (sim/building/conditions.py, doorsim/conditions.py; Madelief 2026-11-13), all optional:
+#   LIGHT=0.05|mixed   factor on every room light (mixed = a draw per room like the training mix)
+#   SMOKE=4|mixed      smoke visibility in m on the saved frames (empty / unset = none)
+#   HEADLIGHT=0.8      robot's own spot light per camera (default 0 = off)       COND_SEED=0   seed of the draws / smoke shape
+#   With LIGHT or SMOKE set the run folder gets the suffix _l<LIGHT>_s<SMOKE|none>_h<HEADLIGHT>, the world is OUT/world.sdf and
+#   door_tour gets --conditions OUT/conditions.json. Without them everything is as before.
+#
 # Output in runs/tours/<building>_<platform>_<time>/: tour.json (per stop: reached, seconds, position / heading error),
 # stops/NNN_door<id>_<side>_<dist>/ (what the robot sees at each stop: rgb / depth / seg + true boxes), robot.log, nav.log, tour.log. No rosbag (camera at 10 Hz for a whole tour = GBs); --bag on door_tour.py when needed.
 set -u
@@ -16,10 +23,17 @@ Y=${4:-4.04}
 SLAM=${SLAM:-0}                                    # SLAM=1: slam_toolbox maps live, no given floor map (run 4)
 ODOM_NOISE=${ODOM_NOISE:-0}                        # ODOM_NOISE=1: drifting wheel odometry instead of the true pose (run 5)
 SCRIPT=${TOUR_SCRIPT:-sim/building/door_tour.py}   # what drives the robot (same arguments as door_tour.py)
+LIGHT=${LIGHT:-}; SMOKE=${SMOKE:-}; HEADLIGHT=${HEADLIGHT:-0}; COND_SEED=${COND_SEED:-0}
+COND=0; [ -n "$LIGHT$SMOKE" ] && COND=1
 SL=false; [ "$SLAM" = 1 ] && SL=true
 ON=false; [ "$ODOM_NOISE" = 1 ] && ON=true
-OUT=runs/tours/$(basename "$BLD")_$(basename "$PLAT" .yaml)$([ "$SLAM" = 1 ] && echo _slam)$([ "$ODOM_NOISE" = 1 ] && echo _drift)_$(date +%Y%m%d_%H%M)
+OUT=runs/tours/$(basename "$BLD")_$(basename "$PLAT" .yaml)$([ "$SLAM" = 1 ] && echo _slam)$([ "$ODOM_NOISE" = 1 ] && echo _drift)$([ "$COND" = 1 ] && echo "_l${LIGHT:-1}_s${SMOKE:-none}_h${HEADLIGHT}")_$(date +%Y%m%d_%H%M)
 mkdir -p "$OUT"
+WORLD="$BLD.sdf"; COND_ARGS=()
+if [ "$COND" = 1 ]; then
+  python3 sim/building/conditions.py "$BLD" --light "${LIGHT:-1}" --smoke "${SMOKE:-none}" --headlight "$HEADLIGHT" --seed "$COND_SEED" --out "$OUT" || exit 1
+  WORLD="$OUT/world.sdf"; COND_ARGS=(--conditions "$OUT/conditions.json")
+fi
 
 set +u; source /opt/ros/jazzy/setup.bash; set -u   # ROS setup scripts use unset variables
 export GZ_PARTITION=tour_$$ ROS_DOMAIN_ID=$(( ($$ % 100) + 100 ))   # own Gazebo + ROS network, nothing else gets in
@@ -33,7 +47,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setsid ros2 launch sim/launch/robot.launch.py world:="$BLD.sdf" platform:="$PLAT" x:="$X" y:="$Y" slam:="$SL" odom_noise:="$ON" > "$OUT/robot.log" 2>&1 &
+setsid ros2 launch sim/launch/robot.launch.py world:="$WORLD" platform:="$PLAT" x:="$X" y:="$Y" slam:="$SL" odom_noise:="$ON" headlight:="$HEADLIGHT" > "$OUT/robot.log" 2>&1 &
 PIDS+=($!)
 echo "waiting for the robot (odom)"
 timeout 120 bash -c 'until ros2 topic echo --once /odom >/dev/null 2>&1; do sleep 2; done' || { echo "robot did not come up"; exit 1; }
@@ -53,7 +67,7 @@ for try in 1 2 3; do
 done
 [ "$nav_ok" = 1 ] || { echo "Nav2 did not come up"; exit 1; }
 
-timeout 5400 python3 "$SCRIPT" "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${@:5}" 2>&1 | tee "$OUT/tour.log"
+timeout 5400 python3 "$SCRIPT" "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${COND_ARGS[@]}" "${@:5}" 2>&1 | tee "$OUT/tour.log"
 status=${PIPESTATUS[0]}
 echo "door_tour exit $status (124 = 90 min timeout)"
 exit "$status"

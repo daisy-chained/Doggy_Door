@@ -63,11 +63,26 @@ def ray_directions(shape, K, camera):
 
 
 # --- smoke ---
-def smoke_beta(z, visibility_m, layer):
-    """Extinction (1/m) at height z: 3 / V, times a soft step up to `factor` above layer height."""
-    beta = np.full(np.shape(z), 3.0 / visibility_m)
+def smoke_beta(z, visibility_m, layer, base=None):
+    """Extinction (1/m) at height z: 3 / V (or `base`, an array of per-point values), times a soft step up to `factor`
+    above layer height."""
+    beta = np.full(np.shape(z), 3.0 / visibility_m) if base is None else base
     if layer:
         beta = beta * (1 + (layer["factor"] - 1) / (1 + np.exp(-(np.asarray(z) - layer["height"]) / layer["width"])))
+    return beta
+
+
+def space_beta(p, smoke):
+    """Base extinction at points p (..., 3) for smoke with "spaces" [{rect [x0, y0, x1, y1], visibility_m}]: 3 / V of the
+    first rect containing the point (0 when that V is None); points in no rect use smoke["visibility_m"] (None = 0)."""
+    v0 = smoke.get("visibility_m")
+    beta = np.full(p.shape[:-1], 3.0 / v0 if v0 else 0.0)
+    done = np.zeros(p.shape[:-1], bool)
+    for sp in smoke["spaces"]:
+        x0, y0, x1, y1 = sp["rect"]
+        inside = ~done & (p[..., 0] >= x0) & (p[..., 0] <= x1) & (p[..., 1] >= y0) & (p[..., 1] <= y1)
+        beta[inside] = 3.0 / sp["visibility_m"] if sp["visibility_m"] else 0.0
+        done |= inside
     return beta
 
 
@@ -92,7 +107,7 @@ def smoke_render(depth, K, camera, smoke, lights=(), colour=(0.75, 0.75, 0.75), 
     """(transmission (H, W), smoke light (H, W, 3) linear) along each pixel's line of sight (midpoint rule).
     t = exp(-integral of beta). Smoke light = single scattering: at each step the light reaching that point from
     the frame's lamps (light_at) x colour (smoke albedo) x beta ds x transmission back to the camera. Pixels without
-    depth look `far` m along their ray. smoke = {visibility_m, layer, patch, patch_scale, seed}."""
+    depth look `far` m along their ray. smoke = {visibility_m, layer, patch, patch_scale, seed}; optional "spaces" = per-room visibilities (space_beta)."""
     cam = np.array(camera["world_position"], np.float64)
     pts = world_points(depth, K, camera)
     nodata = np.isnan(pts[..., 0])
@@ -103,7 +118,8 @@ def smoke_render(depth, K, camera, smoke, lights=(), colour=(0.75, 0.75, 0.75), 
     colour = np.asarray(colour, np.float64)
     for k in range(samples):
         p = cam + seg * ((k + 0.5) / samples)
-        beta = smoke_beta(p[..., 2], smoke["visibility_m"], smoke.get("layer"))
+        beta = smoke_beta(p[..., 2], smoke["visibility_m"], smoke.get("layer"),
+                          space_beta(p, smoke) if smoke.get("spaces") is not None else None)
         if smoke.get("patch", 0) > 0:
             beta = beta * np.maximum(0.0, 1 + smoke["patch"] * value_noise(p, smoke["patch_scale"], smoke["seed"]))
         step = beta * ds
@@ -129,14 +145,25 @@ def add_smoke(rgb, t, air):
 def world_lights(sdf_path):
     """Lamps of a door room world file: [{name, type, position, direction, attenuation [range, c, l, q],
     spot [inner, outer, falloff]}]; the headlight's position / direction are relative to the camera rig.
-    A non-zero scene ambient comes as {"name": "ambient", "type": "ambient", "diffuse"}."""
+    A non-zero scene ambient comes as {"name": "ambient", "type": "ambient", "diffuse"}. Every other lamp has "diffuse" too."""
     import xml.etree.ElementTree as ET
-    world = ET.parse(sdf_path).getroot().find("world")
+    return _lights_of(ET.parse(sdf_path).getroot())
+
+
+def world_lights_text(sdf_text):
+    """world_lights of SDF text."""
+    import xml.etree.ElementTree as ET
+    return _lights_of(ET.fromstring(sdf_text[sdf_text.index("<sdf"):]))
+
+
+def _lights_of(root):
+    world = root.find("world")
     nums = lambda e, d: [float(v) for v in e.text.split()] if e is not None else d
     out = []
     for l in world.iter("light"):
         a, sp = l.find("attenuation"), l.find("spot")
-        out.append({"name": l.get("name"), "type": l.get("type"), "position": nums(l.find("pose"), [0.0] * 3)[:3],
+        out.append({"name": l.get("name"), "type": l.get("type"), "diffuse": nums(l.find("diffuse"), [0.0] * 3)[:3],
+                    "position": nums(l.find("pose"), [0.0] * 3)[:3],
                     "direction": nums(l.find("direction"), [0.0, 0.0, -1.0]),
                     "attenuation": [nums(a.find(k) if a is not None else None, [d])[0]
                                     for k, d in (("range", 1e9), ("constant", 1.0), ("linear", 0.0), ("quadratic", 0.0))],
@@ -175,23 +202,40 @@ def frame_lights(lamps, meta):
 
 def light_at(p, lights):
     """(..., 3) light arriving at points p (..., 3) from the lamps, no shadows: diffuse x 1 / (c + l d + q d^2)
-    (0 past range) x spot cone (inner / outer = full cone angles, smooth between)."""
+    (0 past range) x spot cone (inner / outer = full cone angles, smooth between).
+    A lamp with "rect" [x0, y0, x1, y1] lights only the points inside it (a room light does not shine through walls)."""
     out = np.zeros(p.shape[:-1] + (3,))
     for l in lights:
-        k = np.ones(p.shape[:-1])
-        if l["type"] in ("point", "spot"):
-            v = p - np.array(l["position"])
-            d = np.linalg.norm(v, axis=-1)
-            rng_, c, li, q = l["attenuation"]
-            k = np.where(d <= rng_, 1.0 / (c + li * d + q * d * d), 0.0)
-            if l["type"] == "spot":
-                axis = np.array(l["direction"], np.float64)
-                axis = axis / np.linalg.norm(axis)
-                ang = np.arccos(np.clip((v @ axis) / np.maximum(d, 1e-9), -1, 1))
-                inner, outer = l["spot"][0] / 2, l["spot"][1] / 2
-                k = k * np.clip((outer - ang) / max(outer - inner, 1e-9), 0, 1) ** l["spot"][2]
-        out += k[..., None] * np.array(l["diffuse"], np.float64)
+        q_, sel = p, None
+        if l.get("rect"):   # room light (no shadows in this model): only lights the points inside its own room
+            x0, y0, x1, y1 = l["rect"]
+            sel = (p[..., 0] >= x0) & (p[..., 0] <= x1) & (p[..., 1] >= y0) & (p[..., 1] <= y1)
+            if not sel.any():
+                continue
+            q_ = p[sel]       # only those points are computed (patrol frames: ~1 room of ~10, Claude 2026-11-14 speed-up)
+        k = _lamp_gain(q_, l)
+        if sel is None:
+            out += k[..., None] * np.array(l["diffuse"], np.float64)
+        else:
+            out[sel] += k[..., None] * np.array(l["diffuse"], np.float64)
     return out
+
+
+def _lamp_gain(p, l):
+    """Attenuation x spot cone of one lamp at points p (..., 3); 1 for directional / ambient."""
+    k = np.ones(p.shape[:-1])
+    if l["type"] in ("point", "spot"):
+        v = p - np.array(l["position"])
+        d = np.linalg.norm(v, axis=-1)
+        rng_, c, li, q = l["attenuation"]
+        k = np.where(d <= rng_, 1.0 / (c + li * d + q * d * d), 0.0)
+        if l["type"] == "spot":
+            axis = np.array(l["direction"], np.float64)
+            axis = axis / np.linalg.norm(axis)
+            ang = np.arccos(np.clip((v @ axis) / np.maximum(d, 1e-9), -1, 1))
+            inner, outer = l["spot"][0] / 2, l["spot"][1] / 2
+            k = k * np.clip((outer - ang) / max(outer - inner, 1e-9), 0, 1) ** l["spot"][2]
+    return k
 
 
 def smoke_depth(depth_m, t, rng, cfg):

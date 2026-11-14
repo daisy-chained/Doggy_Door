@@ -41,7 +41,7 @@ def _setup(context):
     name, x, y, yaw = arg("name"), float(arg("x")), float(arg("y")), float(arg("yaw"))
     noisy = arg("odom_noise").lower() == "true"
     sdf_file = pathlib.Path("/tmp") / f"{name}_{p['name']}.sdf"
-    sdf_file.write_text(robot.robot_sdf(p, name, odom_truth=noisy))
+    sdf_file.write_text(robot.robot_sdf(p, name, odom_truth=noisy, headlight=float(arg("headlight"))))
 
     gz_args = ["-r", world] if arg("gui") == "true" else ["-r", "-s", world]
     actions = [
@@ -73,6 +73,7 @@ def generate_launch_description():
         DeclareLaunchArgument("x", default_value="0.0"),
         DeclareLaunchArgument("y", default_value="0.0"),
         DeclareLaunchArgument("yaw", default_value="0.0"),
+        DeclareLaunchArgument("headlight", default_value="0.0", description="> 0: a spot light of this brightness on every camera"),
         DeclareLaunchArgument("gui", default_value="false"),
         OpaqueFunction(function=_setup),
     ])

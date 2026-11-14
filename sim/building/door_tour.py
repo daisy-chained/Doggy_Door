@@ -94,6 +94,9 @@ def main():
     ap.add_argument("--bag", default="")
     ap.add_argument("--out", default="")
     ap.add_argument("--frames", default="", help="folder: save camera frames + true boxes at every stop")
+    ap.add_argument("--conditions", default="", help="conditions.json from sim/building/conditions.py (dark + smoke runs): every saved "
+                    "frame keeps rgb_clean / depth_clean and gets smoke + camera noise (doorsim.conditions.apply); needs --frames")
+    ap.add_argument("--mast-height", type=float, default=0.40, help="--conditions: camera height in m (platform mast_height; wheeled_ring 0.40)")
     ap.add_argument("--name", default="robot", help="robot model name (camera topics live under it)")
     ap.add_argument("--hinge-look", default="", help="detector run (e.g. runs/dfine_n960_v7_hw8): after each door side, guess the "
                     "hinge edge from the handle and take extra looks aimed at it (option A, Madelief 2026-11-10); needs --frames")
@@ -151,6 +154,32 @@ def main():
         grab = stop_frames.Grabber(a.name)
         ring_grab = {k: stop_frames.Grabber(a.name, k) for k in range(1, a.ring)}   # camera 0 = grab (the front camera)
     n_frame = 0
+
+    cond, cond_efx, cond_world = None, None, None
+    if a.conditions:
+        if not a.frames:
+            sys.exit("--conditions needs --frames")
+        import yaml
+        from doorsim import conditions
+        cond = json.loads(pathlib.Path(a.conditions).read_text())
+        cond_efx = yaml.safe_load(pathlib.Path(cond["effects_config"]).read_text())
+        cond_world = (pathlib.Path(a.conditions).parent / "world.sdf").read_text()
+        K_img = [(robot.IMG_W / 2) / math.tan(robot.FOV / 2), 0, robot.IMG_W / 2, 0, (robot.IMG_W / 2) / math.tan(robot.FOV / 2),
+                 robot.IMG_H / 2, 0, 0, 1]
+
+    def condition(d, k, index):
+        """--conditions: smoke + camera noise on the frame just saved (camera k: 0 = front); before anything reads it.
+        Camera pose = the camera link's map pose (the optical frames are rotated)."""
+        if cond is None:
+            return
+        q = where(nav, tf, "camera_link" if k == 0 else f"camera_link_{k}")
+        if q is None:
+            print(f"conditions: no camera pose for {d.name}, effects skipped")
+            return
+        cam = conditions.camera_pose(*q, a.mast_height)
+        # only this camera's own headlight: the ring's other lights point >= 49 deg off this camera's axis with a 23 deg half cone,
+        # so the smoke they light is outside its 37 deg half view (Claude 2026-11-14, speed-up: 16 -> 12 lamps)
+        conditions.apply(d, cond, cond_efx, conditions.lamps(cond_world, cond, [cam]), cam, K_img, np.random.default_rng([cond["seed"], index]))
 
     bag = None
     if a.bag:
@@ -279,6 +308,7 @@ def main():
                         "dist": s["dist"], "target": {"x": s["x"], "y": s["y"], "yaw": s["yaw"]}, **r,
                         "robot_pose": pos, "camera_xy_yaw": cam, "stamp_ns": shot["stamp_ns"]}
                 stop_frames.save_stop(d, shot["rgb"], shot["depth"], shot["seg"], shot["boxes"], shot["boxes3d"], meta)
+                condition(d, 0, n_frame)
                 r["frame"] = d.name
                 n_frame += 1
         return r, pos, where(nav, tf, "camera_link")   # camera_link: x forward, y left (for the edge column)
@@ -297,6 +327,7 @@ def main():
             meta = {"building": a.building, "door": v["door"], "side": v["side"], "space": v["space"], "dist": None, "camera": k,
                     "robot_pose": pos, "camera_xy_yaw": where(nav, tf, f"camera_optical_{k}"), "stamp_ns": shot["stamp_ns"]}
             stop_frames.save_stop(d, shot["rgb"], shot["depth"], shot["seg"], shot["boxes"], shot["boxes3d"], meta)
+            condition(d, k, n_frame)
             n_frame += 1
             out.append((d.name, cam))
         return out
@@ -692,7 +723,7 @@ def main():
             t2 = round_two()
             yield from ((2, i, len(t2), v) for i, v in enumerate(t2, 1))
 
-    log = {"building": b.get("seed"), "start": a.start, "visits": []}
+    log = {"building": b.get("seed"), "start": a.start, "visits": [], **({"conditions": cond} if cond else {})}
     try:
         for rnd, i, n_, v in all_visits():
             if a.patrol:                                       # patrol: progress = viewpoints (dashboard reads live.json)
