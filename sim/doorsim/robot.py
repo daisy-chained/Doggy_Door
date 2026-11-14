@@ -10,6 +10,7 @@ The robot has no Label plugin: it is background for the segmentation camera. Als
 (Gazebo does not publish the fixed sensor frames) and the ros_gz_bridge arguments. Only stdlib + PyYAML."""
 import copy
 import math
+import os
 import pathlib
 
 import yaml
@@ -19,6 +20,14 @@ SENSOR_MASS = 0.1      # kg for camera_link / lidar_link, so the physics engine 
 MAST_RADIUS = 0.01     # m, mast visual only (no collision)
 RING_RATE = 2          # Hz of the ring cameras k >= 1 (frames are only grabbed standing still)
 FOV, IMG_W, IMG_H, CLIP, RATE = 1.3, 640, 480, (0.1, 12), 10   # the training rig (door_room_v3.sdf)
+
+
+def gt_rate():
+    """Hz of the ground-truth sensors (2D / 3D boxes, segmentation). They are only read at the stops (stop_frames.Grabber waits
+    for a set of messages stamped after arrival), but render all the time. Env DOORSIM_GT_HZ lowers it to save render time
+    (Madelief 2026-11-14: speed up the runs); unset = RATE, as before. The RGB-D sensor keeps its own rate."""
+    v = os.environ.get("DOORSIM_GT_HZ", "")
+    return float(v) if v else RATE
 
 _REQUIRED = {
     "name": None,
@@ -181,12 +190,15 @@ def _camera(name, topic, kind, extra="", frame="camera_optical", rate=RATE):
 
 
 def _camera_sensors(topic, sfx="", frame="camera_optical", rate=RATE):
-    """The four sensors of one camera: topic = <name> (camera 0) or <name>/cam<k>; sfx = "" or "_<k>"."""
+    """The four sensors of one camera: topic = <name> (camera 0) or <name>/cam<k>; sfx = "" or "_<k>".
+    Ground-truth sensors run at min(rate, gt_rate())."""
+    g = min(rate, gt_rate())
+    g = int(g) if float(g).is_integer() else g
     return "".join([
         _camera(f"rgbd{sfx}", f"{topic}/rgbd", "rgbd_camera", "", frame, rate),
-        _camera(f"boxes{sfx}", f"{topic}/boxes", "boundingbox_camera", "<box_type>2d</box_type>", frame, rate),
-        _camera(f"boxes3d{sfx}", f"{topic}/boxes3d", "boundingbox_camera", "<box_type>3d</box_type>", frame, rate),
-        _camera(f"seg{sfx}", f"{topic}/seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>", frame, rate),
+        _camera(f"boxes{sfx}", f"{topic}/boxes", "boundingbox_camera", "<box_type>2d</box_type>", frame, g),
+        _camera(f"boxes3d{sfx}", f"{topic}/boxes3d", "boundingbox_camera", "<box_type>3d</box_type>", frame, g),
+        _camera(f"seg{sfx}", f"{topic}/seg", "segmentation_camera", "<segmentation_type>instance</segmentation_type>", frame, g),
     ])
 
 
