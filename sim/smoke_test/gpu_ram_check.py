@@ -82,6 +82,26 @@ def gz_servers(part):
     return out
 
 
+def sim_real(part):
+    """(sim seconds, real seconds) from one /stats message of the Gazebo in this partition; None if none came. Gazebo's own
+    real_time_factor field jumps around (0.002 .. 0.6 within seconds), so speed = change in sim time / change in real time."""
+    try:
+        s = subprocess.run(["gz", "topic", "-e", "-t", "/stats", "-n", "1"], env=dict(os.environ, GZ_PARTITION=part),
+                           capture_output=True, text=True, timeout=15).stdout
+    except subprocess.TimeoutExpired:
+        return None
+    g = lambda k: re.search(k + r" \{\s*sec: (\d+)\s*nsec: (\d+)", s)
+    a, b = g("sim_time"), g("real_time")
+    return (int(a[1]) + int(a[2]) / 1e9, int(b[1]) + int(b[2]) / 1e9) if a and b else None
+
+
+def rtf(samples):
+    """Average real-time factor between the first and last (sim, real) sample."""
+    if len(samples) < 2 or samples[-1][1] <= samples[0][1]:
+        return None
+    return round((samples[-1][0] - samples[0][0]) / (samples[-1][1] - samples[0][1]), 3)
+
+
 def uses_nvidia_egl(pid):
     try:
         return "libnvidia-eglcore" in open(f"/proc/{pid}/maps").read()
@@ -97,11 +117,19 @@ def static(mode, out):
                          env=env_for(mode, part), stdout=open(out / f"static_{mode}.log", "w"), stderr=subprocess.STDOUT,
                          start_new_session=True)
     try:
-        child = subprocess.run([sys.executable, __file__, "--grab", str(out / f"rgb_{mode}.npy"), "--out", str(out)],
-                               env=env_for(mode, part), capture_output=True, text=True, timeout=120)
+        child = subprocess.Popen([sys.executable, __file__, "--grab", str(out / f"rgb_{mode}.npy"), "--out", str(out)],
+                                 env=env_for(mode, part), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        st = []
+        while child.poll() is None:
+            x = sim_real(part)
+            if x:
+                st.append(x)
+            time.sleep(2)
+        so, se = child.communicate()
+        child = subprocess.CompletedProcess(child.args, child.returncode, so, se)
         res = json.loads(child.stdout.strip().splitlines()[-1]) if child.stdout.strip() else {"error": child.stderr[-500:]}
         srv = gz_servers(part)
-        res.update(i915_gb=round(sum(i915_bytes(s) for s in srv) / 1e9, 3), nvidia_mb_delta=nvidia_mb() - nv0,
+        res.update(rtf=rtf(st), i915_gb=round(sum(i915_bytes(s) for s in srv) / 1e9, 3), nvidia_mb_delta=nvidia_mb() - nv0,
                    nvidia_egl_loaded=any(uses_nvidia_egl(s) for s in srv))
         return res
     finally:
@@ -142,10 +170,14 @@ def tour(mode, out, limit=900):
                          stderr=subprocess.STDOUT, start_new_session=True)
     part = f"tour_{p.pid}"                   # tour_test.sh sets GZ_PARTITION=tour_$$
     peak = {"i915_gb": 0.0, "nvidia_mb_delta": 0, "avail_min_gb": a0, "nvidia_egl_loaded": None}
-    t0 = time.time()
+    t0, st, k = time.time(), [], 0
     while p.poll() is None and time.time() - t0 < limit:
-        time.sleep(5)
+        time.sleep(5); k += 1
         srv = gz_servers(part)
+        if srv and k % 2 == 0:
+            x = sim_real(part)
+            if x:
+                st.append(x)
         if srv:
             peak["i915_gb"] = max(peak["i915_gb"], round(sum(i915_bytes(s) for s in srv) / 1e9, 3))
             if peak["nvidia_egl_loaded"] is None:
@@ -165,7 +197,7 @@ def tour(mode, out, limit=900):
     if tdir and (tdir / "tour.json").exists():
         t = json.loads((tdir / "tour.json").read_text())
         reached = sum(1 for v in t.get("visits", []) for s in v.get("stops", []) if s.get("reached"))
-    peak.update(minutes=round((time.time() - t0) / 60, 1), exit=p.returncode, tour_dir=str(tdir) if tdir else None, stops_reached=reached,
+    peak.update(rtf=rtf(st), rtf_samples=len(st), minutes=round((time.time() - t0) / 60, 1), exit=p.returncode, tour_dir=str(tdir) if tdir else None, stops_reached=reached,
                 avail_start_gb=round(a0, 2))
     return peak
 
@@ -199,8 +231,14 @@ def main():
         res["image_diff"] = {"mean": round(float(d.mean()), 2), "p99": float(np.percentile(d, 99)), "max": int(d.max()),
                              "pixels_over_10": round(float((d.max(axis=2) > 10).mean()), 4)}
     dn, nn = res["default"]["tour"], res["nvidia"]["tour"]
-    helps = (nn.get("nvidia_egl_loaded") and nn["i915_gb"] < 0.3 and dn["i915_gb"] > 1.0 and (nn.get("stops_reached") or 0) >= 1
-             and res.get("image_diff", {}).get("mean", 99) < 3.0)
+    # Madelief 2026-11-14: the goal is that it performs better or, preferably, runs faster. So: switch when the 4060 makes the
+    # tour's Gazebo >= 10 % faster (sim time per real time), or at least as fast (>= 95 %) while freeing >= 1 GB of RAM; and
+    # always only if the robot still reached its stop and the same fixed camera gives (nearly) the same image.
+    sp = (nn["rtf"] / dn["rtf"]) if nn.get("rtf") and dn.get("rtf") else None
+    res["speedup"] = round(sp, 2) if sp else None
+    ram = dn["i915_gb"] - nn["i915_gb"]
+    same = res.get("image_diff", {}).get("mean", 99) < 3.0 and (nn.get("stops_reached") or 0) >= 1
+    helps = same and sp is not None and (sp >= 1.10 or (sp >= 0.95 and ram >= 1.0))
     res["helps"] = bool(helps)
     res["ram_freed_gb"] = round(dn["i915_gb"] - nn["i915_gb"], 2)
     (out / "result.json").write_text(json.dumps(res, indent=1) + "\n")
@@ -213,11 +251,12 @@ def main():
              "| | default | nvidia |", "|---|---|---|"]
     for k, lab in (("i915_gb", "Intel iGPU RAM, tour peak (GB)"), ("nvidia_mb_delta", "4060 memory added, tour (MB)"),
                    ("nvidia_egl_loaded", "NVIDIA EGL in gz server"), ("avail_min_gb", "RAM available, lowest (GB)"),
-                   ("stops_reached", "tour stops reached"), ("minutes", "tour minutes")):
+                   ("stops_reached", "tour stops reached"), ("minutes", "tour minutes"), ("rtf", "Gazebo speed, tour (sim s per real s)")):
         lines.append(f"| {lab} | {dn.get(k)} | {nn.get(k)} |")
     lines.append(f"| static camera fps | {res['default']['static'].get('fps')} | {res['nvidia']['static'].get('fps')} |")
+    lines.append(f"| Gazebo speed, static (sim s per real s) | {res['default']['static'].get('rtf')} | {res['nvidia']['static'].get('rtf')} |")
     lines += ["", f"Image difference default vs nvidia (same fixed camera): {res.get('image_diff')}",
-              f"Helps: **{res['helps']}** (RAM freed ~{res['ram_freed_gb']} GB)" + ((" -> gpu_env.sh written" + (f", applied to {a.apply}" if a.apply else "")) if helps else "")]
+              f"Helps: **{res['helps']}** (tour speed x{res['speedup']}, RAM freed ~{res['ram_freed_gb']} GB)" + ((" -> gpu_env.sh written" + (f", applied to {a.apply}" if a.apply else "")) if helps else "")]
     (out / "report.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
