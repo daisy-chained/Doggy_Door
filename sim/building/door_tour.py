@@ -709,6 +709,8 @@ def main():
                                 handled.discard(j)
                 live["cands"] = [[round(x["x"], 2), round(x["y"], 2), round(x["yaw"], 2), x.get("status", "new")] for x in cands]
                 write_live(force=True)
+        if time.time() >= t_end:
+            print(f"patrol: stopped by the time limit ({a.time_limit:g} min wall clock)")   # Claude 2026-11-14: so a cut-short run shows
         print(f"patrol done: {len(patrol_log['viewpoints'])} viewpoints, {len(cands)} candidates")
         pes = [v["pose_err"] for v in patrol_log["viewpoints"] if v.get("pose_err")]
         if pes:

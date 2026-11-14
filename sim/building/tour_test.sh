@@ -36,7 +36,7 @@ if [ "$COND" = 1 ]; then
 fi
 
 set +u; source /opt/ros/jazzy/setup.bash; set -u   # ROS setup scripts use unset variables
-export GZ_PARTITION=tour_$$ ROS_DOMAIN_ID=$(( ($$ % 100) + 100 ))   # own Gazebo + ROS network, nothing else gets in
+export GZ_PARTITION=tour_$$ ROS_DOMAIN_ID=${TOUR_DOMAIN_ID:-$(( ($$ % 100) + 100 ))}   # TOUR_DOMAIN_ID: side-by-side runs pick distinct ones   # own Gazebo + ROS network, nothing else gets in
 export PYTHONUNBUFFERED=1   # door_tour lines reach tour.log / the runq log as they happen (piped output was held back)
 PIDS=()
 cleanup() {
@@ -67,7 +67,7 @@ for try in 1 2 3; do
 done
 [ "$nav_ok" = 1 ] || { echo "Nav2 did not come up"; exit 1; }
 
-timeout 5400 python3 "$SCRIPT" "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${COND_ARGS[@]}" "${@:5}" 2>&1 | tee "$OUT/tour.log"
+timeout "${TOUR_TIMEOUT:-5400}" python3 "$SCRIPT" "$BLD" --start "$X" "$Y" --out "$OUT/tour.json" --frames "$OUT/stops" "${COND_ARGS[@]}" "${@:5}" 2>&1 | tee "$OUT/tour.log"
 status=${PIPESTATUS[0]}
-echo "door_tour exit $status (124 = 90 min timeout)"
+echo "door_tour exit $status (124 = timeout after ${TOUR_TIMEOUT:-5400} s)"
 exit "$status"
