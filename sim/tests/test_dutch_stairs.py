@@ -25,3 +25,23 @@ def test_world_parses_with_physics_plugins():
     w = ET.fromstring(ds.world(rise=0.15)).find("world")
     assert {p.get("name") for p in w.iter("plugin")} >= {"gz::sim::systems::Physics", "gz::sim::systems::Contact"}
     assert len(w.find("model[@name='stairs']").findall("link")) == 12 + 1 + 2
+
+
+def test_ply_matches_the_boxes():
+    txt = ds.ply(steps=13, rise=0.2, landing=2.0)
+    head, body = txt.split("end_header\n")
+    nv = int(head.split("element vertex ")[1].split()[0]); nf = int(head.split("element face ")[1].split()[0])
+    nb = len(ds.boxes(steps=13, rise=0.2, landing=2.0))
+    assert (nv, nf) == (4 + 8 * nb, 2 + 12 * nb)
+    rows = body.strip().split("\n")
+    zs = [float(r.split()[2]) for r in rows[:nv]]
+    assert max(zs) == 3.8 and min(zs) == 0.0          # walls 1.2 m above the 2.6 m landing
+    assert all(r.startswith("3 ") for r in rows[nv:]) and len(rows) == nv + nf
+
+
+def test_install_writes_world_and_ply(tmp_path):
+    import subprocess
+    share = tmp_path / "quad_sim_scripts" / "share" / "quad_sim_scripts"; (share / "worlds").mkdir(parents=True)
+    subprocess.run([sys.executable, str(SIM / "quad" / "dutch_stairs.py"), "--rise", "0.15", "--name", "ds15",
+                    "--install", str(tmp_path)], check=True, capture_output=True)
+    assert (share / "worlds" / "ds15.sdf").exists() and (share / "models" / "ds15" / "meshes" / "ds15.ply").exists()

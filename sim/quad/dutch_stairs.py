@@ -1,7 +1,12 @@
 """Straight Dutch staircase world for the Quad-SDK Spot test (Gazebo Harmonic, same physics block as Quad-SDK's step_20cm.sdf).
 
     python3 sim/quad/dutch_stairs.py --rise 0.20 --out runs/quad/stairs_20.sdf
-    ros2 launch quad_utils quad_gazebo.py world:=$PWD/runs/quad/stairs_20.sdf     # an absolute path works as `world`
+    python3 sim/quad/dutch_stairs.py --rise 0.20 --landing 2.0 --name dutch_stairs_20 --install ~/git/quad_ws/install
+    ros2 launch quad_utils quad_gazebo.py world:=dutch_stairs_20.sdf
+
+Quad-SDK's planners need the terrain as a mesh too: its mesh_to_grid_map node loads
+<quad_sim_scripts share>/models/<world>/meshes/<world>.ply. --install writes the world + that PLY into the colcon install space
+(not into their source tree), so Quad-SDK's own code stays untouched.
 
 Typical Dutch house stair (Bouwbesluit-era homes): 13 steps, rise ~19-21 cm, going ~22 cm, ~0.9 m between the walls, walls on
 both sides. The robot starts at the origin facing +x; the first riser is at x = run_up. Each step is a solid box down to the
@@ -62,18 +67,45 @@ def world(**kw):
 """
 
 
+def ply(ground=(-3.0, 9.0, -3.0, 3.0), **kw):
+    """ASCII PLY triangle mesh of the stairs + a ground rectangle, for Quad-SDK's terrain map (2.5D height layer)."""
+    V, F = [], []
+    x0, x1, y0, y1 = ground
+    V += [(x0, y0, 0), (x1, y0, 0), (x1, y1, 0), (x0, y1, 0)]; F += [(0, 1, 2), (0, 2, 3)]
+    for _, x, y, z, sx, sy, sz in boxes(**kw):
+        b = len(V)
+        V += [(x + dx * sx / 2, y + dy * sy / 2, z + dz * sz / 2) for dz in (-1, 1) for dy in (-1, 1) for dx in (-1, 1)]
+        for q in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
+            F += [(b + q[0], b + q[1], b + q[2]), (b + q[0], b + q[2], b + q[3])]
+    head = (f"ply\nformat ascii 1.0\nelement vertex {len(V)}\nproperty float x\nproperty float y\nproperty float z\n"
+            f"element face {len(F)}\nproperty list uchar int vertex_indices\nend_header\n")
+    return head + "".join(f"{a:.4f} {b:.4f} {c:.4f}\n" for a, b, c in V) + "".join(f"3 {a} {b} {c}\n" for a, b, c in F)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=13)
     ap.add_argument("--rise", type=float, default=0.20)
     ap.add_argument("--going", type=float, default=0.22)
     ap.add_argument("--width", type=float, default=0.90)
+    ap.add_argument("--landing", type=float, default=1.2)
     ap.add_argument("--no-walls", action="store_true")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", default="")
+    ap.add_argument("--name", default="", help="world name for --install")
+    ap.add_argument("--install", default="", help="colcon install dir of the Quad-SDK workspace")
     a = ap.parse_args()
-    p = pathlib.Path(a.out); p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(world(steps=a.steps, rise=a.rise, going=a.going, width=a.width, walls=not a.no_walls))
-    print(p)
+    kw = dict(steps=a.steps, rise=a.rise, going=a.going, width=a.width, landing=a.landing, walls=not a.no_walls)
+    if a.out:
+        p = pathlib.Path(a.out); p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(world(**kw)); print(p)
+    if a.install:
+        share = pathlib.Path(a.install).expanduser() / "quad_sim_scripts" / "share" / "quad_sim_scripts"
+        if not share.is_dir():
+            raise SystemExit(f"no quad_sim_scripts share dir in {a.install} (build Quad-SDK first)")
+        m = share / "models" / a.name / "meshes"; m.mkdir(parents=True, exist_ok=True)
+        (share / "worlds" / f"{a.name}.sdf").write_text(world(**kw))
+        (m / f"{a.name}.ply").write_text(ply(**kw))
+        print(share / "worlds" / f"{a.name}.sdf")
 
 
 if __name__ == "__main__":
