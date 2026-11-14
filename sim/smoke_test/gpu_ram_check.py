@@ -18,15 +18,20 @@ import argparse, json, os, re, signal, subprocess, sys, time
 from pathlib import Path
 
 NV = "/usr/share/glvnd/egl_vendor.d/10_nvidia.json"
+# 2026-11-14 16:20: the tours start gz sim without --headless-rendering, so it draws through GLX on the desktop's X server, which
+# is the Intel chip. The EGL vendor setting alone changed nothing there (first check: same iGPU RAM, identical images). NVIDIA's
+# PRIME render offload does move it: rgbd_smoke.sdf 498 MB iGPU -> 0, 4060 +200 MB, same frame rate.
+NV_ENV = {"__NV_PRIME_RENDER_OFFLOAD": "1", "__GLX_VENDOR_LIBRARY_NAME": "nvidia", "__EGL_VENDOR_LIBRARY_FILENAMES": NV}
 REPO = Path(__file__).resolve().parents[2]
 
 
 def env_for(mode, part):
     e = dict(os.environ, GZ_PARTITION=part)
-    if mode == "nvidia":
-        e["__EGL_VENDOR_LIBRARY_FILENAMES"] = NV
-    else:
-        e.pop("__EGL_VENDOR_LIBRARY_FILENAMES", None)
+    for k, v in NV_ENV.items():
+        if mode == "nvidia":
+            e[k] = v
+        else:
+            e.pop(k, None)
     return e
 
 
@@ -113,7 +118,7 @@ def static(mode, out):
     """Fixed camera, 10 s of frames. Runs in a child process so gz-transport picks up this mode's partition."""
     part = f"gpuchk_{mode}_{os.getpid()}"
     nv0 = nvidia_mb()
-    p = subprocess.Popen(["gz", "sim", "-s", "-r", "--headless-rendering", str(REPO / "sim/smoke_test/rgbd_smoke.sdf")],
+    p = subprocess.Popen(["gz", "sim", "-s", "-r", str(REPO / "sim/smoke_test/rgbd_smoke.sdf")],   # as the tours: no --headless-rendering
                          env=env_for(mode, part), stdout=open(out / f"static_{mode}.log", "w"), stderr=subprocess.STDOUT,
                          start_new_session=True)
     try:
@@ -196,7 +201,7 @@ def tour(mode, out, limit=900):
     reached = None
     if tdir and (tdir / "tour.json").exists():
         t = json.loads((tdir / "tour.json").read_text())
-        reached = sum(1 for v in t.get("visits", []) for s in v.get("stops", []) if s.get("reached"))
+        reached = sum(1 for v in t.get("visits", []) for s in v.get("stops", []) if s.get("result") == "SUCCEEDED")
     peak.update(rtf=rtf(st), rtf_samples=len(st), minutes=round((time.time() - t0) / 60, 1), exit=p.returncode, tour_dir=str(tdir) if tdir else None, stops_reached=reached,
                 avail_start_gb=round(a0, 2))
     return peak
@@ -243,10 +248,12 @@ def main():
     res["ram_freed_gb"] = round(dn["i915_gb"] - nn["i915_gb"], 2)
     (out / "result.json").write_text(json.dumps(res, indent=1) + "\n")
     if helps:
-        line = f"export __EGL_VENDOR_LIBRARY_FILENAMES={NV}   # Gazebo renders on the RTX 4060 (gpu_ram_check {res['started']})\n"
+        line = " ".join(f"{k}={v}" for k, v in NV_ENV.items())
+        line = f"export {line}   # Gazebo renders on the RTX 4060 (gpu_ram_check {res['started']})\n"
         (out / "gpu_env.sh").write_text(line)
         if a.apply:
-            Path(a.apply).write_text(line)
+            with open(a.apply, "a") as f:   # append: gt_rate_check may have written its line already
+                f.write(line)
     lines = [f"# GPU / RAM check {res['started']}", "",
              "| | default | nvidia |", "|---|---|---|"]
     for k, lab in (("i915_gb", "Intel iGPU RAM, tour peak (GB)"), ("nvidia_mb_delta", "4060 memory added, tour (MB)"),
