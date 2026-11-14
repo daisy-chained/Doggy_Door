@@ -34,7 +34,8 @@ def score(run):
     found = [i for i in ids if any(s["right"] for (d, _), s in sides.items() if d == i)]
     first = [i for i in ids if any(s["first"] for (d, _), s in sides.items() if d == i)]
     seen = [i for i in ids if any(d == i for d, _ in sides)]
-    return {"run": run.name, "doors": len(ids), "found": len(found), "found_first": len(first), "located_only": len(set(seen) - set(found)),
+    col = (t.get("contacts") or {}).get("summary")
+    return {**({"collisions": col} if col else {}), "run": run.name, "doors": len(ids), "found": len(found), "found_first": len(first), "located_only": len(set(seen) - set(found)),
             "missed": sorted(set(ids) - set(seen)), "false_doors": false, "candidates": len(pl["candidates"]),
             "viewpoints": len(pl["viewpoints"]), "sides_right": sum(s["right"] for s in sides.values()), "sides_located": len(sides)}
 
@@ -47,7 +48,9 @@ def main():
         print(f"{r['run']}: found {r['found']}/{r['doors']} doors ({r['found_first']} on the first try), "
               f"{r['located_only']} located but no right report, missed {r['missed']}; "
               f"{r['sides_right']}/{r['sides_located']} located sides right; {r['false_doors']} false doors "
-              f"({r['candidates']} candidates, {r['viewpoints']} viewpoints)")
+              f"({r['candidates']} candidates, {r['viewpoints']} viewpoints)"
+              + (f" ; collisions: closed doors {c['closed_door']}, open doors {c['open_door']}, walls {c['wall']}, clutter {c['clutter']}"
+                 if (c := r.get("collisions")) else ""))
         print(json.dumps(r))
 
 

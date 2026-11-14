@@ -16,7 +16,7 @@ doorsim.door_step.visit picks the extra looks itself until sure (at most --step-
 from the door-crop classifier, train/props_server.py, mean over the stop frames, sliding at >= --p-slide-t); the sim's truth checks
 it; right -> the door opens fully (/door_<id>_panel/cmd_pos), wrong -> a new look, then a new guess. The full report is logged.
 """
-import argparse, json, math, pathlib, signal, subprocess, sys, time
+import argparse, json, math, pathlib, signal, subprocess, sys, threading, time
 
 import numpy as np
 import rclpy
@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformListener
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import building as B, door_step, doors as D, fog, hinge_look, live_map, patrol, robot, slam_eval  # noqa: E402
+from doorsim import building as B, contacts, door_step, doors as D, fog, hinge_look, live_map, patrol, robot, slam_eval  # noqa: E402
 
 REPO = SIM.parent
 IMG_W, HFOV = 640, 1.3          # robot camera = training rig (doorsim.robot)
@@ -236,6 +236,37 @@ def main():
             from gz.msgs10.double_pb2 import Double
             gz_node = Node()
 
+    # body contacts (bumper sensor on the robot, doorsim.contacts): (sim time, other side) lists, + when each door was opened
+    contact_events, contact_lock, opened_at = [], threading.Lock(), {}
+    ct_node = None
+    try:
+        from gz.transport13 import Node as GzNode
+        from gz.msgs10.contacts_pb2 import Contacts
+        from doorsim.gzsim import ns as gz_ns
+
+        def on_contacts(msg):
+            t = gz_ns(msg.header.stamp) / 1e9 or nav.get_clock().now().nanoseconds / 1e9   # no stamp: ROS sim clock
+            with contact_lock:
+                for c in msg.contact:
+                    o = contacts.other_side(c.collision1.name, c.collision2.name, a.name)
+                    if o:
+                        contact_events.append((t, o))
+        ct_node = GzNode()
+        ct_node.subscribe(Contacts, f"/{a.name}/contacts", on_contacts)
+    except Exception as e:
+        print(f"warning: no contact subscription ({e}); tour.json gets no contacts")
+
+    def door_state(door_id, t):
+        """"closed" if the building has the door closed and the robot had not opened it before t, else "open"."""
+        d = next((x for x in b["doors"] if x["id"] == door_id), None)
+        return "closed" if d is not None and d["state"] == "closed" and opened_at.get(door_id, math.inf) > t else "open"
+
+    def contact_summary():
+        with contact_lock:
+            ev = sorted(contact_events)
+        eps = contacts.episodes(ev)
+        return eps, contacts.summary(eps, door_state)
+
     live_path = pathlib.Path(a.out).parent / "live.json" if a.out else None
     live = {"pose": None, "now": None, "opened": [], "reports": []}
     live_t = [0.0]
@@ -258,6 +289,8 @@ def main():
                     fog.look(fog_f, occ[0] if det is not None else fog_map, (x + 0.20 * math.cos(yaw), y + 0.20 * math.sin(yaw)),
                              yaw + 2 * math.pi * k / max(1, a.ring), HFOV, a.fog_range)
                 live["fog"] = fog.encode(fog_f)
+        if ct_node is not None:
+            live["contacts"] = contact_summary()[1]
         tmp = live_path.with_suffix(".tmp")
         tmp.write_text(json.dumps({**live, "time": time.time()}))
         tmp.replace(live_path)
@@ -386,6 +419,7 @@ def main():
             door_pubs[topic] = gz_node.advertise(topic, Double)
         msg = Double()
         msg.data = float(B.open_position(d))
+        opened_at.setdefault(d["id"], nav.get_clock().now().nanoseconds / 1e9)   # contacts with this door after now count as open-door
         for _ in range(10):                                    # the controller's subscription can take a moment to connect
             door_pubs[topic].publish(msg)
             wait_sim(nav, 0.2)
@@ -791,6 +825,11 @@ def main():
                 print(f"door {v['door']} {v['side']} hinge look: guess {guess}, found {rec['hinge_look']['found']}")
             log["visits"].append(rec)
     finally:
+        if ct_node is not None:
+            eps, csum = contact_summary()
+            log["contacts"] = {"episodes": eps, "summary": csum}
+            print(f"contacts: {csum['episodes']} episodes (closed doors {csum['closed_door']}, open doors {csum['open_door']}, "
+                  f"walls {csum['wall']}, clutter {csum['clutter']}, other {csum['other']})")
         if a.out:                                              # save first: on Ctrl-C rclpy's context is already gone (publish raises)
             pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
             if a.patrol:

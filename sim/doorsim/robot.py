@@ -142,14 +142,17 @@ def _joint(name, kind, parent, child, axis=""):
 
 
 # --- links ---
-def _base_link(p):
+def _base_link(p, name="robot"):
     L, W = p["footprint"]["length"], p["footprint"]["width"]
     h, c, m = p["base"]["height"], p["base"]["clearance"], p["base"]["mass"]
     z = c + h / 2
     box = f"<box><size>{_f(L)} {_f(W)} {_f(h)}</size></box>"
     return (f'<link name="base_link">{_inertial(m, _box_inertia(m, L, W, h), _pose(z=z))}'
             f'<collision name="collision">{_pose(z=z)}{_geom(box)}</collision>'
-            f'<visual name="visual">{_pose(z=z)}{_geom(box)}{_material(0.15, 0.15, 0.17)}</visual></link>')
+            f'<visual name="visual">{_pose(z=z)}{_geom(box)}{_material(0.15, 0.15, 0.17)}</visual>'
+            # bumper: contacts of the body box only (the wheels / casters touch the floor all the time); see doorsim/contacts.py
+            f'<sensor name="bumper" type="contact"><contact><collision>collision</collision><topic>/{name}/contacts</topic></contact>'
+            f'<update_rate>20</update_rate><always_on>true</always_on></sensor></link>')
 
 
 def _wheel_link(p, name, side):
@@ -280,7 +283,8 @@ def _plugins(p, name, odom_truth=False):
              '<odom_publish_frequency>30</odom_publish_frequency></plugin>')
     joints = ('<plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">'
               '<topic>/joint_states</topic></plugin>')
-    return drive + truth + joints
+    contact = '<plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>'
+    return drive + truth + joints + contact
 
 
 # --- public builders ---
@@ -290,7 +294,7 @@ def robot_sdf(p, name="robot", odom_truth=False, headlight=0.0):
     axis = "<axis><xyz>0 1 0</xyz></axis>"
     ring_links, ring_joints = _ring_links(p, name, headlight)
     parts = [
-        _base_link(p),
+        _base_link(p, name),
         _wheel_link(p, "left_wheel", +1), _wheel_link(p, "right_wheel", -1),
         _caster_link(p, "front_caster", +1), _caster_link(p, "rear_caster", -1),
         _camera_link(p, name, headlight), *ring_links,
