@@ -9,7 +9,7 @@ Per mode (default, nvidia = __EGL_VENDOR_LIBRARY_FILENAMES=.../10_nvidia.json, t
   1. static: rgbd_smoke.sdf (one fixed RGB-D camera), grab RGB frames for 10 s -> frame rate + the last frame
      (both modes see the exact same scene, so the pixel difference says whether the renderer changes the images).
   2. tour: the real thing, short: tour_test.sh on bld_train_005 with the dark-2 % conditions + headlight (same as cond_005_dark2),
-     wheeled_ring platform (5 cameras), --max-visits 1. Every 5 s: the gz server's i915 resident memory (drm fdinfo), NVIDIA
+     wheeled_ring platform (5 cameras), --max-visits 4. Every 5 s: the gz server's i915 resident memory (drm fdinfo), NVIDIA
      memory used, MemAvailable. Peaks go in the result.
 Output: OUT/result.json, OUT/report.md, OUT/rgb_<mode>.png; when NVIDIA helps (i915 near zero, 4060 takes the drawing, tour
 reached its stop, images close) also OUT/gpu_env.sh with the export line, and with --apply PATH the same line at PATH: the queued tour jobs source runs/scratch/gpu_env.sh at their start
@@ -171,7 +171,7 @@ def tour(mode, out, limit=900):
     env = env_for(mode, "unused")
     env.update(SLAM="0", ODOM_NOISE="0", LIGHT="0.02", HEADLIGHT="0.7")
     p = subprocess.Popen(["bash", "sim/building/tour_test.sh", "sim/building/out/bld_train_005", "sim/configs/robots/wheeled_ring.yaml",
-                          "1.0", "4.915", "--max-visits", "1"], cwd=REPO, env=env, stdout=open(out / f"tour_{mode}.log", "w"),
+                          "1.0", "4.915", "--max-visits", "4"], cwd=REPO, env=env, stdout=open(out / f"tour_{mode}.log", "w"),
                          stderr=subprocess.STDOUT, start_new_session=True)
     part = f"tour_{p.pid}"                   # tour_test.sh sets GZ_PARTITION=tour_$$
     peak = {"i915_gb": 0.0, "nvidia_mb_delta": 0, "avail_min_gb": a0, "nvidia_egl_loaded": None}
