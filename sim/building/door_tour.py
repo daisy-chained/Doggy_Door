@@ -16,7 +16,7 @@ doorsim.door_step.visit picks the extra looks itself until sure (at most --step-
 from the door-crop classifier, train/props_server.py, mean over the stop frames, sliding at >= --p-slide-t); the sim's truth checks
 it; right -> the door opens fully (/door_<id>_panel/cmd_pos), wrong -> a new look, then a new guess. The full report is logged.
 """
-import argparse, json, math, pathlib, signal, subprocess, sys, threading, time
+import argparse, json, math, os, pathlib, signal, subprocess, sys, threading, time
 
 import numpy as np
 import rclpy
@@ -27,7 +27,7 @@ from tf2_ros import Buffer, TransformListener
 
 SIM = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SIM))
-from doorsim import building as B, contacts, door_step, doors as D, fog, hinge_look, live_map, patrol, robot, slam_eval  # noqa: E402
+from doorsim import building as B, contacts, door_step, doors as D, fog, hinge_look, live_map, model_link, patrol, robot, slam_eval  # noqa: E402
 
 REPO = SIM.parent
 IMG_W, HFOV = 640, 1.3          # robot camera = training rig (doorsim.robot)
@@ -190,10 +190,11 @@ def main():
     if a.hinge_look:
         if not a.frames:
             sys.exit("--hinge-look needs --frames (the detector reads the saved rgb.png)")
-        det = subprocess.Popen([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "detect_server.py"), a.hinge_look],
-                               cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-        while (line := det.stdout.readline()) and line.strip() != "READY":
-            pass
+        # shared detector when DOORSIM_DETECT_SOCK points at a running sim/building/model_service.py for the same model
+        # (two tours side by side, Madelief 2026-11-14), else its own detect_server.py as before
+        det = model_link.open_model([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "detect_server.py"), a.hinge_look],
+                                    sock=os.environ.get("DOORSIM_DETECT_SOCK") or None, cwd=REPO)
+        print(f"detector: {'shared service' if det.shared else 'own process'}")
         doors = {d["id"]: {"pos": d["pos"], "yaw": d["yaw"], "width": d["spec"]["width"]} for d in b["doors"]}
         occ = [None if a.slam else hinge_look.load_map(a.building + ".map.yaml")]    # list: round 2 swaps in the map with the opened doors
         if a.slam:                                             # run 4: the live SLAM map replaces the floor map (Madelief 2026-11-11)
@@ -224,11 +225,10 @@ def main():
     if a.door_step:
         if det is None:
             sys.exit("--door-step needs --hinge-look (detector) and --frames")
-        props = subprocess.Popen([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "props_server.py"), a.door_step,
-                                  *(["--familiar", str(pathlib.Path(a.familiar).resolve())] if a.familiar else [])],
-                                 cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
-        while (line := props.stdout.readline()) and line.strip() != "READY":
-            pass
+        props = model_link.open_model([str(REPO / "train" / ".venv" / "bin" / "python"), str(REPO / "train" / "props_server.py"), a.door_step,
+                                       *(["--familiar", str(pathlib.Path(a.familiar).resolve())] if a.familiar else [])],
+                                      sock=os.environ.get("DOORSIM_PROPS_SOCK") or None, cwd=REPO)
+        print(f"door-crop classifier: {'shared service' if props.shared else 'own process'}")
         bdoors = {d["id"]: d for d in b["doors"]}
         K = [fx, 0, cx, 0, fx, (IMG_W * 3 / 4) / 2, 0, 0, 1]   # 640 x 480, square pixels
         if not a.no_open:
@@ -300,7 +300,7 @@ def main():
         if det is None or frame_dir is None:
             return {"boxes": [], "scores": [], "labels": []}
         p = pathlib.Path(a.frames) / frame_dir
-        det.stdin.write(str((p / "rgb.png").resolve()) + "\n")
+        det.stdin.write(str((p / "rgb.png").resolve()) + "\n"); det.stdin.flush()
         out = json.loads(det.stdout.readline())
         (p / "dets.json").write_text(json.dumps(out) + "\n")
         return out
@@ -399,6 +399,7 @@ def main():
         f = (pathlib.Path(a.frames) / frame).resolve()
         props.stdin.write(json.dumps({"rgb": str(f / "rgb.png"), "depth": str(f / "depth.png"), "box": box, "K": K,
                                       "camera": {"world_position": [cam[0], cam[1], 0.40], "world_rpy": [0.0, 0.0, cam[2]]}}) + "\n")
+        props.stdin.flush()
         out = json.loads(props.stdout.readline())
         return {"p": out["opening"]["slide"], "unfamiliar": bool(out.get("familiar", {}).get("flag", False))} if "opening" in out else None
 
