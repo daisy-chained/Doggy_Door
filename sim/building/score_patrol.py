@@ -10,13 +10,22 @@ import re, json, pathlib, sys
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
+def load_building(run, t):
+    """building.json of a tour: tour.json "building_path" (relative = from the repo root) when it is there, else the bld_<split>_<id> name rule."""
+    bp = t.get("building_path")
+    if bp:
+        p = pathlib.Path(bp)
+        return json.loads(pathlib.Path(f"{p if p.is_absolute() else REPO / p}.building.json").read_text())
+    split, bid = re.match(r"bld_([a-z]+)_(\d{3})", run.name).groups()   # bld_train_007_..., bld_test_100_...
+    return json.loads((REPO / f"sim/building/out/bld_{split}_{bid}.building.json").read_text())
+
+
 def score(run):
     t = json.loads((run / "tour.json").read_text())
     pl = t.get("patrol")
     if pl is None:
         return None
-    split, bid = re.match(r"bld_([a-z]+)_(\d{3})", run.name).groups()   # bld_train_007_..., bld_test_100_...
-    b = json.loads((REPO / f"sim/building/out/bld_{split}_{bid}.building.json").read_text())
+    b = load_building(run, t)
     steps = {v.get("cand"): v.get("door_step") or {} for v in t["visits"] if v.get("cand") is not None}
     sides = {}                                                  # (door, side) -> {"first": bool, "right": bool}
     false = 0

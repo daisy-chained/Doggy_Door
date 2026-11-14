@@ -1,7 +1,8 @@
 """Builds the buildings of a config (robot run phase 2e): per building a world file, a building.json (layout, doors with label ids,
 approach poses) and a Nav2 map (pgm + yaml) in the output directory. The numbers come from the config (sim/configs/buildings_v1.yaml),
 the geometry from sim/doorsim/building.py. Run: python3 sim/building/make_buildings.py sim/configs/buildings_v1.yaml [--out DIR]
-Building i uses seed config.seed + i and is named bld_<split>_<seed:03d>."""
+Building i uses seed config.seed + i and is named bld_<split>_<seed:03d>
+(cfg kind house: both floors, hse_<split>_<seed:03d>_f0 / _f1)."""
 import argparse, pathlib, sys
 import yaml
 
@@ -18,6 +19,13 @@ def main():
     cfg = yaml.safe_load(pathlib.Path(args.config).read_text())
     split = cfg.get("split", "train")
     for seed in range(cfg["seed"], cfg["seed"] + cfg["count"]):
+        if cfg.get("kind") == "house":                         # both floors of a seed: hse_<split>_<seed:03d>_f0 / _f1
+            for floor in (0, 1):
+                name = f"hse_{split}_{seed:03d}_f{floor}"
+                b = building.make_building(cfg, seed, split, floor)
+                building.write(b, args.out, name)
+                print(f"{name}: {len(b['layout']['rooms'])} rooms, {len(b['doors'])} doors, {len(b['poses'])} poses, start {b['start']}")
+            continue
         name = f"bld_{split}_{seed:03d}"
         b = building.make_building(cfg, seed, split)
         building.write(b, args.out, name)

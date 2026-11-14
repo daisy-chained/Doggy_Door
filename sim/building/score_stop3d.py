@@ -50,12 +50,12 @@ def _iou(a, b):
 
 
 def score(run):
+    from score_patrol import load_building
     t = json.loads((run / "tour.json").read_text())
     pl = t.get("patrol")
     if pl is None:
         return []
-    split, bid = re.match(r"bld_([a-z]+)_(\d{3})", run.name).groups()
-    b = json.loads((REPO / f"sim/building/out/bld_{split}_{bid}.building.json").read_text())
+    b = load_building(run, t)
     bd = {d["id"]: d for d in b["doors"]}
     opened, rows = set(), []
     for v in t["visits"]:

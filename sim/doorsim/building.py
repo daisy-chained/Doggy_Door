@@ -11,7 +11,9 @@ Open doors: the door's joint controller gets <initial_position> = open_frac * th
 sliding: 0.9 of the travel); closed doors stay at 0. Label ids: door id i uses base = 10 * i; base + 1 panel, + 2 handle (front),
 + 3 glass, + 4 handle (back), + 5..7 hinge knuckles (as v5 with k = i), so door ids stay < 200 for i <= MAX_DOORS (10 * 19 + 7 = 197).
 Clutter (cfg "clutter", optional): items of clutter.POOL, label 200 + (pool id - 100) = 200..247; floor items stand in the spaces
-(occupied in the map), wall items hang flat on a wall face. Randomness: numpy Generator."""
+(occupied in the map), wall items hang flat on a wall face. Randomness: numpy Generator.
+Houses (cfg kind "house", round 1 of the Dutch-house world): sample_house / place_house_doors / make_building(..., floor); a hub
+("corridor" = hall / landing strip) plus rooms, a planned door per room pair, and a "stairs" obstacle box (see sample_house)."""
 import json, math, pathlib, re
 import numpy as np
 
@@ -335,6 +337,9 @@ def occupancy(layout, doors_, res, clutter=None):
         fill((r[0], r[2], r[1], r[3]), True)
     for p in _wall_pieces(layout, doors_):
         fill(_rect_of(p), False)
+    if "stairs" in layout:
+        st = layout["stairs"]
+        fill((st[0], st[2], st[1], st[3]), False)
 
     def mark(x, y):
         col, row = int((x - ox) / res), h - 1 - int((y - oy) / res)
@@ -465,16 +470,17 @@ def _fit_labels(grid, res, radius):
     return ndimage.label(~ndimage.maximum_filter(grid == 0, size=2 * r + 1, mode="constant", cval=0))[0]
 
 
-def place_clutter(rng, layout, ds, cfg):
+def place_clutter(rng, layout, ds, cfg, keeps=None):
     """Clutter entries (see the module docstring) for cfg["clutter"]: per space (corridor first) a random number of floor items,
     then of wall items, each pool item at most once per space and place; an item that finds no spot (50 tries) is skipped, and
-    a floor item that cuts apart approach poses of its space that were connected before is dropped."""
+    a floor item that cuts apart approach poses of its space that were connected before is dropped. Houses: the stairs box and the extra
+    `keeps` boxes ([x0, y0, x1, y1], e.g. the start spot) are off limits to floor items, the stairs also to wall items."""
     cc, out, taken_wall = cfg["clutter"], [], {}
     res = float(cfg.get("map_resolution", 0.05))
     lab0 = _fit_labels(occupancy(layout, ds, res)[0], res, cfg["robot_radius"])
     for space, rect in _spaces(layout).items():
         counts = cc["corridor" if space == "corridor" else "rooms"]
-        keeps = _keep_outs(ds, space, rect, cfg)
+        kos = _keep_outs(ds, space, rect, cfg) + ([layout["stairs"]] if "stairs" in layout else []) + list(keeps or [])
         for place_kind in ("floor", "wall"):
             group = [q for q in clutter.POOL if q["place"] == place_kind]
             lo, hi = counts[f"{place_kind}_count"]
@@ -485,13 +491,15 @@ def place_clutter(rng, layout, ds, cfg):
                 p = group[i]
                 if place_kind == "floor":
                     taken = [_aabb_of(c) for c in out if c["space"] == space and c["place"] == "floor"]
-                    spot = _floor_spot(rng, p, rect, keeps, taken, cc["gap"], cc["p_against_wall"])
+                    spot = _floor_spot(rng, p, rect, kos, taken, cc["gap"], cc["p_against_wall"])
                     if spot is None:
                         continue
                     pos, yaw = [spot[0], spot[1], p["size"][2] / 2], spot[2]
                 else:
                     spot = _wall_spot(rng, p, rect, ds, space, taken_wall, cc)
                     if spot is None:
+                        continue
+                    if "stairs" in layout and _box_hit(_aabb_of({"item": p["name"], "position": list(spot[0]), "yaw": spot[1]}), layout["stairs"], 0.02):
                         continue
                     pos, yaw = list(spot[0]), spot[1]
                 colour = [float(v) for v in rng.uniform(0, 1, 3)] if p["recolour"] else None
@@ -598,23 +606,218 @@ def building_sdf(b, name):
     floor = doors._boxes_model("floor", "floor over the whole building", [("floor", (0.45, 0.45, 0.45), bx[0] - e, bx[2] + e, bx[1] - e, bx[3] + e, -0.1, 0.0)])
     ceiling = doors._boxes_model("ceiling", "ceiling over the whole building", [("ceiling", doors.CEILING_RGB, bx[0] - e, bx[2] + e, bx[1] - e, bx[3] + e, doors.ROOM_HEIGHT, doors.ROOM_HEIGHT + 0.1)])
     walls = doors._boxes_model("walls", f"walls ({WALL_T} thick) with a gap + lintel per door", _wall_boxes(lay, b["doors"]))
+    stairs = ""
+    if "stairs" in lay:  # houses: a solid box (ground floor: the staircase up to the ceiling; upper floor: the railing round the void)
+        s = lay["stairs"]
+        stairs = "\n" + doors._boxes_model("stairs", "stairs: an obstacle box (no label)", [("stairs", (0.55, 0.42, 0.3) if lay.get("floor", 0) == 0 else (0.5, 0.5, 0.55),
+                                                                                           s[0], s[2], s[1], s[3], 0.0, lay["stairs_height"])])
     rig = v3[v3.index("    <!-- Fixed sensor rig"):v3.index("    <!-- clutter pool")]
     c = lay["corridor"]
     rig = rig.replace("<pose>0 0 1.2 0 0 0</pose>", f"<pose>{doors._pose((c[0] + c[2]) / 2, (c[1] + c[3]) / 2, 1.2)} 0 0 0</pose>", 1)
     parts = [f'<?xml version="1.0" ?>\n<!-- Building {name} (seed {b["seed"]}, split {b["split"]}): generated by sim/building/make_buildings.py -->\n', head, lights, "\n",
-             floor, ceiling, walls] + ["\n" + _door_models(d) for d in b["doors"]] + ["\n" + _clutter_model(c) for c in b.get("clutter", [])]
+             floor, ceiling, walls, stairs] + ["\n" + _door_models(d) for d in b["doors"]] + ["\n" + _clutter_model(c) for c in b.get("clutter", [])]
     return "".join(parts) + "\n" + rig + "  </world>\n</sdf>\n"
 
 
 # --- whole building ---
-def make_building(cfg, seed, split="train"):
-    """{"seed", "split", "layout", "doors", "clutter", "poses", "map_resolution"}: deterministic for a seed."""
+def make_building(cfg, seed, split="train", floor=0):
+    """{"seed", "split", "layout", "doors", "clutter", "poses", "map_resolution"}: deterministic for a seed. cfg kind "house":
+    sample_house (floor 0 / 1 of the same footprint) + one door per planned pair + "start" in the hub; `floor` is ignored otherwise."""
     rng = np.random.default_rng(seed)
+    if cfg.get("kind") == "house":
+        return _make_house(cfg, rng, seed, split, floor)
     layout = sample_layout(rng, cfg)
     ds = place_doors(rng, layout, cfg, split)
     cl = place_clutter(rng, layout, ds, cfg) if "clutter" in cfg else []  # after all door draws: doors / layout stay as without clutter
     return {"seed": int(seed), "split": split, "layout": layout, "doors": ds, "clutter": cl, "poses": approach_poses(layout, ds, cfg, cl),
             "map_resolution": float(cfg.get("map_resolution", 0.05))}
+
+
+# --- houses ---
+def _shared_wall(ra, rb):
+    """(axis, coord, lo, hi, yaw) of the wall rect ra shares with rect rb (yaw = normal from ra into rb), or None."""
+    ov = lambda i: (max(ra[i], rb[i]), min(ra[i + 2], rb[i + 2]))
+    for e, o, axis, coord, i, yaw in ((ra[2], rb[0], "y", ra[2], 1, 0.0), (ra[0], rb[2], "y", ra[0], 1, math.pi),
+                                      (ra[3], rb[1], "x", ra[3], 0, math.pi / 2), (ra[1], rb[3], "x", ra[1], 0, -math.pi / 2)):
+        if abs(e - o) < 1e-9:
+            lo, hi = ov(i)
+            return (axis, coord, lo, hi, yaw) if hi - lo > 1e-9 else None
+    return None
+
+
+_STAIR_GAP = 0.1  # m between a door's trim / slide path and the stairs (and the wall end) on a wall the stairs touch
+
+
+def house_walls(layout, margin):
+    """{"a|b": (front, back, axis, coord, lo, hi, yaw)} of every planned pair, as _walls_between. A wall whose hub-side strip (0.5 m
+    deep) touches the stairs is cut to its larger free piece, with _STAIR_GAP clear at both ends instead of `margin` (the door
+    must not stand against the stairs); a pair without a shared wall is left out."""
+    sp, st, out = _spaces(layout), layout.get("stairs"), {}
+    for a, b in layout["plan"]:
+        w = _shared_wall(sp[a], sp[b])
+        if w is None:
+            continue
+        axis, coord, lo, hi, yaw = w
+        if st is not None and a == "corridor":
+            n = math.sin(yaw) if axis == "x" else math.cos(yaw)
+            d0, d1 = (coord - 0.5, coord) if n > 0 else (coord, coord + 0.5)
+            strip = [lo, d0, hi, d1] if axis == "x" else [d0, lo, d1, hi]
+            if _box_hit(strip, st):
+                b0, b1 = (st[0], st[2]) if axis == "x" else (st[1], st[3])
+                lo, hi = max((lo, min(hi, b0)), (max(lo, b1), hi), key=lambda p: p[1] - p[0])
+                lo, hi = lo + _STAIR_GAP - margin, hi - _STAIR_GAP + margin
+        out[f"{a}|{b}"] = (a, b, axis, coord, lo, hi, yaw)
+    return out
+
+
+def _house_rects(rng_vals, floor):
+    """Layout dict of one floor from the drawn numbers v (see sample_house)."""
+    v = rng_vals
+    W, D, sw, stw = v["W"], v["D"], v["sw"], v["stw"]
+    hx, mx = ((0.0, sw), (sw, W)) if v["west"] else ((W - sw, W), (0.0, W - sw))
+    sx = (0.0, stw) if v["west"] else (W - stw, W)
+    R = lambda x, y0, y1: [float(x[0]), float(y0), float(x[1]), float(y1)]
+    top = v["gap"] + v["length"]
+    if floor == 0:
+        h, t = v["hall_d"], v["toilet_d"]
+        hub, rooms = R(hx, 0.0, h), [("toilet", R(hx, h, h + t)), ("kitchen", R(hx, h + t, D))]
+        if v["ensuite"]:
+            f = v["fe"] * D
+            rooms = [("living_front", R(mx, 0.0, f)), ("living_back", R(mx, f, D))] + rooms
+            plan = [["corridor", "living_front"], ["corridor", "toilet"], ["living_back", "kitchen"], ["living_front", "living_back"]]
+            types = {"corridor|toilet": "hinged", "living_front|living_back": "sliding"}
+        else:
+            rooms = [("living", R(mx, 0.0, D))] + rooms
+            plan, types = [["corridor", "living"], ["corridor", "toilet"], ["living", "kitchen"]], {"corridor|toilet": "hinged"}
+        stairs = [sx[0], v["gap"], sx[1], top]
+    else:
+        b3, bd = v["bed3_d"], v["bath_d"]
+        hub = R(hx, b3, D - bd)
+        f = v["f1"] * D
+        rooms = [("bed3", R(hx, 0.0, b3)), ("bath", R(hx, D - bd, D)), ("bed1", R(mx, 0.0, f)), ("bed2", R(mx, f, D))]
+        plan, types = [["corridor", r] for r in ("bed1", "bed2", "bed3", "bath")], {}
+        stairs = [sx[0], max(v["gap"], b3), sx[1], top]
+    return {"bounds": [0.0, 0.0, float(W), float(D)], "corridor": hub, "rooms": [{"id": i, "rect": r, "side": None} for i, r in rooms],
+            "kind": "house", "floor": floor, "strip_side": "west" if v["west"] else "east", "stairs": [float(x) for x in stairs],
+            "plan": plan, "door_types": types}
+
+
+def _house_ok(lay, v, h, cm, wmax):
+    """True if the floor layout keeps every rule of sample_house (stairs, room sizes, shared walls, doors that fit)."""
+    sp, st, hub = _spaces(lay), lay["stairs"], lay["corridor"]
+    if lay["floor"] == 0:
+        if hub[3] - st[3] < h["ground"]["hall_free"] - 1e-9 or sp["kitchen"][3] - sp["kitchen"][1] < h["ground"]["kitchen_min"] - 1e-9:
+            return False
+        t = sp["toilet"]
+        w, d = sorted([t[2] - t[0], t[3] - t[1]])
+        if w < 0.85 or d < 1.2:
+            return False
+    elif hub[3] - st[3] < h["upper"]["step_off"] - 1e-9 or st[3] - st[1] < 0.5:
+        return False
+    walls = house_walls(lay, cm)
+    for a, b in lay["plan"]:
+        w = walls.get(f"{a}|{b}")
+        s = _shared_wall(sp[a], sp[b])
+        if w is None or s[3] - s[2] < h["min_shared"] - 1e-9 or w[5] - w[4] - 2 * cm < wmax:  # a door of the widest kind must fit
+            return False
+    return True
+
+
+def sample_house(rng, cfg, floor=0):
+    """Layout of one floor of a Dutch terraced house (cfg["house"]; the full spec is in sim/tests/test_houses.py): footprint first
+    (W, D, strip side + width, stairs), then both floors' own numbers, in a fixed order, so floors 0 and 1 of one rng share the
+    footprint; redrawn until every rule of BOTH floors holds (<= 2000 tries). Returns the layout of `floor`."""
+    h = cfg["house"]
+    g0, g1, s, cm, wmax = h["ground"], h["upper"], h["stairs"], cfg.get("corner_margin", 0.3), cfg["door"]["width"][1]
+    for _ in range(2000):
+        v = {"W": _u(rng, h["width"]), "D": _u(rng, h["depth"]), "west": bool(rng.integers(2)), "sw": _u(rng, h["strip_width"]),
+             "stw": _u(rng, s["width"]), "length": _u(rng, s["length"]), "gap": _u(rng, s["front_gap"])}
+        v.update(toilet_d=_u(rng, g0["toilet_depth"]), hall_f=float(rng.random()), ensuite=bool(rng.random() < g0["p_ensuite"]),
+                 fe=_u(rng, g0["ensuite_front"]), bed3_d=_u(rng, g1["bed3_depth"]), bath_d=_u(rng, g1["bath_depth"]), f1=_u(rng, g1["bed1_front"]))
+        lo, hi = v["gap"] + v["length"] + g0["hall_free"], v["D"] - v["toilet_d"] - g0["kitchen_min"]
+        if hi < lo or v["sw"] - v["stw"] < 0.9:
+            continue
+        v["hall_d"] = lo + v["hall_f"] * (hi - lo)
+        lays = [_house_rects(v, f) for f in (0, 1)]
+        if all(_house_ok(lay, v, h, cm, wmax) for lay in lays):
+            lay = lays[floor]
+            lay["stairs_height"] = float(doors.ROOM_HEIGHT if floor == 0 else h["rail_height"])
+            return lay
+    raise ValueError("sample_house: no layout in 2000 draws, check the house numbers in the config")
+
+
+def _passable(layout, d, cfg):
+    """True if, with door d fully open (and every other door a plain wall), a robot of robot_radius fits through it into the main part
+    of the other space: the biggest fit component (_fit_labels) of each of the door's two spaces is the same one (a narrow
+    hinged door swung open can leave < 2 radii, or its panel can wall off the pocket behind it)."""
+    res, sp = float(cfg.get("map_resolution", 0.05)), _spaces(layout)
+    grid, (ox, oy) = occupancy(layout, [dict(d, state="open", open_frac=1.0)], res)
+    lab, main = _fit_labels(grid, res, cfg["robot_radius"]), []
+    for sid in d["connects"]:
+        r = sp[sid]
+        part = lab[grid.shape[0] - 1 - int((r[3] - oy) / res):grid.shape[0] - 1 - int((r[1] - oy) / res) + 1, int((r[0] - ox) / res):int((r[2] - ox) / res) + 1]
+        cnt = np.bincount(part[part > 0])
+        main.append(int(cnt.argmax()) if cnt.size else 0)
+    return main[0] > 0 and main[0] == main[1]
+
+
+def place_house_doors(rng, layout, cfg, split="train"):
+    """Door dicts as place_doors: exactly one per planned pair, on their shared wall (house_walls), forced types from
+    layout["door_types"] (spec resampled until it matches, fits and the open door lets the robot through, _passable). A hinged hub
+    door always swings into the room (an open panel must not cut the narrow hall / landing beside the stairs)."""
+    walls, out = house_walls(layout, cfg["corner_margin"]), []
+    for a, b in layout["plan"]:
+        wall, forced = walls[f"{a}|{b}"], layout["door_types"].get(f"{a}|{b}")
+        axis, coord, yaw = wall[2], wall[3], wall[6]
+        for _ in range(1000):
+            spec = _sample_spec(rng, cfg, split)
+            hit = None if forced and spec["door_type"] != forced else _try_place(rng, spec, wall, [], cfg["corner_margin"])
+            if not hit:
+                continue
+            c, span = hit
+            if a == "corridor" and doors.is_hinged_like(spec):
+                spec["swing_x"] = 1
+            pos = [c, coord] if axis == "x" else [coord, c]
+            d = {"id": len(out) + 1, "spec": spec, "connects": [a, b], "pos": [float(pos[0]), float(pos[1])], "yaw": float(yaw)}
+            if _passable(layout, d, cfg):
+                break
+        else:
+            raise ValueError(f"no door fits {a}|{b}")
+        closed = bool(rng.random() < cfg["p_closed"])
+        frac = 0.0 if closed else round(float(rng.uniform(cfg["min_open"], 1.0)), 3)
+        out.append(dict(d, state="closed" if closed else "open", open_frac=frac, heldout=bool(doors.is_heldout(spec, cfg["heldout"]))))
+    return out
+
+
+def _house_start(layout, ds, cfg):
+    """[x, y] of the robot start: in the hub past the stairs' top end, robot_radius off the hub walls and the stairs, where the
+    distance to anything occupied is largest with every door open."""
+    from scipy import ndimage
+    res, rad, hub, st = float(cfg.get("map_resolution", 0.05)), cfg["robot_radius"], layout["corridor"], layout["stairs"]
+    grid, (ox, oy) = occupancy(layout, [dict(d, state="open", open_frac=1.0) for d in ds], res)
+    dist = ndimage.distance_transform_edt(grid != 0) * res
+    lab = _fit_labels(grid, res, rad)
+    part = lab[grid.shape[0] - 1 - int((hub[3] - oy) / res):grid.shape[0] - 1 - int((hub[1] - oy) / res) + 1, int((hub[0] - ox) / res):int((hub[2] - ox) / res) + 1]
+    main = int(np.bincount(part[part > 0]).argmax())
+    xs, ys = ox + (np.arange(grid.shape[1]) + 0.5) * res, oy + (np.arange(grid.shape[0])[::-1] + 0.5) * res
+    X, Y = np.meshgrid(xs, ys)
+    y0 = max(hub[1] + rad, st[3] + rad)
+    ok = (X >= hub[0] + rad) & (X <= hub[2] - rad) & (Y >= y0) & (Y <= hub[3] - rad) & (dist >= rad) & (lab == main)
+    if not ok.any():
+        raise ValueError("no start spot in the hub")
+    score = np.where(ok, dist - 1e-3 * np.hypot(X - (hub[0] + hub[2]) / 2, Y - (y0 + hub[3] - rad) / 2), -np.inf)
+    r, c = np.unravel_index(np.argmax(score), score.shape)
+    return [float(X[r, c]), float(Y[r, c])]
+
+
+def _make_house(cfg, rng, seed, split, floor):
+    layout = sample_house(rng, cfg, floor)
+    ds = place_house_doors(rng, layout, cfg, split)
+    start = _house_start(layout, ds, cfg)
+    r = cfg["robot_radius"] + 0.2
+    cl = place_clutter(rng, layout, ds, cfg, [[start[0] - r, start[1] - r, start[0] + r, start[1] + r]]) if "clutter" in cfg else []
+    return {"seed": int(seed), "split": split, "layout": layout, "doors": ds, "clutter": cl, "poses": approach_poses(layout, ds, cfg, cl),
+            "map_resolution": float(cfg.get("map_resolution", 0.05)), "start": start}
 
 
 def after_opening(b, opened, cfg):

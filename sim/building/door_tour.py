@@ -757,7 +757,7 @@ def main():
             t2 = round_two()
             yield from ((2, i, len(t2), v) for i, v in enumerate(t2, 1))
 
-    log = {"building": b.get("seed"), "start": a.start, "visits": [], **({"conditions": cond} if cond else {})}
+    log = {"building": b.get("seed"), "building_path": a.building, "start": a.start, "visits": [], **({"conditions": cond} if cond else {})}
     try:
         for rnd, i, n_, v in all_visits():
             if a.patrol:                                       # patrol: progress = viewpoints (dashboard reads live.json)
